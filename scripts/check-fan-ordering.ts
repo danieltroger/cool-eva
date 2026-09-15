@@ -1,9 +1,9 @@
+import { redirectsServed } from "./fan-io-fence.ts";
 import {
   clearPinFailures,
   failPinWrite,
   holdPinWrite,
   installSimulatedSysfs,
-  redirectsServed,
   resetSimulatedSysfs,
   simulatedSysfs,
   type SimulatedSeed,
@@ -170,6 +170,11 @@ check(
 
 // --- 3. When the enables CANNOT be dropped -----------------------------------
 //
+// ⚠️ The duties asserted here are the KICK's 100 %, so this section is inside the 1500 ms
+// window and the phase is asserted alongside them: a machine that stalled past the kick
+// would otherwise red on the duty with nothing saying why. Nothing here waits — §4 is the
+// section that spends the kick.
+//
 // ⚠️ TWO failures, not one, and only the second can trip the invariant. A `pinctrl` that
 // fails on GPIO27 leaves GPIO17 already LOW — a half-down bridge, which is not a brake
 // however wrong the state is. One that fails on GPIO17 throws before 27 is touched, so
@@ -181,6 +186,7 @@ console.log("\n3. the enables failed to drop");
 resetSimulatedSysfs(coldPi());
 const stuck = await startFanControl({ enabled: true });
 await stuck.setDutyPercent(MIN_RUNNING_DUTY_PERCENT);
+check("(setting up) the fan is mid-kick, which is what the 100 % below is", stuck.state().phase === "kick-start");
 
 const secondPinFrom = simulatedSysfs().calls.length;
 failPinWrite(27, "dl", "could not drive GPIO27 dl: pinctrl exited 1");
@@ -193,6 +199,9 @@ check(
 );
 check("⚠️  the PWM output was NOT dropped while an enable was still HIGH", writeFrom(secondPinFrom, "enable", "0") < 0);
 check("⚠️  and the duty was NOT zeroed", writeFrom(secondPinFrom, "duty_cycle", "0") < 0);
+// ⚠️ `phase` is "idle" here even though the bridge is not: goIdle() sets it unconditionally
+// so the next command re-drives the whole bring-up from a known start. It is
+// `driverEnabled` that stays true, and that is what the dashboard renders as a fault.
 check(
   "the driver still reports the bridge enabled, so the dashboard renders a fault",
   stuck.state().driverEnabled && stuck.state().dutyPercent === 100
@@ -220,7 +229,10 @@ const half = await startFanControl({ enabled: true });
 await half.setDutyPercent(MIN_RUNNING_DUTY_PERCENT);
 check(
   "(setting up) the bridge is live with both enables HIGH",
-  simulatedSysfs().pin17High && simulatedSysfs().pin27High && simulatedSysfs().outputEnabled
+  simulatedSysfs().pin17High &&
+    simulatedSysfs().pin27High &&
+    simulatedSysfs().outputEnabled &&
+    half.state().phase === "kick-start"
 );
 const firstPinFrom = simulatedSysfs().calls.length;
 failPinWrite(17, "dl", "could not drive GPIO17 dl: pinctrl exited 1");
@@ -278,8 +290,8 @@ console.log(`     post-kick move: ${sequence(movedFrom)}`);
 check(`a duty change while running is accepted (${moved.message})`, moved.ok);
 check("it reached the register", simulatedSysfs().dutyNs === dutyToNanoseconds(70));
 check(
-  "⚠️  and it was ONE duty write — no enable, no pinctrl, nothing else",
-  simulatedSysfs().calls.length > movedFrom &&
+  `⚠️  and it was ONE duty write — no enable, no pinctrl, nothing else (${simulatedSysfs().calls.length - movedFrom})`,
+  simulatedSysfs().calls.length - movedFrom === 1 &&
     simulatedSysfs()
       .calls.slice(movedFrom)
       .every(call => call.kind === "write" && call.target.endsWith("/duty_cycle"))

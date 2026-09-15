@@ -1,11 +1,13 @@
+import { redirectsServed } from "./fan-io-fence.ts";
 import {
   clearPinFailures,
+  drivePin,
   failPinWrite,
   installSimulatedSysfs,
   isBraked,
-  redirectsServed,
   resetSimulatedSysfs,
   simulatedSysfs,
+  writeFile,
   type SimulatedSeed,
 } from "./simulated-pwm-sysfs.ts";
 
@@ -93,6 +95,35 @@ check(
     !isBraked({ pin17High: false, pin27High: true, outputEnabled: false, dutyNs: 0 })
 );
 
+// ⚠️ …AND THE RECORDER AROUND IT, which is a separate thing from the predicate. Testing
+// isBraked() alone leaves every `violations.length === 0` below asserting against a counter
+// that nothing has ever incremented — switch noteBridge() off and they all stay green.
+// So the sequence is driven through the simulator's OWN surface here.
+//
+// It is deliberately THE SEQUENCE THE OLD CHECK PASSED: duty 100 → output on → enables
+// HIGH → duty 0 → still HIGH. Because `indexOfCall` compared FIRST occurrences, all three
+// of its ordering assertions were satisfied by it, while the rotor spent the tail of it
+// braked. docs/fan-control.md §3.
+const CHANNEL = "/sys/class/pwm/pwmchip0/pwm0";
+resetSimulatedSysfs(coldPi());
+await writeFile("/sys/class/pwm/pwmchip0/export", "0");
+await writeFile(`${CHANNEL}/period`, "50000");
+await writeFile(`${CHANNEL}/duty_cycle`, "50000");
+await writeFile(`${CHANNEL}/enable`, "1");
+await drivePin("17", "dh");
+await drivePin("27", "dh");
+check("a bridge driving at full duty records no violation", simulatedSysfs().violations.length === 0);
+await writeFile(`${CHANNEL}/duty_cycle`, "0");
+check(
+  `⚠️  …and dropping the duty UNDER the live enables records one (${simulatedSysfs().violations[0] ?? "none"})`,
+  simulatedSysfs().violations.length === 1
+);
+await writeFile(`${CHANNEL}/duty_cycle`, "50000");
+check(
+  "⚠️  …which LEAVING the braked state does not undo — the whole reason this is a state and not an index",
+  simulatedSysfs().violations.length === 1
+);
+
 // --- 2. Which chip -----------------------------------------------------------
 
 console.log("\n2. finding the chip the overlay landed on");
@@ -107,7 +138,6 @@ resetSimulatedSysfs(
   })
 );
 const { startFanControl } = await import("../src/fan/control.ts");
-const { MIN_RUNNING_DUTY_PERCENT, MAX_DUTY_PERCENT } = await import("../src/fan/control.ts");
 const { PWM_PERIOD_NS } = await import("../src/fan/pwm.ts");
 
 const preferred = await startFanControl({ enabled: true });
@@ -129,12 +159,16 @@ const realWarn = console.warn;
 console.warn = (...args: any[]): void => {
   warnings.push(args.map(part => String(part)).join(" "));
 };
+// ⚠️ pwmchip12 and pwmchip2, so the sort has to be NUMERIC: a plain string sort puts
+// pwmchip12 first and this picks the wrong chip — which on a kernel that numbered things
+// differently means driving somebody else's PWM. pwmchip0's `npwm` cannot be read at all,
+// which is the branch that skips a chip rather than failing the whole bring-up.
 resetSimulatedSysfs(
   coldPi({
     chips: {
-      pwmchip0: { channelCount: 0, deviceLink: null },
-      pwmchip1: { channelCount: 1, deviceLink: null },
-      pwmchip3: { channelCount: 1, deviceLink: null },
+      pwmchip0: { channelCount: null, deviceLink: null },
+      pwmchip12: { channelCount: 1, deviceLink: null },
+      pwmchip2: { channelCount: 1, deviceLink: null },
     },
   })
 );
@@ -142,12 +176,16 @@ const guessed = await startFanControl({ enabled: true });
 console.warn = realWarn;
 check("a tree where no chip names a .pwm block still comes up", guessed.fault === null);
 check(
-  "…on the lowest-numbered chip that offers channel 0, skipping the one whose npwm is 0",
-  writeAt("export") >= 0 && simulatedSysfs().calls[writeAt("export")].target.includes("pwmchip1")
+  "⚠️  …on the LOWEST-NUMBERED usable chip, sorted numerically — pwmchip2 before pwmchip12",
+  writeAt("export") >= 0 && simulatedSysfs().calls[writeAt("export")].target.endsWith("pwmchip2/export")
 );
 check(
   `⚠️  …and it WARNS rather than picking silently (${warnings.length} line)`,
-  warnings.some(line => line.includes("pwmchip1") && line.includes("lowest-numbered"))
+  warnings.some(line => line.includes("pwmchip2") && line.includes("lowest-numbered"))
+);
+check(
+  "a chip whose npwm cannot be read is skipped, not fatal",
+  warnings.some(line => line.includes("pwmchip0"))
 );
 await guessed.stop();
 
@@ -161,6 +199,15 @@ check(
   (noChip.fault ?? "").includes("dtoverlay=pwm,pin=18,func=2")
 );
 check("…and the driver reports itself configured-but-faulted, which is what the phone renders", noChip.configured);
+
+// A kernel with no PWM class at all — no overlay line, or it never applied.
+resetSimulatedSysfs(coldPi({ classDirMissing: true }));
+const noClassDir = await startFanControl({ enabled: true });
+check("a kernel with no /sys/class/pwm at all does not come up either", noClassDir.fault !== null);
+check(
+  "…and that fault names the overlay too, rather than the errno alone",
+  (noClassDir.fault ?? "").includes("dtoverlay=pwm,pin=18,func=2") && (noClassDir.fault ?? "").includes("no PWM chip")
+);
 
 // --- 3. A cold Pi ------------------------------------------------------------
 //
@@ -226,8 +273,8 @@ check(
 );
 check("the re-export's EBUSY was tolerated rather than fatal", writeAt("export") >= 0 && restarted.fault === null);
 check(
-  "the duty was zeroed and the period re-asserted",
-  simulatedSysfs().dutyNs === 0 && simulatedSysfs().periodNs === PWM_PERIOD_NS
+  "the duty was zeroed and the period re-ASSERTED — the write, not the seeded value it matches",
+  simulatedSysfs().dutyNs === 0 && writeAt("period", String(PWM_PERIOD_NS)) >= 0
 );
 await restarted.stop();
 
@@ -284,13 +331,21 @@ check("no braked state was constructed on the failure path either", simulatedSys
 console.log("\n7. a Pi with no pinctrl");
 
 resetSimulatedSysfs(coldPi());
-failPinWrite(17, "dl", "spawn pinctrl ENOENT");
+// ⚠️ WITH the errno, or src/fan/pwm.ts takes its generic arm and the branch this section
+// exists for — the one naming `raspi-utils` and the config.txt standby backstop — is never
+// reached. A bare Error(message) passed here for exactly that reason.
+failPinWrite(17, "dl", "spawn pinctrl ENOENT", "ENOENT");
 const noPinctrl = await startFanControl({ enabled: true });
 clearPinFailures();
+check(`the section reached the simulator (${simulatedSysfs().calls.length} calls)`, simulatedSysfs().calls.length > 0);
 check("bring-up fails when the enables cannot be driven at all", noPinctrl.fault !== null);
 check(
   `…and the message names GPIO17 rather than a bare failure (${(noPinctrl.fault ?? "").slice(0, 50)}…)`,
   (noPinctrl.fault ?? "").includes("GPIO17")
+);
+check(
+  "⚠️  …and it names the package to install and says the fan stays in standby, which is the safe failure",
+  (noPinctrl.fault ?? "").includes("raspi-utils") && (noPinctrl.fault ?? "").includes("standby")
 );
 check(
   "⚠️  …and nothing was written to the channel after the enables could not be dropped",
@@ -307,10 +362,6 @@ console.log("\n8. nothing here went near the real filesystem");
 check(
   `both module redirects were served (${redirectsServed().join(", ") || "none"})`,
   redirectsServed().includes("fs/promises") && redirectsServed().includes("child_process")
-);
-check(
-  "the running band the bridge is driven over is the shipped one",
-  MIN_RUNNING_DUTY_PERCENT === 30 && MAX_DUTY_PERCENT === 100
 );
 
 console.log("");

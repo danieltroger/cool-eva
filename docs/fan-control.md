@@ -111,7 +111,7 @@ Recorded because it cost a session to establish and would otherwise be re-derive
 
 - the stale timer fires into `finishKickStart()`, which returns early on `phase !== "kick-start"`;
 - where a **new** kick is already running, `armKickTimer()` calls `clearKickTimer()` before arming, so the stale handle is cancelled there and the new kick still ends on time;
-- two live timers are unreachable: `context.kickTimer` is only `null` after a `finishKickStart()` that has already fired;
+- a stale `finishKickStart()` with no newer kick pending cannot leave two timers behind: `context.kickTimer` is only `null` after one that has already fired. (It **can** orphan a newer one that was armed while it sat queued — that is #265, and it happens with _and_ without this call, so it is not what the mutation is about.)
 - a late `finishKickStart()` is queued behind `runExclusively()` and early-returns the same way;
 - `src/index.ts` calls `process.exit(0)` immediately after `await fanController.stop()`, so it never fires into a torn-down controller and never delays shutdown either.
 
@@ -503,9 +503,9 @@ echo 1     | sudo tee /sys/class/pwm/pwmchip0/pwm0/enable
 
 #### The kernel, quoted — and ⚠️ it is version-scoped
 
-This used to be asserted here as a paraphrase with no citation, which is how the claim below came to be stated flatly when it is true of one kernel and false of the next. `drivers/pwm/core.c` in the Raspberry Pi fork, read verbatim:
+This used to be asserted here as a paraphrase with no citation, which is how the claim below came to be stated flatly when it is true of one kernel and false of the next. `drivers/pwm/core.c` in the Raspberry Pi fork, read verbatim. ⚠️ Pinned to the commits actually read — a branch name moves, and the line numbers below stop meaning anything when it does:
 
-**`rpi-6.6.y`, `core.c:496-508`** — both rejections in one condition, and it sits **ahead of** the "nothing changed, return 0" comparison, which is the part that makes `echo 0` fail too:
+**`rpi-6.6.y` at `bba53a117a4a`, `core.c:496-508`** — both rejections in one condition, and it sits **ahead of** the "nothing changed, return 0" comparison, which is the part that makes `echo 0` fail too:
 
 ```c
 static int __pwm_apply(struct pwm_device *pwm, const struct pwm_state *state)
@@ -525,7 +525,7 @@ static int __pwm_apply(struct pwm_device *pwm, const struct pwm_state *state)
 
 The sysfs path really does reach it: `drivers/pwm/sysfs.c:83` `duty_cycle_store` reads the current state, sets `state.duty_cycle`, and applies the whole thing — as do `period_store` and `enable_store`, so one predicate covers all three writes.
 
-**`rpi-6.12.y`, `core.c:144-190`** — both rejections are now gated on `enabled`, via a validity test that calls **any disabled state valid**:
+**`rpi-6.12.y` at `53ee3102177a`, `core.c:144-190`** — both rejections are now gated on `enabled`, via a validity test that calls **any disabled state valid**:
 
 ```c
 static bool pwm_state_valid(const struct pwm_state *state)

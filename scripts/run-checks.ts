@@ -411,9 +411,10 @@ const CHECKS: SelfCheck[] = [
       "sentence, and that no slider stop lands in the dead band under the floor. Every threshold is pinned to a " +
       "LITERAL — an assertion phrased in the constant it is checking passes for every value of that constant, which " +
       "is how a stop gate at 110 km/h and a one-hour speed-staleness window were both green here. The last two " +
-      "sections drive the real controller through a recording FanPwm — the only place the running-phase duty change " +
-      "issue #119 reports as unreached is reached — and then a controller that THROWS, since the loop discards each " +
-      "tick's promise and an escaped rejection would end the whole service every two seconds",
+      "sections drive the real controller through a recording FanPwm — reaching the running-phase duty change at " +
+      "the level of what the controller BELIEVES, which check-fan-ordering.ts §4 complements by asserting the " +
+      "duty_cycle a simulated sysfs actually received — and then a controller that THROWS, since the loop discards " +
+      "each tick's promise and an escaped rejection would end the whole service every two seconds",
   },
   {
     script: "scripts/check-fan-fun.ts",
@@ -557,8 +558,10 @@ const CHECKS: SelfCheck[] = [
       "go LOW as the first statement, because a SIGKILL plus Restart=on-failure begins bring-up under a live " +
       "bridge; that the chip is discovered rather than hardcoded, preferring an SoC .pwm device link and WARNING " +
       "when it had to guess; that EBUSY on re-export is the routine restart case; and that a channel udev never " +
-      "chowned and a missing pinctrl both fail with the setup step named. §1 mutation-tests the braked-state " +
-      "checker itself, since every other section reports against it",
+      "chowned and a missing pinctrl both fail with the setup step named — the latter with its errno, or the arm " +
+      "naming `raspi-utils` is never taken. §1 mutation-tests the braked-state predicate AND the recorder around " +
+      "it, driving the bridge into the braked state through the double's own surface in the exact sequence the " +
+      "old first-occurrence index assertions passed, since every other section reports against that counter",
   },
   {
     script: "scripts/check-preview-fixtures.ts",

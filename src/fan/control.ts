@@ -105,7 +105,7 @@ export interface FanControlOptions {
    * and scripts/check-fan-pwm-bringup.ts, which drive the REAL openFanPwm() over a
    * simulated sysfs (scripts/simulated-pwm-sysfs.ts): that is what asserts the orderings
    * below — the whole safety property of this file — AND ./pwm.ts's own bring-up order,
-   * with no Pi and no bike. The curve, banner, race and gesture checks still pass a
+   * with no Pi and no bike. The curve, banner, race, fun, off-ceiling and gesture checks still pass a
    * recording FanPwm here, which is the cheaper seam when the bridge is not the subject.
    */
   openPwm?: () => Promise<FanPwm>;

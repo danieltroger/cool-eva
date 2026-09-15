@@ -1,5 +1,5 @@
-import { registerHooks } from "node:module";
 import { promisify } from "util";
+import { installFanIoFence } from "./fan-io-fence.ts";
 
 // A stand-in for /sys/class/pwm and for `pinctrl`, so the REAL openFanPwm() can be run on
 // a laptop. src/fan/control.ts already takes an `openPwm` seam, and using it means
@@ -49,6 +49,8 @@ export interface SimulatedSeed {
   bridgeLive: boolean;
   /** Make the channel directory answer EACCES, as a missing udev rule does. */
   channelUnreadable?: boolean;
+  /** No /sys/class/pwm at all — a kernel with no PWM chip, i.e. no overlay. */
+  classDirMissing?: boolean;
 }
 
 /** Everything the bridge's electrical state is decided from. */
@@ -75,7 +77,7 @@ export interface SysfsCall {
  * hook exists and would reach the real filesystem.
  */
 export function installSimulatedSysfs(): void {
-  registerHooks({ resolve: resolveFanImport });
+  installFanIoFence(import.meta.url);
 }
 
 /**
@@ -93,10 +95,16 @@ export function resetSimulatedSysfs(seed: SimulatedSeed): void {
   state.pin17High = seed.bridgeLive;
   state.pin27High = seed.bridgeLive;
   state.channelUnreadable = seed.channelUnreadable ?? false;
+  state.classDirMissing = seed.classDirMissing ?? false;
   state.calls = [];
   state.violations = [];
   state.pinFailures = new Map();
-  state.held = null;
+  if (state.held !== null) {
+    // Left awaiting a promise nobody can resolve, the in-flight runPinctrl() would hang
+    // until run-checks.ts SIGKILLs at 120 s and reports "no verdict" — which reads as a
+    // hang rather than as the assertion that should have gone red.
+    throw new Error(`reset while a \`pinctrl\` write on ${state.held.key} was still held — release it first`);
+  }
   if (isBraked(state)) {
     // A seed is a claim about a Pi that was running a moment ago, so a braked seed is a
     // mistake in the check rather than a finding about src/fan/.
@@ -124,9 +132,14 @@ export function isBraked(bridge: BridgeState): boolean {
   return !bridge.outputEnabled || bridge.dutyNs === 0;
 }
 
-/** Makes one `pinctrl` call fail, the way a missing binary or a fork that ENOMEMs does. */
-export function failPinWrite(gpio: number, level: string, message: string): void {
-  state.pinFailures.set(`${gpio}:${level}`, message);
+/**
+ * Makes one `pinctrl` call fail, the way a missing binary or a fork that ENOMEMs does.
+ *
+ * ⚠️ `code` matters: src/fan/pwm.ts branches on ENOENT to name `raspi-utils` and the
+ * config.txt standby backstop, and a failure with no code takes the generic arm instead.
+ */
+export function failPinWrite(gpio: number, level: string, message: string, code?: string): void {
+  state.pinFailures.set(`${gpio}:${level}`, { message, code });
 }
 
 export function clearPinFailures(): void {
@@ -148,16 +161,11 @@ export function holdPinWrite(gpio: number, level: string): () => void {
   return release;
 }
 
-/** Which redirected specifiers the hook actually served. Never cleared by a reset. */
-export function redirectsServed(): string[] {
-  return [...served];
-}
-
 // --- the fs/promises surface ------------------------------------------------
 
 export async function readdir(path: string): Promise<string[]> {
   state.calls.push({ kind: "readdir", target: path, value: null });
-  if (path !== PWM_CLASS_DIR) {
+  if (state.classDirMissing || path !== PWM_CLASS_DIR) {
     throw posixError("ENOENT", `ENOENT: no such file or directory, scandir '${path}'`);
   }
   return [...state.chips.keys()];
@@ -218,6 +226,11 @@ export const execFile = definePromisified();
 
 // --- internals ---------------------------------------------------------------
 
+interface PinFailure {
+  message: string;
+  code?: string;
+}
+
 interface HeldPinWrite {
   key: string;
   blocked: Promise<void>;
@@ -228,10 +241,11 @@ interface SimulatedSysfs extends BridgeState {
   exportedOn: string | null;
   periodNs: number;
   channelUnreadable: boolean;
+  classDirMissing: boolean;
   calls: SysfsCall[];
   /** One line per time the bridge entered the braked state. Empty is the property. */
   violations: string[];
-  pinFailures: Map<string, string>;
+  pinFailures: Map<string, PinFailure>;
   held: HeldPinWrite | null;
 }
 
@@ -244,54 +258,12 @@ const state: SimulatedSysfs = {
   pin17High: false,
   pin27High: false,
   channelUnreadable: false,
+  classDirMissing: false,
   calls: [],
   violations: [],
   pinFailures: new Map(),
   held: null,
 };
-
-const REDIRECTED = new Set(["fs/promises", "child_process"]);
-/** Bare specifiers src/fan/ may reach that touch nothing outside the process. */
-const ALLOWED_BARE = new Set(["util"]);
-const served = new Set<string>();
-const DOUBLE_URL = import.meta.url;
-
-interface ResolveContext {
-  parentURL?: string;
-}
-interface ResolveResult {
-  url: string;
-  shortCircuit?: boolean;
-}
-type NextResolve = (specifier: string, context: ResolveContext) => ResolveResult;
-
-/**
- * ⚠️ An ALLOW-LIST, and the deny arm throws. Keyed on the whole of src/fan/ rather than on
- * pwm.ts, so splitting openFanPwm() into its own file — which is exactly the move this
- * repo makes — cannot silently re-open the hole. What the hole is: with the real
- * `fs/promises` in hand this check WRITES TO /sys/class/pwm and spawns `pinctrl`, and on
- * the bike's Pi that drives the actual IBT-2. `npm test` claims to need no bike
- * (docs/diagnostics-and-checks.md §11.1) and this is what keeps that true of the code
- * rather than of whichever machine happens to run it.
- */
-function resolveFanImport(specifier: string, context: ResolveContext, nextResolve: NextResolve): ResolveResult {
-  if (!(context.parentURL ?? "").includes("/src/fan/")) {
-    return nextResolve(specifier, context);
-  }
-  if (REDIRECTED.has(specifier)) {
-    served.add(specifier);
-    return { url: DOUBLE_URL, shortCircuit: true };
-  }
-  if (specifier.startsWith(".") || ALLOWED_BARE.has(specifier)) {
-    return nextResolve(specifier, context);
-  }
-  throw new Error(
-    `${context.parentURL} imports \`${specifier}\`, which scripts/simulated-pwm-sysfs.ts does not simulate. ` +
-      `Nothing under src/fan/ may reach the real world while this check runs — a real write here drives the ` +
-      `IBT-2 on the bike's Pi. Fix it by adding \`${specifier}\` to REDIRECTED there and simulating it, or to ` +
-      `ALLOWED_BARE if it touches nothing outside the process.`
-  );
-}
 
 function channelPath(): string {
   return `${PWM_CLASS_DIR}/${state.exportedOn}/pwm0`;
@@ -367,6 +339,18 @@ async function runPinctrl(file: string, args: string[]): Promise<{ stdout: strin
   if (verb !== "set" || mode !== "op" || (level !== "dh" && level !== "dl")) {
     throw new Error(`the simulated pinctrl does not understand \`${args.join(" ")}\``);
   }
+  await drivePin(gpio, level);
+  return { stdout: "", stderr: "" };
+}
+
+/**
+ * One enable pin, as `pinctrl set <gpio> op dh|dl` drives it.
+ *
+ * Exported so a check can drive the bridge DIRECTLY, without going through src/fan/ —
+ * which is the only way to construct the braked state, since no path in src/fan/ builds
+ * it. scripts/check-fan-pwm-bringup.ts §1 is what that is for.
+ */
+export async function drivePin(gpio: string, level: string): Promise<void> {
   state.calls.push({ kind: "pinctrl", target: `GPIO${gpio}`, value: level });
   const key = `${gpio}:${level}`;
   if (state.held !== null && state.held.key === key) {
@@ -376,7 +360,7 @@ async function runPinctrl(file: string, args: string[]): Promise<{ stdout: strin
   }
   const failure = state.pinFailures.get(key);
   if (failure !== undefined) {
-    throw new Error(failure);
+    throw failure.code === undefined ? new Error(failure.message) : posixError(failure.code, failure.message);
   }
   // ⚠️ No rollback, exactly as setEnablePins()' loop has none: a failure on the second pin
   // leaves the first already driven. That is what makes the two failure cases differ.
@@ -388,7 +372,6 @@ async function runPinctrl(file: string, args: string[]): Promise<{ stdout: strin
     throw new Error(`GPIO${gpio} is not one of the IBT-2 enables (17 and 27)`);
   }
   noteBridge(`GPIO${gpio} ${level}`);
-  return { stdout: "", stderr: "" };
 }
 
 /** Records a braked bridge rather than throwing, so the check names which step built it. */
