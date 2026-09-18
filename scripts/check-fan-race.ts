@@ -94,6 +94,67 @@ check(
 wedgedLoop.stop();
 batches.splice(0);
 
+// --- 7b. The signature a wedged bridge leaves on the wire (#282, #287) --------------
+//
+// ⚠️ This is the ordering docs/fan-control.md §9 rests its whole refutation on, asserted
+// rather than claimed. publishDecision() is synchronous and ABOVE evaluate()'s first
+// await, so a bridge that never answers freezes `fan_duty_pct`/`fan_target_pct` while
+// `fan_auto_reason` goes on moving. Move that publish below the await — a plausible tidy
+// ("publish once we know the command took") — and the signature inverts silently, taking
+// §9's proof and #287's symptom table with it. scripts/check-fan-ordering.ts exists for
+// this same hazard class in the same subsystem.
+
+console.log("\n7b. what a wedged bridge looks like on the wire");
+
+const stalled = await startFanControl({
+  enabled: true,
+  openPwm: async () => ({ ...recording, setDutyPercent: () => new Promise<void>(() => {}) }),
+});
+const stalledLoop = startFanAutomatic(stalled, LOOP_OPTIONS);
+bus.packC = WARM_PACK_C;
+bus.speedKmh = 0;
+await settle(TICK_MS * 3);
+// Never resolves: the first curve command reaches the wedge and stays there. Discarded
+// for the reason §7's is, and the loop is left running so the next evaluation still ticks.
+void stalledLoop.setMode("automatic");
+await settle(TICK_MS * 6);
+const frozenDuty = latestValue("fan_duty_pct");
+const frozenTarget = latestValue("fan_target_pct");
+check(
+  "the curve published its reason before it reached the wedge",
+  latestValue("fan_auto_reason") === FAN_REASON.PACK_TEMPERATURE
+);
+
+// Crossing the speed gate changes the REASON, which is what makes the next publish
+// observable at all: an unchanged value writes no row, so a reason that stayed put would
+// prove nothing about whether anything published it.
+bus.speedKmh = 120;
+await settle(TICK_MS * 3);
+void stalledLoop.setMode("automatic");
+await settle(TICK_MS * 6);
+check(
+  "⚠️  the reason keeps reaching the wire over a bridge that never answers",
+  latestValue("fan_auto_reason") === FAN_REASON.ROAD_SPEED
+);
+check(
+  "⚠️  …while the duty and the target freeze — #287's signature, and NOT the one #282 reported",
+  latestValue("fan_duty_pct") === frozenDuty && latestValue("fan_target_pct") === frozenTarget
+);
+stalledLoop.stop();
+// ⚠️ Put the bus back, and ASSERT it went back. §8 and §9 below open against a parked
+// bike and a warm pack, and leaving the speed gate crossed turns six of their assertions
+// red — which is how this restore came to exist. An unasserted one is the shape that goes
+// quietly wrong later: the next section's failure would read as its own bug, not as this
+// section's leftovers.
+bus.speedKmh = 0;
+bus.packC = WARM_PACK_C;
+await settle(TICK_MS * 3);
+check(
+  "the bus is back to parked and warm, which §8 and §9 open against",
+  latestValue("speed_can_kmh") === 0 && latestValue("batt_temp_hi") === WARM_PACK_C
+);
+batches.splice(0);
+
 // --- 8. A tap back to Auto that lands INSIDE a slider command ---------------------
 //
 // ⚠️ The hazard the `finally` in commandManual() creates and its guard removes. Publishing

@@ -19,6 +19,10 @@ import Database from "better-sqlite3";
 // nextSequence in storage/encrypted-log.ts for why bumping `ts` instead would be
 // strictly worse. Both are nullable: readings sealed before 2026-08-16 were written
 // without a counter, and NULL is the honest way to say so.
+//
+// ⚠️ What it costs to forget that, with a worked example: docs/ride-log-clock.md §6. Four
+// boots' rows share one 90-second window of `ts` there, and reading them as one timeline
+// produced a filed issue about a fault that never happened (#282).
 
 export type SignalSource = "stream" | "poll" | "sensor";
 

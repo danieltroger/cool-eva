@@ -251,6 +251,10 @@ async function evaluate(context: AutoContext): Promise<void> {
     previouslyRunning: context.controller.state().driverEnabled,
   });
   context.lastDecision = decision;
+  // ⚠️ Synchronous, and ABOVE the await below. That is what makes an absent `fan_auto_reason`
+  // row mean "the curve answered the same thing again" rather than "the loop died" — the
+  // proof that reads 2026-09-09's 42 minutes of silence, and why a wedged command freezes the
+  // duty while the reason keeps moving rather than the other way round. docs/fan-control.md §9.
   publishDecision(decision);
 
   if (decision.dutyPercent === context.lastCommandedPercent) {

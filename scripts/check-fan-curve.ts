@@ -48,9 +48,10 @@ import {
 // near-miss that would be wrong only sometimes, which is the worst kind.
 //
 // The last section drives the real controller through a recording FanPwm, so it also
-// covers the running-phase duty changes — at the level of what the controller BELIEVES.
-// scripts/check-fan-ordering.ts §4 covers the same drop-out at the register, which is the
-// half a state() assertion cannot see.
+// covers the running-phase duty changes — mostly at the level of what the controller
+// BELIEVES. Its closing ramp is the exception and reads the bridge's own calls.
+// scripts/check-fan-ordering.ts §4 covers the drop-out at the register itself, over a
+// simulated sysfs, which is the half no state() assertion can see.
 
 let failures = 0;
 
@@ -438,6 +439,15 @@ check(
   "the code the dashboard paints as a fault is still FAN_REASON.TEMPERATURE_FAULT",
   TEMPERATURE_FAULT_REASON === FAN_REASON.TEMPERATURE_FAULT
 );
+// ⚠️ …and three codes as LITERALS, because the loop above pins none of them: it asks only
+// that a code sit inside `fan_auto_reason`'s [0, 8] and have a sentence, and 6 and 7 are
+// retired and free (src/fan/curve.ts). So renumbering PACK_TEMPERATURE to either passes
+// every assertion in this repo — while evidence/fan-tick-stall/curve-lag.py, which selects
+// its samples on these numbers from OUTSIDE the TypeScript, silently judges nothing and
+// reports the same "0 held" a healthy archive reports. A detector that cannot fire.
+check("FAN_REASON.PACK_TEMPERATURE is still 5, which curve-lag.py selects on", FAN_REASON.PACK_TEMPERATURE === 5);
+check("FAN_REASON.DC_SESSION is still 8, which its DC arm selects on", FAN_REASON.DC_SESSION === 8);
+check("FAN_TEMPERATURE_INPUT.LIVE is still 0, which its curve arm selects on", FAN_TEMPERATURE_INPUT.LIVE === 0);
 for (const [name, code] of Object.entries(FAN_TEMPERATURE_INPUT)) {
   check(
     `FAN_TEMPERATURE_INPUT.${name} = ${code} is inside its bound and has an entry`,
@@ -500,10 +510,12 @@ check("and 0 % maps to the stop position, not to the floor", stops[dutyStopIndex
 
 // --- 10. End to end: curve → auto → control → the bridge ---------------------
 //
-// A recording FanPwm driven by the curve rather than by a slider. ⚠️ The assertions below
-// are on controller.state(), so a mutant that updates the bookkeeping without writing the
-// register passes here — scripts/check-fan-ordering.ts §4 is what catches that one, by
-// asserting the duty_cycle a simulated sysfs actually received.
+// A recording FanPwm driven by the curve rather than by a slider. ⚠️ MOST of the assertions
+// below are on controller.state(), so a mutant that updates the bookkeeping without writing
+// the register passes them — scripts/check-fan-ordering.ts §4 catches that one properly, by
+// asserting the duty_cycle a simulated sysfs actually received. The exception is the ramp at
+// the end of this section, which reads the recording bridge's own calls: an applyDuty() that
+// publishes without writing fails those three and nothing else in this file.
 
 console.log("\n10. the loop, end to end, against a recording bridge");
 
@@ -667,6 +679,74 @@ check(
   "a session that stops broadcasting ends, and the 10 °C pack goes back to being cold",
   !controller.state().driverEnabled
 );
+
+// ⚠️ The arrangement issue #282 reported and the archive does not contain: a DC session
+// ending over a HOT pack, and then a climb. The case above ends one over a 10 °C pack,
+// where the fan correctly stops and a loop that never evaluated again would look identical.
+// Here every later duty is one only a re-evaluation can produce. docs/fan-control.md §9.
+calls.length = 0;
+record("charge_manager_state", CHARGE_MANAGER_STATE_DC);
+record("batt_temp_hi", 42);
+await ticks(2);
+// ⚠️ The kick is WAITED OUT rather than asserted around. Everything below is about what the
+// bridge was given, and inside a kick-start applyDuty() never runs — `targetPercent` moves
+// while `appliedPercent` sits at 100 — so a ramp run inside one proves the loop's own
+// bookkeeping and nothing else. The first version of this block did exactly that: all four
+// duties passed with the phase still "kick-start" and not one pwm call made.
+//
+// ⚠️ And the session keeps BROADCASTING across that wait, because this check's staleness
+// window is 400 ms and the kick is 1500: a session left to go quiet expires mid-kick and
+// the pack curve has the fan before the assertion below runs. 0x610 repeats on the bike.
+for (let waited = 0; waited < KICK_START_MS + 250; waited += 100) {
+  record("charge_manager_state", CHARGE_MANAGER_STATE_DC);
+  await new Promise(resolve => setTimeout(resolve, 100));
+}
+check(
+  "a DC session over a 42 °C pack is flat out, and the bridge has it",
+  controller.state().dutyPercent === 100 &&
+    controller.state().phase === "running" &&
+    calls.some(call => call.method === "duty" && call.value === 100)
+);
+
+await goStale();
+check(
+  "⚠️  the session ending hands a HOT pack to the curve rather than leaving it at 100 %",
+  controller.state().dutyPercent === 68 && latestValue("fan_auto_reason") === FAN_REASON.PACK_TEMPERATURE
+);
+
+// 68 % is the curve's answer for 42 °C — the number #282 reported held for 42 minutes across
+// a 12 K climb. Every duty below is one only a re-evaluation can produce, and each is read
+// off the recording bridge as well as the state, so a loop that moved its own bookkeeping
+// without writing the register fails here rather than in check-fan-ordering.ts alone.
+//
+// ⚠️ 43 °C is the one that earns its line twice over: Math.round -> Math.ceil in
+// ridingCurveDuty() fails THIS assertion and no other in the file, because every other
+// curve case sits where round and ceil agree. 73 is 30 + (8/13) x 70 = 73.08.
+for (const [pack, duty] of [
+  [43, 73],
+  [45, 84],
+  [47, 95],
+]) {
+  calls.length = 0;
+  record("batt_temp_hi", pack);
+  await ticks(2);
+  check(
+    `${pack} °C moves the commanded duty to ${duty} %, at the bridge`,
+    controller.state().dutyPercent === duty && calls.some(call => call.method === "duty" && call.value === duty)
+  );
+}
+record("batt_temp_hi", 55);
+await ticks(2);
+check(
+  `⚠️  and past ${RIDING_CURVE_TOP_C} °C it reaches 100 % — the duty the pack spent 2026-09-09 needing`,
+  controller.state().dutyPercent === 100 && latestValue("fan_auto_reason") === FAN_REASON.PACK_TEMPERATURE
+);
+// ⚠️ Asserted, not merely performed. The section below opens with "a hot pack starts it
+// again", which is vacuous unless the fan is off by the time it runs — and deleting these
+// two lines left the whole suite green, which is how that was found.
+record("batt_temp_hi", 10);
+await ticks(2);
+check("…and a 10 °C pack stops it again, which is what the section below assumes", !controller.state().driverEnabled);
 
 // ⚠️ ONE clock read, shared by the backdated mark below AND by the bound in the bracket
 // further down. Two reads would put a stall between them, and the bound would become a
