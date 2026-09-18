@@ -114,6 +114,7 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
     firstSocMayNotBeACrossing: !isSocPlausible(latestValue("soc")),
     inFlight: false,
     lastSessionState: null,
+    lastCommandAtMs: null,
     timer: null,
     unsubscribe: null,
   };
@@ -195,6 +196,8 @@ interface AutoContext {
   inFlight: boolean;
   /** The last `charge_manager_state` seen, so entering and leaving a session are both edges. */
   lastSessionState: number | null;
+  /** When the last command LANDED, monotonic, so the rule can tell whether the estimate has seen it. */
+  lastCommandAtMs: number | null;
   timer: ReturnType<typeof setInterval> | null;
   unsubscribe: (() => void) | null;
 }
@@ -213,6 +216,12 @@ async function runTick(context: AutoContext): Promise<void> {
   try {
     const outcome = await context.sink.commandChargeCurrent(decision.amps);
     if (outcome.succeeded) {
+      // ⚠️ Recorded where `commandedAmps` is, and only on a command that LANDED: a refused one
+      // changed no current, so making the rule wait to measure it would suppress the next tick for
+      // nothing. ⚠️ The first command of a session steps from the ceiling (`auto-curve.ts` reads
+      // `commandedAmps ?? ceiling`) and `stepTo` clamps to it, so with nothing commanded yet the
+      // move can only have been downwards.
+      context.lastCommandAtMs = monotonicNow();
       context.commandedAmps = decision.amps;
       record("charge_auto_target_a", decision.amps);
     } else {
@@ -248,6 +257,7 @@ function decide(context: AutoContext): ChargeAutoDecision {
     // current by 0.03-2.40 s in all eight captured ramps (docs/charge-manager.md), and it is the
     // signal the pack's own taper moves. `pack_a` would answer the same question later and noisier.
     requestedAmps: latestValue("fast_dc_target_a"),
+    lastCommandAtMs: context.lastCommandAtMs,
     nowMs: monotonicNow(),
   });
 }
@@ -327,6 +337,7 @@ function rememberSoc(context: AutoContext, percent: number): void {
 function forgetSession(context: AutoContext): void {
   context.commandedAmps = null;
   context.lastSentAmps = null;
+  context.lastCommandAtMs = null;
   context.riderOverride = false;
   context.samples.length = 0;
   context.socSamples.length = 0;

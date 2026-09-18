@@ -107,7 +107,8 @@ The estimator returns three things instead of two:
 |  | when | the controller does |
 | --- | --- | --- |
 | `unknown` | less than 5 min of history — early in a session, or after a restart | at or above 54 °C, descend by the silence's own deficit; below, hold and change nothing |
-| `bounded(R̄)` | enough time, fewer than 3 distinct whole degrees — so T stayed inside a band that many degrees wide, and **cannot** have moved faster | treat `R̄` as the rate |
+| `bounded(R̄)` | enough time, fewer than 3 distinct whole degrees, and the reading **rose** across the window | treat `R̄` as the rate |
+| `not-rising` | the same, but the reading did not rise — it never moved, or its net movement was down | spend **nothing**: the measured heating is zero. See the next section |
 | `rate(R)` | a least-squares slope over the window | use it |
 
 The span is measured **to now**, not to the newest sample: samples arrive only when the reading changes, so measuring between them would make the stillest pack look like the one we know least about.
@@ -117,6 +118,55 @@ The span is measured **to now**, not to the newest sample: samples arrive only w
 ⚠️ **The blind descent is sized from the silence, not from a constant** — substituting the `1/t` bound into `headroomKelvin` at the setpoint leaves `REACTION_MIN / t` kelvin of deficit, so this branch and the cap above rest on one measurement rather than two guesses. With no samples at all there is no bound to read and it takes the full `MAX_STEP_A`: a pack reading ≥ 54 with no history whatsoever is the least safe thing the branch sees.
 
 ⚠️ **The frozen grid cannot arbitrate that choice and must not be quoted as if it could.** The branch only runs while the span is under `RATE_MIN_SPAN_MS`, and the silence cannot exceed the span, so on the grid the deficit always saturates and a fixed `MAX_STEP_A` is byte-identical at every feasible candidate. The evidence is the argument plus `check-charge-auto.ts` §14, which drives it in the non-saturated regime.
+
+## A bound is not a rate (#276)
+
+⚠️ **The setpoint is 54 °C and until this change the rule could not raise the current above a reading of 52, however steady the pack was.** `estimateHeatingRate`'s bounded arm returns `distinct × 60 000 / spanMs`, and with `distinct ≥ 1` and the span clamped to the window that can never be smaller than **0.1 K/min**. `predictedHeadroomKelvin` spends it over `REACTION_MIN`, so a pack that has not moved for an hour is charged **1.2 K of phantom climb**; a raise needs `(54 − T) − 1.2 ≥ 0.5`, i.e. `T ≤ 52.3`. The guard two sections above already refuses to spend a bound **at** the setpoint — _"it says only 'the reading did not move'"_ — and nothing made the same argument one degree lower.
+
+**The fix is the direction the reading actually went.** A bound is on the MAGNITUDE, so it is evidence of heating only when the window's net movement was upward. `distinct = 2` rising still answers `bounded` at its old value, which is why `check-charge-auto.ts` §2's _"a bounded rate that puts the cliff inside the horizon must still close"_ is untouched. A window that never moved, or whose net movement was down, answers **`not-rising`** — and that arm carries **no number at all**, so `rate.perMinute` is a type error on it and no future caller can spend it by accident.
+
+⚠️ **What it cost in the field, measured 2026-09-18.** Session A: eleven ticks at the 35 A floor with `batt_temp_hi` unmoved at 53 °C from 14:30:23 to 14:48:30 — **eighteen minutes** — until Daniel switched the controller off. Session B: the descent reached the floor at 17:20:18 and the one tick before he took over gave back **+2 A**, which on a dial that moves in 5 is indistinguishable from nothing. ⚠️ That +2 A was **not** the phantom: that tick's rate is a fitted 0.175 K/min still carrying the 47 → 52 climb at 72.6 A. The phantom is what parks a pack that has already settled, which is session A.
+
+### And the give-back is still cautious at a reading of 53, on purpose
+
+⚠️ **A reading of 53 means [53, 54), and a pack at 53.9 cannot be told from one at 53.1.** So the give-back spends only what the silence has established **beyond** that half-degree: `(54 − T) − QUANTISATION_K − REACTION_MIN / t`, where `t` is how long the reading has been still — the same `1/t` substitution `blindStepAmps` makes. At a reading of 51 that clears zero after six minutes; at 53 it takes twenty-four.
+
+**Measured, and this is why it is not simply zero.** Without the half-degree term, DC2 takes three amps back from the floor with the pack at a true 53.9 — and then `NEAR_CEILING` holds that current for **thirty minutes** while the pack creeps 54.0 → 55.01, invisibly, because a whole-degree sensor cannot see a sub-degree climb. Peak 55.01 against 54.11 for the rule this replaces. With the term, DC2 gives back two amps, peaks at **54.70** and finishes **2 minutes sooner**. The same arithmetic on the bike rather than the plant: Daniel's hand-set 80 A at 14:47:54 took the pack from a reading of 53 to 55 in **109 seconds**, which is 0.018 K/min per amp of excess — so three amps over the equilibrium reaches the cliff in about twenty minutes.
+
+⚠️ **The cost is named rather than hidden: session A's eighteen-minute stall is NOT unstuck by this change.** Eighteen minutes of stillness at a reading of 53 is not enough to establish the half-degree, so the rule still holds 35 A there. What it fixes is where the amps actually were — a pack settled at a reading of 51 at the floor now climbs back above 50 A within twenty minutes, where the shipped rule gives 4 A once and then parks for ever.
+
+## A move the estimator cannot see
+
+⚠️ **The loop acts about ten times faster than it can measure.** A rate is fitted over `RATE_WINDOW_MS` and re-decided every `AUTO_TICK_MS`, so for the first ten ticks after a move the window still holds samples taken at the previous current. Measured 2026-09-18: **six cuts in five minutes, 80 → 35 A**, while the pack moved one whole degree and the estimate collapsed 0.766 → 0.219 K/min the whole way down. Every one was sized from the current before it.
+
+**So a raise waits until the estimator's answer is about the current now flowing** — `RATE_MIN_SPAN_MS`, the estimator's own "enough history to say anything" threshold, and the whole window in the one case that would otherwise read as evidence and is not (a `not-rising` answer whose window is anchored below the reading, so a dip and a recovery look like stillness). It is released early by the reading **falling**, which is post-move evidence of room whichever way the last command went — 17:21:14 on 2026-09-18, where the reading came back 52 → 51 and the bike's own next tick gave current back.
+
+⚠️ **AND ONLY RAISES WAIT, WHICH IS THE OPPOSITE OF WHAT THE DEFECT REPORT ASKED FOR.** The obvious reading of "six cuts before the first is measurable" is to pace the descent. Measured over the frozen 150-plant grid, that is much worse:
+
+| what waits                       | plants crossing 55 °C of 150 |
+| -------------------------------- | ---------------------------- |
+| nothing (the rule this replaces) | 16                           |
+| **raises only (shipped here)**   | **15**                       |
+| both directions                  | 30                           |
+| cuts only                        | 51                           |
+
+A descent that waits for the pack to cross another whole degree before cutting again is far too slow on a pack that is climbing, and the costs are asymmetric in the same direction: an over-cut parks the charge at the floor, which the give-back above now walks back, while an over-raise crosses the cliff at a measured cost of 42 minutes. **Quick to cut, slow to raise.**
+
+⚠️ **Nothing waits at or above the setpoint**, the boundary the taper veto keeps, and here it is trivially safe: nothing may raise there at all.
+
+⚠️ **What it does not bound.** A fitted slope that has not caught up with the last raise still over-states the headroom five minutes later, so a raise can out-run its own measurement by one step per interval. The grid says the rule crosses no more often than the one it replaces; the setpoint guard and the cliff branch are what bound it.
+
+### What the floor costs, so nobody re-derives it
+
+The dump to the floor and the cliff are closer together than they look, and one of them is not a disaster:
+
+|                        | SOC pts/min | lost against a 54.6 A hold |
+| ---------------------- | ----------- | -------------------------- |
+| a 54.6 A hold at 54 °C | 1.419       | —                          |
+| the 35 A floor         | 0.910       | 36 %                       |
+| the cliff's saw-tooth  | 0.769       | 46 %                       |
+
+**The floor recovers only 21.6 % of the distance from the cliff to a proper hold.** Session A's eighteen minutes there cost **9.2 SOC points ≈ 6.5 minutes of charging**, against the cliff's measured 42 minutes over two stops — so roughly 3:1 per event, plus a thermal excursion on the cells. ⚠️ Do **not** compute the saw-tooth's rate from its duty-weighted 35.3 A: it is _measured_ at 1.30 min/SOC-point, 18 % worse than a steady 35.3 A would deliver, which is why `SAWTOOTH_MIN_PER_POINT` exists separately.
 
 ## The numbers, and where each comes from
 
@@ -129,6 +179,7 @@ The span is measured **to now**, not to the newest sample: samples arrive only w
 | `MIN_STEP_A` | 1 A | The bike accepts 1 A, verified against the manual sheet. The dash's own dial moves in 5 A; the loop is finer than the dial on purpose. |
 | `QUANTISATION_K` | 0.5 K | Half a least count of a whole-degree sensor. **Derived, not chosen**, and applied only _below_ the setpoint. |
 | **`MIN_COMMAND_A`** | **35 A** | ⚠️ **The one knob that matters.** Capping below this is worse than not acting: the cliff's saw-tooth averages a measured **35.3 A** duty-weighted (1.30 min/SOC-point), so break-even is `0.53 × 72.6 / 1.30 = 29.6 A`, and a 25 A floor would be **18 % slower than doing nothing**. |
+| `MEASURING` | — | The reason a raise is waiting. ⚠️ Its own code rather than `SETTLED`, because a rider who cannot tell a wait from a fault is #204 again. |
 | `RATE_WINDOW_MS` | 10 min | ≥3 periods of the longest (1–3 min) saw-tooth, so the slope is bulk drift rather than oscillation. Fitting to the saw-tooth over-predicts the real climb by **3.5×**. |
 | **`TAPER_ENVELOPE_A`** | 88 % → 70 A … 99 % → 29 A | The largest current the vehicle has ever asked for at each SOC, over every DC tick of 15 sessions with the pack under 55 °C, monotone from the top. ⚠️ A MAXIMUM, so the filter is loose: a tick where something else was binding can only pull a value down. `docs/dc-taper.md`. |
 | `TAPER_KNEE_SOC` | 88 % | Where the envelope stops being flat — and the deceleration guard, which is the more important half. |

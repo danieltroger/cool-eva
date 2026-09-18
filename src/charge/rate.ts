@@ -11,16 +11,30 @@
 // pack moved less than that many degrees in that time — an upper BOUND on the rate. An earlier
 // design read it as an absence and descended anyway, which ratchets a perfectly stable charge to
 // the floor because it is stable. docs/charge-auto.md.
+//
+// ⚠️ AND THE ONE THAT DID SHIP (#276). That bound is on the MAGNITUDE, and a caller that spends it
+// as a heating rate charges a still pack for a climb it did not make — which is why the arms below
+// split on the direction the reading actually went, and why the still one carries no number.
 
 /** What the samples support saying about the heating rate. Closed, so no caller can invent a case. */
 export type HeatingRate =
   /** A least-squares slope over the window, K/min. Can be negative — the pack may be cooling. */
   | { kind: "rate"; perMinute: number }
   /**
-   * Not enough distinct readings to fit a slope, but enough time to bound one: the pack moved at
-   * most `perMinute` K/min, or the window would have crossed another whole degree.
+   * Not enough distinct readings to fit a slope, but enough time to bound one, and the reading
+   * ROSE across the window: the pack climbed at most `perMinute` K/min, or it would have crossed
+   * another whole degree.
    */
   | { kind: "bounded"; perMinute: number }
+  /**
+   * The reading did not rise across the window — it never moved, or its net movement was down.
+   *
+   * ⚠️ CARRIES NO NUMBER, and that is the point: the window still permits a drift under the least
+   * count, but the measured heating is zero and a caller must not spend a bound as if it were a
+   * rate. `rate.perMinute` is a type error on this arm. docs/charge-auto.md § "A bound is not a
+   * rate"; `minutesSinceNewestSample` is where the bound itself is still available.
+   */
+  | { kind: "not-rising" }
   /** Too little history to say anything — early in a session, or after a restart. */
   | { kind: "unknown" };
 
@@ -94,9 +108,16 @@ export function estimateHeatingRate(samples: TemperatureSample[], nowMs: number)
   }
   const distinct = new Set(window.map(sample => sample.celsius)).size;
   if (distinct < RATE_MIN_DISTINCT) {
-    // A BOUND, not an absence. Only `distinct` whole-degree values were seen, so the temperature
-    // stayed inside a band `distinct` degrees wide for the whole span — it cannot have moved faster
-    // than that, or it would have crossed into another one.
+    // ⚠️ SPLIT ON THE DIRECTION THE READING ACTUALLY WENT, and this is #276. A BOUND is still not an
+    // absence — only `distinct` whole-degree values were seen, so the temperature stayed inside a
+    // band that many degrees wide and cannot have moved faster. But the bound is on the MAGNITUDE,
+    // and spending it as a heating rate charges a pack that did not rise for a climb it did not
+    // make: at `distinct = 1` the smallest this arm can return is 0.1 K/min, which over
+    // REACTION_MIN is 1.2 K of phantom deficit and made the 54 °C setpoint unreachable from below.
+    // A window whose net movement is zero or DOWNWARD is evidence of no heating, not of some.
+    if (window[window.length - 1].celsius <= window[0].celsius) {
+      return { kind: "not-rising" };
+    }
     return { kind: "bounded", perMinute: (distinct * 60_000) / spanMs };
   }
   // ⚠️ CAPPED BY THE SILENCE, and this is the bug that cost 45 A at a reading of 51 °C on

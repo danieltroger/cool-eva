@@ -334,7 +334,7 @@ export const SIGNALS: SignalDef[] = [
   // commanded but why — a stop that ends at the floor and one that never had a usable rate look
   // identical in the amps alone.
   { key: "charge_auto_mode", unit: "", group: "charge", source: "sensor", onDemand: true, bounds: [0, 1] },
-  { key: "charge_auto_reason", unit: "", group: "charge", source: "sensor", onDemand: true, bounds: [0, 13] },
+  { key: "charge_auto_reason", unit: "", group: "charge", source: "sensor", onDemand: true, bounds: [0, 14] },
   { key: "charge_auto_target_a", unit: "A", group: "charge", source: "sensor", onDemand: true, bounds: [0, 127] },
   { key: "charge_manager_error_src", unit: "", group: "charge", source: "stream", bounds: [0, 255] }, // 0x610 b1 ✅
   { key: "charge_manager_error_code", unit: "", group: "charge", source: "stream", bounds: [-32_768, 32_767] }, // 0x610 b2-3 ✅

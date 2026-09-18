@@ -92,11 +92,12 @@ export const CHARGE_AUTO_REASON_TEXT: Record<number, string> = {
   [CHARGE_AUTO_REASON.BLIND_DESCENT]: "Arrived hot with no trend yet — easing the current down.",
   [CHARGE_AUTO_REASON.HARD_CEILING]: `At ${TARGET_C} °C or above — easing the current down.`,
   [CHARGE_AUTO_REASON.CLOSING]: `Warming towards ${TARGET_C} °C too fast to catch — easing the current down.`,
-  [CHARGE_AUTO_REASON.CLEAR]: `Below ${TARGET_C} °C with room to spare — giving current back.`,
+  [CHARGE_AUTO_REASON.CLEAR]: `Below ${TARGET_C} °C with room to spare — giving current back, a step at a time.`,
   [CHARGE_AUTO_REASON.SETTLED]: "Holding — this current is taking the pack where it should be.",
   [CHARGE_AUTO_REASON.NEAR_CEILING]: `At ${TARGET_C} °C and not warming — holding this current.`,
   [CHARGE_AUTO_REASON.AT_FLOOR]: `At the ${MIN_COMMAND_A} A floor — going lower would be slower than not acting.`,
   [CHARGE_AUTO_REASON.TAPERING]:
     "The pack's own taper takes the current away before it could reach " +
     `${TARGET_C} °C — holding, rather than taking it away first.`,
+  [CHARGE_AUTO_REASON.MEASURING]: "Holding the last change until the pack has answered it.",
 };

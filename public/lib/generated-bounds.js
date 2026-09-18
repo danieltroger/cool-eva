@@ -64,7 +64,7 @@ export const SIGNAL_BOUNDS = Object.assign(Object.create(null), {
   "charge_cmd_ack_ms": [0, 60000],
   "charge_cmd_ack_seq": [0, 255],
   "charge_auto_mode": [0, 1],
-  "charge_auto_reason": [0, 13],
+  "charge_auto_reason": [0, 14],
   "charge_auto_target_a": [0, 127],
   "charge_manager_error_src": [0, 255],
   "charge_manager_error_code": [-32768, 32767],
