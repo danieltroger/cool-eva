@@ -1,4 +1,4 @@
-import { RATE_MIN_SPAN_MS, RATE_WINDOW_MS, type TemperatureSample } from "./rate.ts";
+import { newestSampleAtOrBefore, RATE_MIN_SPAN_MS, RATE_WINDOW_MS, type TemperatureSample } from "./rate.ts";
 
 // When the controller is allowed to move again. Pure — samples and two facts about the last
 // command in, a yes or no out. The half that decides WHAT to command is ./auto-curve.ts.
@@ -9,10 +9,8 @@ import { RATE_MIN_SPAN_MS, RATE_WINDOW_MS, type TemperatureSample } from "./rate
 // cuts landed in five minutes, 80 → 35 A, while the pack moved one whole degree and the estimate
 // collapsed 0.766 → 0.219 K/min the whole way down. Every one was sized from the current before it.
 //
-// ⚠️ AND YET ONLY RAISES WAIT. Waiting to cut is worse than cutting on a stale rate: over the
-// frozen grid the wait applied to both directions crosses the cliff on 30 plants of 150 and to cuts
-// alone on 51, against 16 for the rule this replaces and 15 for raises alone. ../../docs/charge-auto.md
-// carries the table. The caller applies it to raises; this module only answers the question.
+// ⚠️ AND YET ONLY RAISES WAIT, which is measured rather than chosen — docs/charge-auto.md § "A
+// move the estimator cannot see" has the table. The caller applies it; this module only answers.
 //
 // ⚠️ A GATE ON ACTING, NOT A TRIM OF THE RING, and the difference is not cosmetic: dropping samples
 // older than the last move makes `estimateHeatingRate` answer `unknown` for RATE_MIN_SPAN_MS, and
@@ -41,10 +39,13 @@ export function commandIsUnmeasured(state: PaceState): boolean {
   if (state.lastCommandAtMs === null) {
     return false;
   }
-  if (readingFellSince(state, state.lastCommandAtMs)) {
+  // What the sensor last said when the command went out — the reference BOTH questions below are
+  // about, so it is resolved once here rather than twice from two different functions.
+  const atCommand = newestSampleAtOrBefore(state.samples, state.lastCommandAtMs);
+  if (readingFellSince(state, atCommand)) {
     return false;
   }
-  return state.nowMs - state.lastCommandAtMs < measurableAfterMs(state, state.lastCommandAtMs);
+  return state.nowMs - state.lastCommandAtMs < measurableAfterMs(state, atCommand);
 }
 
 /**
@@ -59,13 +60,11 @@ export function commandIsUnmeasured(state: PaceState): boolean {
  * window, which is how long it takes for the anchor to leave and the answer to be about this
  * current alone.
  *
- * ⚠️ What this does NOT bound: a fitted slope that has not caught up with the last raise still
- * over-states the headroom five minutes later, so a raise can out-run its own measurement by one
- * step per interval. The frozen grid says the rule crosses the cliff no more often than the one it
- * replaces (15 plants against 16), and the setpoint guard and the cliff branch are what bound it.
+ * ⚠️ What it does NOT bound is in docs/charge-auto.md § "A move the estimator cannot see": a
+ * fitted slope can still out-run itself by one step per interval.
  */
-function measurableAfterMs(state: PaceState, lastCommandAtMs: number): number {
-  if (state.rateIsNotRising && readingRoseSince(state, lastCommandAtMs)) {
+function measurableAfterMs(state: PaceState, atCommand: TemperatureSample | undefined): number {
+  if (state.rateIsNotRising && readingRoseSince(state, atCommand)) {
     return RATE_WINDOW_MS;
   }
   return RATE_MIN_SPAN_MS;
@@ -85,8 +84,7 @@ function measurableAfterMs(state: PaceState, lastCommandAtMs: number): number {
  * when this is asked. A mutation flipping it therefore SURVIVES the check, on purpose and for the
  * reason `sessionEndsFirst`'s setpoint guard does: docs/charge-auto.md § "The taper".
  */
-function readingFellSince(state: PaceState, lastCommandAtMs: number): boolean {
-  const atCommand = newestSampleAtOrBefore(state.samples, lastCommandAtMs);
+function readingFellSince(state: PaceState, atCommand: TemperatureSample | undefined): boolean {
   const newest = newestSampleAtOrBefore(state.samples, state.nowMs);
   if (atCommand === undefined || newest === undefined) {
     return true;
@@ -95,16 +93,11 @@ function readingFellSince(state: PaceState, lastCommandAtMs: number): boolean {
 }
 
 /** Whether any reading since the last command is higher than the one it was commanded against. */
-function readingRoseSince(state: PaceState, lastCommandAtMs: number): boolean {
-  const atCommand = newestSampleAtOrBefore(state.samples, lastCommandAtMs);
+function readingRoseSince(state: PaceState, atCommand: TemperatureSample | undefined): boolean {
   if (atCommand === undefined) {
     return false;
   }
   return state.samples.some(
-    sample => sample.atMs > lastCommandAtMs && sample.atMs <= state.nowMs && sample.celsius > atCommand.celsius
+    sample => sample.atMs > atCommand.atMs && sample.atMs <= state.nowMs && sample.celsius > atCommand.celsius
   );
-}
-
-function newestSampleAtOrBefore(samples: TemperatureSample[], atMs: number): TemperatureSample | undefined {
-  return samples.filter(sample => sample.atMs <= atMs).at(-1);
 }

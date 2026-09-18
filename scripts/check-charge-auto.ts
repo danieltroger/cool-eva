@@ -40,11 +40,9 @@ import {
 } from "./charge-auto-plant.ts";
 import { boundsFor } from "../public/lib/bounds.js";
 import {
-  SEPTEMBER_18_AT_FLOOR_MS,
-  SEPTEMBER_18_COMMANDS,
   SEPTEMBER_18_EPISODE,
   SEPTEMBER_18_STALL,
-  SEPTEMBER_18_STALL_END_MS,
+  SEPTEMBER_18_STALL_TICKS,
   SEPTEMBER_18_TICKS,
   COOLING_AT_53_MS,
   COOLING_EPISODE,
@@ -1268,6 +1266,8 @@ const EXPECTED_FROZEN_GRID_VETOES = 20;
 const EXPECTED_FROZEN_GRID_PLANTS = 8;
 let frozenGridVetoes = 0;
 let frozenGridPlants = 0;
+/** §21's count, tallied here so it is measured over the very same runs. */
+let gridPaceHolds = 0;
 for (const arrivalC of CROSSING_GRID.arrivals) {
   for (const ambientC of CROSSING_GRID.ambients) {
     for (const cooling of CROSSING_GRID.coolings) {
@@ -1280,6 +1280,7 @@ for (const arrivalC of CROSSING_GRID.arrivals) {
       });
       const count = run.reasons.get(CHARGE_AUTO_REASON.TAPERING) ?? 0;
       frozenGridVetoes += count;
+      gridPaceHolds += run.reasons.get(CHARGE_AUTO_REASON.MEASURING) ?? 0;
       if (count > 0) {
         frozenGridPlants += 1;
       }
@@ -1401,26 +1402,26 @@ function settleBatches(): Promise<void> {
   let commandedAmps: number | null = null;
   let lastCommandAtMs: number | null = null;
   const commanded: number[] = [];
-  for (const nowMs of SEPTEMBER_18_TICKS) {
-    const decision = decideChargeCurrent({
-      ...HEALTHY,
-      packTemperatureC: SEPTEMBER_18_EPISODE.filter(sample => sample.atMs <= nowMs).at(-1)?.celsius ?? 48,
+  for (const tick of SEPTEMBER_18_TICKS) {
+    // ⚠️ Through `decideOnRing`, which takes the reading FROM the ring and throws when there is
+    // none. Open-coded here it needed a `?? 48` fallback — a fabricated reading standing in for
+    // the throw, in the section whose whole point is replaying what the bike really saw.
+    const decision = decideOnRing(SEPTEMBER_18_EPISODE, tick.atMs, commandedAmps ?? 80, {
       ceilingAmps: 80,
       commandedAmps,
-      samples: SEPTEMBER_18_EPISODE,
       lastCommandAtMs,
-      nowMs,
     });
     if (decision.kind === "command") {
-      lastCommandAtMs = nowMs;
+      lastCommandAtMs = tick.atMs;
       commandedAmps = decision.amps;
     }
     commanded.push(commandedAmps ?? 80);
   }
-  if (commanded.join(",") !== SEPTEMBER_18_COMMANDS.join(",")) {
+  const bike = SEPTEMBER_18_TICKS.map(tick => tick.commanded);
+  if (commanded.join(",") !== bike.join(",")) {
     failures.push(
       `§20 replayed over session B's own rings the rule commands ${commanded.join(",")}, where the bike commanded ` +
-        `${SEPTEMBER_18_COMMANDS.join(",")}. The descent is deliberately untouched — a pace on lowerings crosses ` +
+        `${bike.join(",")}. The descent is deliberately untouched — a pace on lowerings crosses ` +
         `${CLIFF_C} °C on twice as many frozen plants — so a change here is a change to the half #276 did not ask for`
     );
   }
@@ -1431,20 +1432,12 @@ function settleBatches(): Promise<void> {
 // spends only what the silence has established BEYOND that half-degree. Measured cost of the
 // alternative: DC2 takes three amps back from a true 53.9 and creeps to 55.01 over the next half
 // hour, invisibly, because NEAR_CEILING cannot see a sub-degree climb. docs/charge-auto.md.
-for (const atMs of [SEPTEMBER_18_AT_FLOOR_MS, SEPTEMBER_18_STALL_END_MS]) {
-  const decision = decideChargeCurrent({
-    ...HEALTHY,
-    packTemperatureC: 53,
-    ceilingAmps: 80,
-    commandedAmps: MIN_COMMAND_A,
-    samples: SEPTEMBER_18_STALL,
-    nowMs: atMs,
-  });
+for (const tick of SEPTEMBER_18_STALL_TICKS) {
+  const decision = decideOnRing(SEPTEMBER_18_STALL, tick.atMs, MIN_COMMAND_A, { ceilingAmps: 80 });
   if (decision.kind !== "hold") {
     failures.push(
-      `§20 at ${atMs === SEPTEMBER_18_AT_FLOOR_MS ? "14:36:39" : "14:47:39"} the pack read 53 at the floor with ` +
-        `less than a reaction time of proven stillness beyond the sensor's own half-degree, so the rule must not ` +
-        `raise yet: got ${JSON.stringify(decision)}`
+      `§20 at ${tick.clock} the pack read 53 at the floor with less than a reaction time of proven stillness ` +
+        `beyond the sensor's own half-degree, so the rule must not raise yet: got ${JSON.stringify(decision)}`
     );
   }
 }
@@ -1498,35 +1491,31 @@ for (const temperature of PROPERTY_TEMPERATURES) {
       rampTo(temperature + 3, temperature),
       steady(temperature, 700_000),
     ]) {
-      {
-        const base: ChargeAutoInput = {
-          ...HEALTHY,
-          packTemperatureC: temperature,
-          commandedAmps,
-          samples,
-          nowMs: 700_000,
-        };
-        const unpaced = decideChargeCurrent(base);
-        const paced = decideChargeCurrent({ ...base, lastCommandAtMs: 660_000 });
-        paceCases += 1;
-        if (JSON.stringify(unpaced) === JSON.stringify(paced)) {
-          continue;
-        }
-        paceHolds += 1;
-        if (paced.kind !== "hold" || paced.reason !== CHARGE_AUTO_REASON.MEASURING) {
-          failures.push(`§21 the pace produced ${JSON.stringify(paced)} — it may only ever hold, with its own reason`);
-        }
-        if (unpaced.kind !== "command" || unpaced.amps <= Math.floor(commandedAmps)) {
-          failures.push(
-            `§21 the pace changed a decision that was not a RAISE (${JSON.stringify(unpaced)} at ${temperature} °C) — ` +
-              `waiting to cut crosses the cliff on twice as many frozen plants, so it must never reach one`
-          );
-        }
-        if (temperature >= TARGET_C) {
-          failures.push(
-            `§21 at a reading of ${temperature} the pace changed a decision; nothing it does may reach here`
-          );
-        }
+      const base: ChargeAutoInput = {
+        ...HEALTHY,
+        packTemperatureC: temperature,
+        commandedAmps,
+        samples,
+        nowMs: 700_000,
+      };
+      const unpaced = decideChargeCurrent(base);
+      const paced = decideChargeCurrent({ ...base, lastCommandAtMs: 660_000 });
+      paceCases += 1;
+      if (JSON.stringify(unpaced) === JSON.stringify(paced)) {
+        continue;
+      }
+      paceHolds += 1;
+      if (paced.kind !== "hold" || paced.reason !== CHARGE_AUTO_REASON.MEASURING) {
+        failures.push(`§21 the pace produced ${JSON.stringify(paced)} — it may only ever hold, with its own reason`);
+      }
+      if (unpaced.kind !== "command" || unpaced.amps <= Math.floor(commandedAmps)) {
+        failures.push(
+          `§21 the pace changed a decision that was not a RAISE (${JSON.stringify(unpaced)} at ${temperature} °C) — ` +
+            `waiting to cut crosses the cliff on twice as many frozen plants, so it must never reach one`
+        );
+      }
+      if (temperature >= TARGET_C) {
+        failures.push(`§21 at a reading of ${temperature} the pace changed a decision; nothing it does may reach here`);
       }
     }
   }
@@ -1567,21 +1556,10 @@ for (const probe of [
 
 /** Measured over CROSSING_GRID. Pinned, so "hold every raise" cannot pass §21 quietly. */
 const EXPECTED_GRID_PACE_HOLDS = 1018;
-let gridPaceHolds = 0;
-for (const arrivalC of CROSSING_GRID.arrivals) {
-  for (const ambientC of CROSSING_GRID.ambients) {
-    for (const cooling of CROSSING_GRID.coolings) {
-      const run = replayCharge({
-        arrivalC,
-        ambientC,
-        cooling,
-        fromSoc: CROSSING_GRID.fromSoc,
-        toSoc: CROSSING_GRID.toSoc,
-      });
-      gridPaceHolds += run.reasons.get(CHARGE_AUTO_REASON.MEASURING) ?? 0;
-    }
-  }
-}
+// ⚠️ Counted off §18's walk of the SAME 150 plants rather than a third sweep of its own. Three
+// pinned numbers — §11's crossing set, §18's veto count and this — are only comparable while all
+// three are measured over one set of runs, which §18's comment asserts and a third loop with its
+// own options object would have left to luck.
 if (gridPaceHolds !== EXPECTED_GRID_PACE_HOLDS) {
   failures.push(
     `§21 the pace held ${gridPaceHolds} of §11's grid ticks, not the pinned ${EXPECTED_GRID_PACE_HOLDS}. Zero would ` +
@@ -1638,12 +1616,24 @@ function climbing(fromC: number, toC: number): TemperatureSample[] {
  * while cooling" was asserted for a whole release against a ring whose newest reading was 53. The
  * reading is derived here rather than passed, so that class of fixture cannot be written again.
  */
-function decideOnRing(samples: TemperatureSample[], nowMs: number, commandedAmps: number): ChargeAutoDecision {
+function decideOnRing(
+  samples: TemperatureSample[],
+  nowMs: number,
+  commandedAmps: number,
+  over: Partial<ChargeAutoInput> = {}
+): ChargeAutoDecision {
   const newest = samples.filter(sample => sample.atMs <= nowMs).at(-1);
   if (newest === undefined) {
     throw new Error("decideOnRing needs at least one sample at or before nowMs");
   }
-  return decideChargeCurrent({ ...HEALTHY, packTemperatureC: newest.celsius, commandedAmps, samples, nowMs });
+  return decideChargeCurrent({
+    ...HEALTHY,
+    packTemperatureC: newest.celsius,
+    commandedAmps,
+    samples,
+    nowMs,
+    ...over,
+  });
 }
 
 /**
@@ -1797,15 +1787,7 @@ function giveBackFromTheFloor(reading: number, minutes: number): number {
   let lastCommandAtMs: number | null = null;
   for (let tick = 0; tick < minutes; tick += 1) {
     const nowMs = startMs + tick * 60_000;
-    const decision = decideChargeCurrent({
-      ...HEALTHY,
-      packTemperatureC: reading,
-      ceilingAmps: 80,
-      commandedAmps,
-      samples,
-      lastCommandAtMs,
-      nowMs,
-    });
+    const decision = decideOnRing(samples, nowMs, commandedAmps, { ceilingAmps: 80, lastCommandAtMs });
     if (decision.kind === "command") {
       lastCommandAtMs = nowMs;
       commandedAmps = decision.amps;

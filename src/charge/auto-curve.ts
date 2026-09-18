@@ -1,12 +1,6 @@
-import {
-  estimateHeatingRate,
-  minutesSinceNewestSample,
-  RATE_WINDOW_MS,
-  type HeatingRate,
-  type TemperatureSample,
-} from "./rate.ts";
+import { estimateHeatingRate, measuredRatePerMinute, type HeatingRate, type TemperatureSample } from "./rate.ts";
 import { commandIsUnmeasured } from "./pace.ts";
-import { blindStepAmps, confidentHeadroomKelvin, measuredRatePerMinute, stepAmps } from "./step.ts";
+import { blindStepAmps, clampedStep, confidentHeadroomKelvin } from "./step.ts";
 import { sessionAheadMinutes, type SocSample } from "./soc.ts";
 import { CHARGE_MANAGER_STATE_DC } from "../fan/curve.ts";
 
@@ -242,7 +236,12 @@ export function decideChargeCurrent(input: ChargeAutoInput): ChargeAutoDecision 
     if (temperature < TARGET_C) {
       return { kind: "hold", reason: CHARGE_AUTO_REASON.NO_HISTORY };
     }
-    return stepTo(current - blindStepAmps(input), current, ceiling, CHARGE_AUTO_REASON.BLIND_DESCENT);
+    return stepTo(
+      current - blindStepAmps(input.samples, input.nowMs),
+      current,
+      ceiling,
+      CHARGE_AUTO_REASON.BLIND_DESCENT
+    );
   }
 
   // ⚠️ AT THE SETPOINT, A BOUND IS NOT EVIDENCE OF HEATING. `bounded` is strictly positive by
@@ -282,10 +281,16 @@ export function decideChargeCurrent(input: ChargeAutoInput): ChargeAutoDecision 
   // reading's own bound — unmoved for `t` minutes means under `1/t` K/min, the substitution
   // `blindStepAmps` already makes — is subtracted before any of it is turned into amps. A pack
   // still for less than the reaction time has established nothing to spend and holds.
-  if (rate.kind === "not-rising" && confidentHeadroomKelvin(input, headroomKelvin) <= 0) {
+  // ⚠️ ONE NUMBER, computed once: the gate below and the step's size are the same quantity, and
+  // recomputing it in the sizing let them drift apart in two files.
+  const spendableKelvin =
+    rate.kind === "not-rising"
+      ? confidentHeadroomKelvin(input.samples, input.nowMs, headroomKelvin)
+      : Math.abs(headroomKelvin);
+  if (rate.kind === "not-rising" && spendableKelvin <= 0) {
     return { kind: "hold", reason: CHARGE_AUTO_REASON.SETTLED };
   }
-  const step = stepAmps(input, rate, headroomKelvin);
+  const step = clampedStep(spendableKelvin);
   if (headroomKelvin > 0) {
     const raised = stepTo(current + step, current, ceiling, CHARGE_AUTO_REASON.CLEAR);
     return measurementPending(input, raised, current, temperature, rate) ?? raised;
@@ -299,10 +304,9 @@ export function decideChargeCurrent(input: ChargeAutoInput): ChargeAutoDecision 
  * Turns a RAISE into a hold until the estimator can see what the last command did. `./pace.ts` is
  * the measurement; this is the policy around it.
  *
- * ⚠️ RAISES ONLY, and the asymmetry is MEASURED rather than chosen: over the frozen grid the same
- * wait costs 15 crossings on raises, 30 on both directions and 51 on cuts alone, against 16 for
- * the rule this replaces. Quick to cut, slow to raise — an over-cut parks the charge at the floor,
- * which the give-back walks back, and an over-raise costs 42 minutes. The table and the reasoning:
+ * ⚠️ RAISES ONLY, and the asymmetry is MEASURED rather than chosen: quick to cut, slow to raise,
+ * because an over-cut parks the charge at the floor where the give-back walks it back, while an
+ * over-raise costs 42 minutes. The crossing table:
  * docs/charge-auto.md § "A move the estimator cannot see".
  *
  * ⚠️ Never at or above the setpoint (nothing may raise there, so a wait would suppress a step that

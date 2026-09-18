@@ -211,11 +211,21 @@ export const SEPTEMBER_18_EPISODE: TemperatureSample[] = [
   { atMs: 760_344, celsius: 51 },
 ];
 
-/** The bike's own tick instants across that descent, ms from the same edge. */
-export const SEPTEMBER_18_TICKS = [404_058, 464_088, 524_140, 584_096, 644_086, 704_123, 764_054];
-
-/** What the controller commanded at each of those ticks, from `charge_auto_target_a`. */
-export const SEPTEMBER_18_COMMANDS = [68, 55, 44, 39, 36, 35, 37];
+/**
+ * The bike's own tick instants across that descent and what it commanded at each, from
+ * `charge_auto_reason` and `charge_auto_target_a`. One record per tick, like SEPTEMBER_13_TICKS
+ * above: two index-aligned arrays would let a dropped entry report an off-by-one diff instead of
+ * failing to compile.
+ */
+export const SEPTEMBER_18_TICKS = [
+  { clock: "17:15:18", atMs: 404_058, commanded: 68 },
+  { clock: "17:16:18", atMs: 464_088, commanded: 55 },
+  { clock: "17:17:18", atMs: 524_140, commanded: 44 },
+  { clock: "17:18:18", atMs: 584_096, commanded: 39 },
+  { clock: "17:19:18", atMs: 644_086, commanded: 36 },
+  { clock: "17:20:18", atMs: 704_123, commanded: 35 },
+  { clock: "17:21:18", atMs: 764_054, commanded: 37 },
+];
 
 /**
  * 2026-09-18, session A — eleven ticks at the 35 A floor with the reading unmoved at 53 °C from
@@ -240,8 +250,8 @@ export const SEPTEMBER_18_STALL: TemperatureSample[] = [
   { atMs: 1_298_498, celsius: 53 },
 ];
 
-/** 14:36:39 — the first tick at the floor, one minute after the descent ended. */
-export const SEPTEMBER_18_AT_FLOOR_MS = 1_314_956 + 60_000;
-
-/** 14:47:39 — the last tick before Daniel switched it off, the reading unmoved for 17.3 min. */
-export const SEPTEMBER_18_STALL_END_MS = 2_334_956;
+/** The first tick at the floor, and the last before Daniel switched it off 17.3 min later. */
+export const SEPTEMBER_18_STALL_TICKS = [
+  { clock: "14:36:39", atMs: 1_374_956 },
+  { clock: "14:47:39", atMs: 2_334_956 },
+];

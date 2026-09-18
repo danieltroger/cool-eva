@@ -73,8 +73,20 @@ export const RATE_WINDOW_MS = 600_000;
  * `estimateHeatingRate` caps a stale slope with it; `auto-curve.ts` sizes its blind step from it.
  */
 export function minutesSinceNewestSample(samples: TemperatureSample[], nowMs: number): number | null {
-  const newest = samples.filter(sample => sample.atMs <= nowMs).at(-1);
+  const newest = newestSampleAtOrBefore(samples, nowMs);
   return newest === undefined ? null : (nowMs - newest.atMs) / 60_000;
+}
+
+/**
+ * The newest sample taken at or before `atMs`, or undefined if there is none.
+ *
+ * ⚠️ One definition because there were four: this file's silence, the window's anchor below, and
+ * two more in ./pace.ts once the wait arrived. All of them mean "what did the sensor last say by
+ * then", and all of them assume the ring is in arrival order, which ./auto.ts guarantees by only
+ * ever pushing.
+ */
+export function newestSampleAtOrBefore(samples: TemperatureSample[], atMs: number): TemperatureSample | undefined {
+  return samples.findLast(sample => sample.atMs <= atMs);
 }
 
 /**
@@ -156,4 +168,14 @@ function leastSquaresSlopePerMinute(window: TemperatureSample[]): number {
   // Guarded rather than assumed: every sample sharing one timestamp is a divide by zero, and this
   // number decides how much current goes into a battery.
   return variance === 0 ? 0 : (covariance / variance) * 60_000;
+}
+
+/**
+ * The rate the headroom line may spend. A bound is not one; a reading that did not rise measures 0.
+ *
+ * ⚠️ `unknown` never reaches here — `decideChargeCurrent` answers it above — and the arms are named
+ * rather than defaulted so a fifth one cannot inherit a silent zero.
+ */
+export function measuredRatePerMinute(rate: HeatingRate): number {
+  return rate.kind === "rate" || rate.kind === "bounded" ? rate.perMinute : 0;
 }

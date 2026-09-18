@@ -1,12 +1,5 @@
-import {
-  AMPS_PER_KELVIN,
-  MAX_STEP_A,
-  MIN_STEP_A,
-  QUANTISATION_K,
-  REACTION_MIN,
-  type ChargeAutoInput,
-} from "./auto-curve.ts";
-import { minutesSinceNewestSample, type HeatingRate } from "./rate.ts";
+import { AMPS_PER_KELVIN, MAX_STEP_A, MIN_STEP_A, QUANTISATION_K, REACTION_MIN } from "./auto-curve.ts";
+import { minutesSinceNewestSample, type TemperatureSample } from "./rate.ts";
 
 // How many amps one move is worth. Pure — an estimate and a headroom in, a step out. What the move
 // is FOR is ./auto-curve.ts; this is only its size.
@@ -17,36 +10,32 @@ import { minutesSinceNewestSample, type HeatingRate } from "./rate.ts";
 // 53 it tips the deadband and freezes at the floor: both halves are one wrong multiplicand.
 
 /**
- * The rate the headroom line may spend. A bound is not one; a reading that did not rise measures 0.
+ * How much of the headroom a pack that has not risen has actually EARNED, and ⚠️ THE ANTI-WINDUP
+ * THE PHANTOM USED TO PROVIDE. Two terms come off the distance to the setpoint:
  *
- * ⚠️ `unknown` never reaches here — `decideChargeCurrent` answers it above — and the arms are named
- * rather than defaulted so a fifth one cannot inherit a silent zero.
+ * - `QUANTISATION_K`, because a reading of T means [T, T+1) and a raise must assume the worse half.
+ *   ⚠️ Subtracted on THIS ARM ONLY. A fitted slope brings independent evidence that the pack is
+ *   moving, so truncation is not its whole error budget; #181 tried the correction at every
+ *   temperature and measured a COLDER equilibrium for it (docs/charge-auto.md § "Superseded: the
+ *   two tiers at 53 and 54, and what survives them"). This is half that magnitude and gated.
+ * - `REACTION_MIN / t`, the silence's own bound — unmoved for `t` minutes means under `1/t` K/min
+ *   — which is the substitution `blindStepAmps` below already makes, so the two rest on one
+ *   measurement rather than two guesses. It DECAYS: the longer the pack proves it is still, the
+ *   more of the headroom it may spend.
  */
-export function measuredRatePerMinute(rate: HeatingRate): number {
-  return rate.kind === "rate" || rate.kind === "bounded" ? rate.perMinute : 0;
+export function confidentHeadroomKelvin(samples: TemperatureSample[], nowMs: number, headroomKelvin: number): number {
+  const silentMinutes = minutesSinceNewestSample(samples, nowMs);
+  return silentMinutes === null ? 0 : headroomKelvin - QUANTISATION_K - REACTION_MIN / silentMinutes;
 }
 
 /**
- * How many amps this tick may move, and ⚠️ THE ANTI-WINDUP THE PHANTOM USED TO PROVIDE.
+ * Kelvin of spendable headroom into amps: the loop's gain, bounded at both ends.
  *
- * On a `not-rising` answer the step is sized from the CONFIDENT headroom below rather than from
- * the headroom itself — the same gain over a smaller number. MEASURED on a still ring from the
- * floor over thirty minutes, the rule this replaces reaches the 80 A ceiling at a reading of 50,
- * 51 and 52 alike; with the silence subtracted the same probe reaches 59 A at 51 and 47 at 52.
+ * ⚠️ ONE COPY. It was written out three times — both arms of the old `stepAmps` and the blind
+ * descent — in the one file whose subject is how big a move is.
  */
-export function stepAmps(input: ChargeAutoInput, rate: HeatingRate, headroomKelvin: number): number {
-  if (rate.kind === "not-rising") {
-    return Math.min(
-      MAX_STEP_A,
-      Math.max(MIN_STEP_A, Math.round(AMPS_PER_KELVIN * confidentHeadroomKelvin(input, headroomKelvin)))
-    );
-  }
-  return Math.min(MAX_STEP_A, Math.max(MIN_STEP_A, Math.round(AMPS_PER_KELVIN * Math.abs(headroomKelvin))));
-}
-
-export function confidentHeadroomKelvin(input: ChargeAutoInput, headroomKelvin: number): number {
-  const silentMinutes = minutesSinceNewestSample(input.samples, input.nowMs);
-  return silentMinutes === null ? 0 : headroomKelvin - QUANTISATION_K - REACTION_MIN / silentMinutes;
+export function clampedStep(kelvin: number): number {
+  return Math.min(MAX_STEP_A, Math.max(MIN_STEP_A, Math.round(AMPS_PER_KELVIN * kelvin)));
 }
 
 /**
@@ -64,13 +53,9 @@ export function confidentHeadroomKelvin(input: ChargeAutoInput, headroomKelvin: 
  * MAX_STEP_A. The frozen grid therefore cannot tell this apart from a fixed maximum step — the
  * evidence for the derivation is the argument and the unit fixture, not the crossing count.
  */
-export function blindStepAmps(input: ChargeAutoInput): number {
+export function blindStepAmps(samples: TemperatureSample[], nowMs: number): number {
   // No samples at all is the only case with no bound to read. A zero silence needs no branch of its
   // own: `REACTION_MIN / 0` is Infinity, which the clamp below turns into MAX_STEP_A anyway.
-  const silentMinutes = minutesSinceNewestSample(input.samples, input.nowMs);
-  if (silentMinutes === null) {
-    return MAX_STEP_A;
-  }
-  const deficitKelvin = REACTION_MIN / silentMinutes;
-  return Math.min(MAX_STEP_A, Math.max(MIN_STEP_A, Math.round(AMPS_PER_KELVIN * deficitKelvin)));
+  const silentMinutes = minutesSinceNewestSample(samples, nowMs);
+  return silentMinutes === null ? MAX_STEP_A : clampedStep(REACTION_MIN / silentMinutes);
 }
