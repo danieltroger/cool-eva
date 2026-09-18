@@ -155,6 +155,18 @@ const CHECKS: SelfCheck[] = [
       "not drifted from the enum",
   },
   {
+    script: "scripts/check-charge-archive.ts",
+    covers:
+      "the same controller against EVERY DC session on record rather than three hand-picked stops: that a reading " +
+      "coming back out of the 54 °C band is never read as permission to raise — 31 of the 50 charging crossings in " +
+      "the archive return 55 -> 54 inside a minute with ~50 A still flowing, which is the hottest cell's saw-tooth " +
+      "and is how a train of crossings forms — asserted as a fixture and as a pinned count over 18 sessions x 60 " +
+      "tick phases; and, on a two-node plant MEASURED from the same archive and run at both ends of its fitted " +
+      "constants, that the controller crosses 55 °C on no session more often than doing nothing, forms no train, " +
+      "delivers more charge than the do-nothing baseline over the same minutes, and leaves every session that " +
+      "stayed four degrees below the setpoint entirely alone",
+  },
+  {
     script: "scripts/check-soc-rate.ts",
     covers:
       "the SOC rate's LOWER-BOUND invariant, against continuous trajectories rather than against hand-written " +

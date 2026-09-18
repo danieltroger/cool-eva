@@ -334,6 +334,7 @@ function measurementPending(
     nowMs: input.nowMs,
     lastCommandAtMs: input.lastCommandAtMs,
     rateIsNotRising: rate.kind === "not-rising",
+    setpointC: TARGET_C,
   });
   return unmeasured ? { kind: "hold", reason: CHARGE_AUTO_REASON.MEASURING } : null;
 }

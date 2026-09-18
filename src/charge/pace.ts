@@ -25,6 +25,11 @@ export interface PaceState {
   lastCommandAtMs: number | null;
   /** Whether the present estimate is the "the reading did not rise" arm rather than a fitted slope. */
   rateIsNotRising: boolean;
+  /**
+   * The setpoint, passed in rather than imported: `./auto-curve.ts` owns it and imports this file,
+   * so reaching back for it would close a cycle. The band below is defined relative to it.
+   */
+  setpointC: number;
 }
 
 /**
@@ -71,11 +76,17 @@ function measurableAfterMs(state: PaceState, atCommand: TemperatureSample | unde
 }
 
 /**
- * Whether the reading has FALLEN since the last command. Only raises wait, so this is the one
- * direction that matters: a pack that has cooled since we last touched the current is a pack with
- * room, whichever way that last command went. Measured 2026-09-18 at 17:21:14 — the reading came
- * back 52 → 51 fifty-six seconds after the descent reached the floor, and the bike's own next tick
- * gave current back. A wait through that is a wait through the evidence.
+ * Whether the reading has fallen since the last command **from below the setpoint** — a pack that
+ * has cooled is a pack with room, whichever way that last command went. Measured 2026-09-18 at
+ * 17:21:14: the reading came back 52 → 51 fifty-six seconds after the descent reached the floor,
+ * and the bike's own next tick gave current back.
+ *
+ * ⚠️ A FALL OUT OF THE SETPOINT BAND IS NOT A FALL, and that is #280. 31 of the 50 charging
+ * crossings in the archive return 55 → 54 within about a minute with ~50 A still flowing, which
+ * no conductance model can call cooling — it is the hottest cell's saw-tooth, whose period is
+ * 1.6 min across all charging crossings and 1.2 min in the 54 band. Read as permission it hands
+ * the rule a raise straight back into the band, and the cost is not the one excursion but the
+ * TRAIN: 15 crossings in 48 minutes on 2026-09-07. A wait through that is a wait through the evidence.
  *
  * ⚠️ No sample either side answers TRUE, and that arm is UNREACHABLE — kept as the fail-safe
  * default anyway. Reaching it needs every sample to postdate the last command while the wait is
@@ -88,6 +99,9 @@ function readingFellSince(state: PaceState, atCommand: TemperatureSample | undef
   const newest = newestSampleAtOrBefore(state.samples, state.nowMs);
   if (atCommand === undefined || newest === undefined) {
     return true;
+  }
+  if (atCommand.celsius >= state.setpointC) {
+    return false;
   }
   return newest.celsius < atCommand.celsius;
 }
