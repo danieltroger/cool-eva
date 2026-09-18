@@ -668,6 +668,41 @@ check(
   !controller.state().driverEnabled
 );
 
+// ⚠️ The arrangement issue #282 reported and the archive does not contain: a DC session
+// ending over a HOT pack, and then a climb. The case above ends one over a 10 °C pack,
+// where the fan correctly stops and a loop that never evaluated again would look identical.
+// Here every later duty is one only a re-evaluation can produce. docs/fan-control.md §9.
+record("charge_manager_state", CHARGE_MANAGER_STATE_DC);
+record("batt_temp_hi", 42);
+await ticks(2);
+check("a DC session over a 42 °C pack is flat out", controller.state().targetPercent === 100);
+
+await goStale();
+check(
+  "⚠️  the session ending hands a HOT pack to the curve rather than leaving it at 100 %",
+  controller.state().targetPercent === 68 && latestValue("fan_auto_reason") === FAN_REASON.PACK_TEMPERATURE
+);
+
+// 68 % is the curve's answer for 42 °C, which is the number #282 saw held for 42 minutes
+// across a 12 K climb. Each step below is a duty the previous tick cannot have left behind.
+for (const [pack, duty] of [
+  [43, 73],
+  [45, 84],
+  [47, 95],
+]) {
+  record("batt_temp_hi", pack);
+  await ticks(2);
+  check(`${pack} °C moves the commanded duty to ${duty} %`, controller.state().targetPercent === duty);
+}
+record("batt_temp_hi", 55);
+await ticks(2);
+check(
+  `⚠️  and past ${RIDING_CURVE_TOP_C} °C it reaches 100 % — the duty the pack spent 2026-09-09 needing`,
+  controller.state().targetPercent === 100 && latestValue("fan_auto_reason") === FAN_REASON.PACK_TEMPERATURE
+);
+record("batt_temp_hi", 10);
+await ticks(2);
+
 // ⚠️ ONE clock read, shared by the backdated mark below AND by the bound in the bracket
 // further down. Two reads would put a stall between them, and the bound would become a
 // measurement again — which is the whole failure this section is being rewritten out of.

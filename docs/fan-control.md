@@ -756,7 +756,7 @@ Bring-up failures do not kill the service — the fan is not what the rest of th
   - **a fuse that _does_ clear is equally invisible.** The Pi goes on writing duty cycles into a dead circuit and the dashboard goes on rendering "Running at 60 %", because that is what was commanded. Nothing here can tell a spinning fan from an open fuse — which is why the fuse argument in §4 could never have been self-checking even if the numbers had held.
 - **Fun mode has never run on the bike.** The gate, the mapping and the drop-out are asserted against the capture archive and against a recording `FanPwm`; no session has driven the real bridge. §4 "What is not verified" lists what that leaves open.
 - **Manual mode has no shutoff.** In automatic the curve takes the fan back down on its own; a duty set from the slider runs until you set another, until the mode goes back to automatic, or until the service restarts — and a restart is a return to automatic, since the mode is not persisted. A `SIGTERM` (`systemctl restart`, the dashboard's Update button) stops the loop and then idles the bridge, in that order, so a tick cannot re-command a process that is leaving. A `SIGKILL` skips both — but the unit is `Restart=on-failure` with `RestartSec=5` (`scripts/setup-service.ts`), so the process is back about **five seconds** later and `openFanPwm()` drops both enables as its first statement. The `config.txt` `gpio=` lines are the backstop for the case where it does not come back at all.
-- **The automatic curve was never validated against a real pack.** Every number in §4 — 35, 48, the two hysteresis gaps — is a considered choice, not a measurement of how much air this radiator needs at a given pack temperature. (A DC session no longer has a number: it is 100 % throughout.) What exists is the arithmetic, checked; what does not exist is a ride or a DC session logged against it. The first hot DC charge with `FAN_ENABLED=1` is the datum to go and get.
+- **The automatic curve was never validated against a real pack.** Every number in §4 — 35, 48, the two hysteresis gaps — is a considered choice, not a measurement of how much air this radiator needs at a given pack temperature. (A DC session no longer has a number: it is 100 % throughout.) What exists is the arithmetic, checked. ✅ **A DC session logged against it now exists** — 2026-09-09, §9 — and it does not flatter the curve: the fan was commanded 100 % from end to end and the pack reached the 55 °C cliff four times anyway. A **ride** logged against the curve is still the datum to go and get.
 - **A pack whose `batt_temp_hi` never arrives runs the fan at 30 % for ever** in automatic, one minute after boot, with the fault visible only inside the menu sheet and nowhere on the main dashboard. §4 "When the temperature goes away" argues why the floor is the right answer and not a bug, and says plainly what the fault does and does not reach.
 - **The rail voltage is unmeasured**, so the duty cap is 100 % — see §4. ⚠️ Since 2026-09-08 a DC session holds 100 % end to end rather than only at the top of a ramp, so if the rail is a charging-system 13.8 V the fan runs 15 % over nominal for the length of a fast charge.
 - **The udev race** described in §5 is unhandled.
@@ -774,3 +774,56 @@ Bring-up failures do not kill the service — the fan is not what the rest of th
   The one genuinely independent speed measurement on this bus — `wheel_speed_front_kmh` / `_rear_kmh` off the ABS module — is **completely absent during a charge**. That is not a gap in the tap or in the decoder, and the same file settles it: in the DC capture `0x0A0` is 0 frames inside the bounded charge window and **6 371 frames across 638 wall-seconds** of the ride that follows it in the same file, at 9.99 Hz — the 10 Hz `src/can/abs.ts` documents. Present when riding, absent when charging, same tap and same decoder. Consistent with `abs.ts`'s note that the module is on DTB and reaches us only because the VCU gateways it across: no ride, no gateway.
 
   The charge manager is present for less than half the held window, which makes it a worse `key_on`. ⚠️ The held window is the one that can answer this question at all: bound it by the last `0x610` and the charge manager covers 1 344 of 1 344 seconds **by construction**, which measures the window's own definition rather than the frame's availability. `0x0A0` is 0 under either window, and that is the load-bearing row. The BMS is live throughout and has nothing to say about mobility. So **the 500 ms freshness window standing alone against a stuck VCU frame is the right conclusion**, not a compromise — there is nothing else on this bus to add.
+
+## 9. The 42-minute stall that was not one — and the first DC session on record
+
+[#282](https://github.com/danieltroger/cool-eva/issues/282) reported that on 2026-09-09 the curve froze at 68 % for 42 minutes while the pack climbed 43 → 55 °C and crossed the thermal cliff four times at 58–65 A. **It did not happen.** The rows in that report come from four different boots read off one `ts` axis; `docs/ride-log-clock.md` §6 is the worked example and the rule. What the loop actually did, and the measurement that generalises it, are below. Figures: `evidence/fan-tick-stall/figures.txt`.
+
+### What the loop did
+
+The climb, the four crossings and the current all belong to **one** boot (80 in `rides.db`), which held `fan_auto_reason` = `DC_SESSION` with `fan_duty_pct` = `fan_target_pct` = **100** from its first tick until the ride home. The fan was flat out for all of it, which is what §4's DC rule asks for.
+
+⚠️ **"Zero rows, so nothing changed" is not the argument** — zero rows is equally what a dead loop holding 100 % looks like, and that is precisely what #282 disputed. What discriminates is three facts together:
+
+1. between the reason row and the next fan-path row that boot wrote **17 962 rows**, largest consecutive gap **3.269 s** excluding the one clock step — the event loop never stalled;
+2. `publishDecision()` in `src/fan/auto.ts` is **synchronous and above every await** in `evaluate()`, so a tick that reaches it has published, whatever happens later;
+3. `record()` is log-on-change.
+
+⇒ the curve was evaluated ~1 250 times and answered `DC_SESSION` / 100 % every one of them.
+
+⚠️ That reasoning needs `fan_auto_reason`, not the duty. `src/fan/control.ts` gained its unconditional `publish()` at the end of `commandDuty()` in #206, **after** the commit the Pi was running that day, so on that build an absent `fan_duty_pct` row is weaker evidence than it would be today. The reason is published from `auto.ts` and is unaffected.
+
+⚠️ And a hung command would **not** have produced #282's signature. Because `publishDecision()` is above the await and `setInterval` re-enters regardless, a wedged `runExclusively()` chain freezes `fan_duty_pct`/`fan_target_pct` while `fan_auto_reason` and `fan_temp_input` keep moving — the mirror image of the three-silent-two-talking shape reported. The first version of this investigation had that backwards.
+
+### The measurement: the loop has never stopped applying its own answer
+
+`evidence/fan-tick-stall/curve-lag.py` replays every boot's decisions against what it had already commanded, on **both** branches that set a duty — the pack curve and a DC session — grouped by boot and ordered by `seq`. Over **71 boots that contribute a judgeable sample (64 on the curve arm, 15 on the DC arm, 7 of them DC-only)**:
+
+|                           | curve arm, 1 193 samples    | DC arm, 179 samples |
+| ------------------------- | --------------------------- | ------------------- |
+| held a disagreement > 5 s | **0**                       | **0**               |
+| longest ever held         | **3.2 s** (under two ticks) | **none over 1 s**   |
+| mutant +7, 30 s grace     | 35 held                     | 49 held             |
+
+⚠️ 667 curve samples and 45 DC samples disagree at the **instant** sampled; all of them close inside the same publish batch. The claim is about what was _held_, and the 3.2 s case is the road-speed gate handing the fan back at 54 °C, not a stall. The mutant column is there because a detector that cannot fire proves nothing.
+
+⚠️ **The DC arm rests on 15 boots**, so quote it with that number. It exists at all because a detector that judges only `PACK_TEMPERATURE` is silent on the regime #282 was about, and the silence is self-concealing: a loop that dies while the reason is `DC_SESSION` leaves that reason latched, so the sample never becomes judgeable.
+
+### The DC session itself, which is the part worth keeping
+
+§8 asked for a hot DC charge logged against the curve. This is it, and it is the first:
+
+|                     |                                               |
+| ------------------- | --------------------------------------------- |
+| pack `batt_temp_hi` | **42 → 55 °C** over ~37 min                   |
+| delivered `pack_a`  | 19.6–72.7 A, **58–65 A** across the crossings |
+| fan                 | commanded **100 %** end to end                |
+| `coolant_in`        | 37.4–39.6 °C (38.0–38.3 at the crossings)     |
+| `coolant_out`       | 37.8–39.4 °C                                  |
+| crossings of 55 °C  | **four**, 12:48–12:56                         |
+
+🔥 **100 % duty was not enough at 60 A.** The radiator, at full commanded duty, did not stop the pack reaching the cliff — so the curve's top end is not the binding constraint there and a better _input_ would not have helped either. That bears directly on [#123](https://github.com/danieltroger/cool-eva/issues/123) (the curve never reads `coolant_in`/`coolant_out`) and on #276's pack-to-coolant conductance work. ⚠️ One session, one ambient, no fan feedback of any kind (§8) — it bounds nothing on its own.
+
+### What was going on that afternoon
+
+`bms_uptime_min` reads 0 at the first row of boots 78, 79 **and** 80, so the **bike's LV rail cycled three times**; a crashing service would have come back to an uptime of ~124. Boot 79 recorded a full DC handshake (`charge_manager_state` 2 → 20 → 4 → 7 → 9 → 16 → 17 → 18 → 35) and straight back to 2 with `pack_a` never leaving −0.6 … −0.1 A — three attempts that delivered nothing, and a fourth that stuck. In true time that leaves **at least 202 s of the charge attempt with no process running at all**, the bridge held in the standby `config.txt`'s `gpio=17,op,dl` / `gpio=27,op,dl` leaves it in. Nothing in this repo caused it and nothing here can fix it; it is recorded because "what was the fan doing" has that as part of its honest answer.
