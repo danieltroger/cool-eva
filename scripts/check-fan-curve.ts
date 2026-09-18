@@ -500,10 +500,12 @@ check("and 0 % maps to the stop position, not to the floor", stops[dutyStopIndex
 
 // --- 10. End to end: curve → auto → control → the bridge ---------------------
 //
-// A recording FanPwm driven by the curve rather than by a slider. ⚠️ The assertions below
-// are on controller.state(), so a mutant that updates the bookkeeping without writing the
-// register passes here — scripts/check-fan-ordering.ts §4 is what catches that one, by
-// asserting the duty_cycle a simulated sysfs actually received.
+// A recording FanPwm driven by the curve rather than by a slider. ⚠️ MOST of the assertions
+// below are on controller.state(), so a mutant that updates the bookkeeping without writing
+// the register passes them — scripts/check-fan-ordering.ts §4 catches that one properly, by
+// asserting the duty_cycle a simulated sysfs actually received. The exception is the ramp at
+// the end of this section, which reads the recording bridge's own calls: an applyDuty() that
+// publishes without writing fails those three and nothing else in this file.
 
 console.log("\n10. the loop, end to end, against a recording bridge");
 
