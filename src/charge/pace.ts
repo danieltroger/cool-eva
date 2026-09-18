@@ -27,7 +27,9 @@ export interface PaceState {
   rateIsNotRising: boolean;
   /**
    * The setpoint, passed in rather than imported: `./auto-curve.ts` owns it and imports this file,
-   * so reaching back for it would close a cycle. The band below is defined relative to it.
+   * so reaching back for it would close a cycle. ⚠️ `./step.ts` answers the same question the other
+   * way and imports the constants back, which is the cycle #279 left named as follow-up — this is
+   * the direction a shared tuning module would take both. The band below is relative to it.
    */
   setpointC: number;
 }
@@ -47,7 +49,7 @@ export function commandIsUnmeasured(state: PaceState): boolean {
   // What the sensor last said when the command went out — the reference BOTH questions below are
   // about, so it is resolved once here rather than twice from two different functions.
   const atCommand = newestSampleAtOrBefore(state.samples, state.lastCommandAtMs);
-  if (readingFellSince(state, atCommand)) {
+  if (cooledFromBelowSetpoint(state, atCommand)) {
     return false;
   }
   return state.nowMs - state.lastCommandAtMs < measurableAfterMs(state, atCommand);
@@ -89,7 +91,7 @@ function measurableAfterMs(state: PaceState, atCommand: TemperatureSample | unde
  * ⚠️ The no-sample arm is UNREACHABLE and kept as the fail-safe default, so a mutation flipping
  * it SURVIVES the check on purpose — same as `sessionEndsFirst`'s guard, same doc § "The taper".
  */
-function readingFellSince(state: PaceState, atCommand: TemperatureSample | undefined): boolean {
+function cooledFromBelowSetpoint(state: PaceState, atCommand: TemperatureSample | undefined): boolean {
   const newest = newestSampleAtOrBefore(state.samples, state.nowMs);
   if (atCommand === undefined || newest === undefined) {
     return true;

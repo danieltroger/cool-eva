@@ -16,6 +16,12 @@ import type { SocSample } from "../src/charge/soc.ts";
 // of cooling — which is the "works for one day's b" failure it exists to avoid — and it does NOT
 // show the controller is right on the bike. Only a live charge does that.
 //
+// ⚠️ THERE IS A SECOND PLANT NOW, and which to reach for is not obvious: scripts/charge-auto-archive.ts
+// carries a two-node model MEASURED across the archive's 56 crossings into 55, driven by each
+// session's own logged `coolant_in`. Prefer it for anything about a real session. This one stays
+// because its grids reach states the archive does not contain — TAPER_GRID's untapered run to
+// 100 % SOC especially — and because §11's golden crossing set is frozen against it.
+//
 // The SOC half is measured, not modelled: 0.53 min per SOC point at 72.6 A, and above the cliff the
 // clamp releases and the bike saw-tooths at a measured duty-weighted 35.3 A / 1.30 min per point.
 

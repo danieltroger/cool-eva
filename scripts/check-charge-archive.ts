@@ -40,13 +40,13 @@ const COOLING: TemperatureSample[] = [
   { atMs: 300_000, celsius: 51 },
 ];
 for (const probe of [
-  { name: "a 54 → 53 return a minute after touching the setpoint", samples: SAW_TOOTH, reading: 53, hold: true },
-  { name: "the same shape two degrees lower, which really is cooling", samples: COOLING, reading: 51, hold: false },
+  { name: "a 54 → 53 return a minute after touching the setpoint", samples: SAW_TOOTH, hold: true },
+  { name: "the same shape two degrees lower, which really is cooling", samples: COOLING, hold: false },
 ]) {
   // ⚠️ The command lands at 250 s and the fall at 300 s, so the fall is the one thing that could
   // release the wait — and the ring spans 420 s, past RATE_MIN_SPAN_MS, so the estimator has a
   // fitted slope rather than answering `unknown` and holding for a reason that is not this one.
-  const decision = decideOnArchiveRing(probe.samples, probe.reading, 420_000, 250_000);
+  const decision = decideOnArchiveRing(probe.samples, 420_000, 250_000);
   if ((decision === "hold") !== probe.hold) {
     failures.push(
       `§1 ${probe.name}: the rule must ${
@@ -185,11 +185,11 @@ if (chargeCost > 0.06) {
 // current alone — the same claim check-charge-auto.ts §4b makes on two synthetic cold plants, here
 // against every real session that stayed cold.
 for (const session of ARCHIVE_SESSIONS) {
-  const peak = Math.max(...parseSamples(session.temperature).map(sample => sample.celsius));
+  const run = replayOpenLoop(session, 18);
+  const peak = run.peakC;
   if (peak >= TARGET_C - 4) {
     continue;
   }
-  const run = replayOpenLoop(session, 18);
   const acted = run.commands.filter(amps => amps < Math.floor(session.ceilingAmps) - 1);
   if (acted.length > 0) {
     failures.push(
@@ -228,36 +228,28 @@ function bandReturns(samples: TemperatureSample[]): number[] {
 }
 
 /**
- * One decision on a ring, reported as "hold" or "raise" — the smallest thing §1 needs.
+ * Whether the rule raises on this ring, or waits.
  *
- * The command is placed at `lastCommandAtMs` and the rule asked at `nowMs`, both after the fall,
- * so the only question left is whether the fall released the wait.
+ * ⚠️ The reading is taken FROM the ring rather than passed, which is the hazard
+ * `check-charge-auto.ts`'s `decideOnRing` exists to close: a fixture whose reading disagrees with
+ * its newest sample is an input `decide()` cannot construct, and one such fixture was asserted for
+ * a whole release. The command lands before the fall so the fall is the only possible release.
  */
-function decideOnArchiveRing(
-  samples: TemperatureSample[],
-  reading: number,
-  nowMs: number,
-  lastCommandAtMs: number
-): string {
-  const decision = decideOnce(samples, reading, nowMs, lastCommandAtMs);
-  return decision === null ? "hold" : "raise";
-}
-
-function decideOnce(
-  samples: TemperatureSample[],
-  reading: number,
-  nowMs: number,
-  lastCommandAtMs: number
-): number | null {
+function decideOnArchiveRing(samples: TemperatureSample[], nowMs: number, lastCommandAtMs: number): "hold" | "raise" {
+  const newest = samples.findLast(sample => sample.atMs <= nowMs);
+  if (newest === undefined) {
+    throw new Error("decideOnArchiveRing needs a sample at or before nowMs");
+  }
+  const from = MIN_COMMAND_A + 5;
   const decision = decideChargeCurrent({
     enabled: true,
-    packTemperatureC: reading,
+    packTemperatureC: newest.celsius,
     packTemperatureAgeMs: 100,
     packTemperaturePlausible: true,
     chargeManagerState: 0x23,
     chargeManagerStateAgeMs: 100,
     ceilingAmps: 75,
-    commandedAmps: MIN_COMMAND_A + 5,
+    commandedAmps: from,
     riderOverride: false,
     samples,
     socPercent: null,
@@ -267,5 +259,5 @@ function decideOnce(
     lastCommandAtMs,
     nowMs,
   });
-  return decision.kind === "command" && decision.amps > MIN_COMMAND_A + 5 ? decision.amps : null;
+  return decision.kind === "command" && decision.amps > from ? "raise" : "hold";
 }

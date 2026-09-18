@@ -162,9 +162,10 @@ const CHECKS: SelfCheck[] = [
       "the archive return 55 -> 54 inside a minute with ~50 A still flowing, which is the hottest cell's saw-tooth " +
       "and is how a train of crossings forms — asserted as a fixture and as a pinned count over 18 sessions x 60 " +
       "tick phases; and, on a two-node plant MEASURED from the same archive and run at both ends of its fitted " +
-      "constants, that the controller crosses 55 °C on no session more often than doing nothing, forms no train, " +
-      "delivers more charge than the do-nothing baseline over the same minutes, and leaves every session that " +
-      "stayed four degrees below the setpoint entirely alone",
+      "constants, that the controller crosses 55 °C on no session more often than doing nothing and forms no " +
+      "train; that what it PAYS for that is bounded — it delivers 3.7 % LESS charge than letting the pack derate, " +
+      "and the bound is what stops that cost growing unnoticed — and that every session which stayed four degrees " +
+      "below the setpoint was left entirely alone",
   },
   {
     script: "scripts/check-soc-rate.ts",

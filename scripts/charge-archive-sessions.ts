@@ -6,6 +6,12 @@
 // baked here the way scripts/charge-auto-episode.ts bakes its three episodes — this is the same
 // idea over the whole archive rather than three hand-picked stops.
 //
+// ⚠️ Regenerating this needs databases that are NOT in the repo and will not outlive the track
+// that made them: `archive-to-2026-09-15.db` (rides.db decoded, 2026-08-02…09-15),
+// `day-2026-09-16.db`, `day-2026-09-17.db` and `today-2026-09-18.db`, all decoded by the
+// charge-thermal track from `.celog` ride logs. Each session below carries the database name and
+// its own CEST start time, so a row here can still be traced to a log even when the decode is gone.
+//
 // ⚠️ Thinned by TIME ONLY, and only where thinning cannot change a decision: `batt_temp_hi` and
 // `soc` are whole-number log-on-change signals and are kept ENTIRE; `coolant_in` (a 0.05 K
 // deadband, ~6 rows/min) keeps at most one row per two minutes and `fast_dc_target_a` one per
@@ -13,32 +19,7 @@
 // session, because the deadband means the coolant changes on nearly every sample. `pack_a` is
 // dropped: the replay computes the current itself. Times are CEST, matching post-55.txt.
 
-/**
- * One signal as `"<ms>:<value> <ms>:<value> …"`, ms from the session's first charging sample.
- *
- * ⚠️ A STRING, and it is not obfuscation: as an array of objects — or even of tuples — prettier
- * prints one row per line and eighteen sessions of real signal become a 4 000-line file nobody
- * can review. One line per signal keeps the diff readable and the data intact;
- * scripts/charge-auto-archive.ts parses it into the rule's own sample types once, on load.
- */
-export type ArchiveSignal = string;
-
-export interface ArchiveSession {
-  /** Which decoded database and when, in CEST — the name used in every assertion message. */
-  name: string;
-  /** How long the pack drew more than 25 A, in ms. */
-  spanMs: number;
-  /** `batt_temp_hi`, whole degrees, entire. The ring the estimator sees. */
-  temperature: ArchiveSignal;
-  /** `soc`, whole percent, entire. */
-  soc: ArchiveSignal;
-  /** `fast_dc_target_a` — what the vehicle asked the station for. */
-  requested: ArchiveSignal;
-  /** `coolant_in`, the loop's cold end, for the closed-loop plant. */
-  coolantIn: ArchiveSignal;
-  /** `fast_dc_limit_max_a` as last seen before or during the session. */
-  ceilingAmps: number;
-}
+import type { ArchiveSession } from "./archive-session.ts";
 
 export const ARCHIVE_SESSIONS: ArchiveSession[] = [
   {

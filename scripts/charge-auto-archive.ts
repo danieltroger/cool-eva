@@ -1,7 +1,8 @@
-import { CLIFF_C, decideChargeCurrent, MIN_COMMAND_A, type ChargeAutoReason } from "../src/charge/auto-curve.ts";
-import { RATE_WINDOW_MS, type TemperatureSample } from "../src/charge/rate.ts";
+import { CLIFF_C, decideChargeCurrent } from "../src/charge/auto-curve.ts";
+import { newestSampleAtOrBefore, RATE_WINDOW_MS, type TemperatureSample } from "../src/charge/rate.ts";
 import { SOC_WINDOW_MS, type SocSample } from "../src/charge/soc.ts";
-import { ARCHIVE_SESSIONS, type ArchiveSession } from "./charge-archive-sessions.ts";
+import type { ArchiveSession } from "./archive-session.ts";
+import { ARCHIVE_SESSIONS } from "./charge-archive-sessions.ts";
 
 // Every DC session on record, driven through the rule twice: once against the logged temperature
 // (what it would DECIDE) and once against a plant measured from the same archive (what would then
@@ -66,7 +67,6 @@ export interface SessionRun {
   commands: number[];
   /** The same, with when each landed and whether it was a raise — what a property over ticks needs. */
   commandsAt: { atMs: number; amps: number; raised: boolean }[];
-  reasons: Map<ChargeAutoReason, number>;
   /** Closed loop only: the peak true temperature, and every crossing into a reading of 55. */
   peakC: number;
   crossings: number;
@@ -74,20 +74,7 @@ export interface SessionRun {
   longestTrain: number;
   /** Amp-hours the pack took over the session, and per minute: the number Daniel charges by. */
   ampHours: number;
-  ampHoursPerMinute: number;
   minutes: number;
-  /**
-   * The same, over the THROTTLED phase only — from the first command below the station's ceiling
-   * to the end of the session.
-   *
-   * ⚠️ THE NUMBER THAT SEPARATES RULES, and the pooled one mostly does not. Measured over this
-   * archive: most charge is delivered while the pack is still cold and the current is limited by
-   * the station or the pack's own taper, where every rule does the same thing — so a change that
-   * matters a great deal once the controller is throttling moves the session total by under a
-   * percent and hides inside the plant model's own spread.
-   */
-  throttledAmpHours: number;
-  throttledMinutes: number;
 }
 
 /**
@@ -102,14 +89,14 @@ export function replayOpenLoop(session: ArchiveSession, phaseSeconds: number): S
   const requested = parseRows(session.requested);
   const commands: number[] = [];
   const commandsAt: SessionRun["commandsAt"] = [];
-  const reasons = new Map<ChargeAutoReason, number>();
   let commandedAmps: number | null = null;
   let lastCommandAtMs: number | null = null;
   for (let nowMs = phaseSeconds * 1000; nowMs <= session.spanMs; nowMs += TICK_MS) {
-    const reading = valueAt(temperature.map(toRow), nowMs);
-    if (reading === null) {
+    const newest = newestSampleAtOrBefore(temperature, nowMs);
+    if (newest === undefined) {
       continue;
     }
+    const reading = newest.celsius;
     const decision = decideChargeCurrent({
       enabled: true,
       packTemperatureC: reading,
@@ -131,7 +118,6 @@ export function replayOpenLoop(session: ArchiveSession, phaseSeconds: number): S
       lastCommandAtMs,
       nowMs,
     });
-    reasons.set(decision.reason, (reasons.get(decision.reason) ?? 0) + 1);
     if (decision.kind === "command") {
       commandsAt.push({
         atMs: nowMs,
@@ -147,15 +133,11 @@ export function replayOpenLoop(session: ArchiveSession, phaseSeconds: number): S
     name: session.name,
     commands,
     commandsAt,
-    reasons,
     peakC: Math.max(...temperature.map(sample => sample.celsius)),
     crossings: 0,
     longestTrain: 0,
     ampHours: 0,
-    ampHoursPerMinute: 0,
     minutes: session.spanMs / 60_000,
-    throttledAmpHours: 0,
-    throttledMinutes: 0,
   };
 }
 
@@ -177,7 +159,6 @@ export function replayClosedLoop(
   const coolantIn = parseRows(session.coolantIn);
   const commands: number[] = [];
   const commandsAt: SessionRun["commandsAt"] = [];
-  const reasons = new Map<ChargeAutoReason, number>();
   const samples: TemperatureSample[] = [];
   const crossingsAt: number[] = [];
   // ⚠️ Started at the logged reading's MIDPOINT: a reading of 47 is a true [47, 48), and starting
@@ -190,8 +171,6 @@ export function replayClosedLoop(
   let derated = false;
   let derateStartedAtMs = -Infinity;
   let ampSeconds = 0;
-  let throttledAmpSeconds = 0;
-  let throttledFromMs: number | null = null;
   let lastTick = -Infinity;
   const stepMs = 1000;
   for (let nowMs = 0; nowMs <= session.spanMs; nowMs += stepMs) {
@@ -239,7 +218,6 @@ export function replayClosedLoop(
         lastCommandAtMs,
         nowMs,
       });
-      reasons.set(decision.reason, (reasons.get(decision.reason) ?? 0) + 1);
       if (decision.kind === "command") {
         commandsAt.push({
           atMs: nowMs,
@@ -256,12 +234,6 @@ export function replayClosedLoop(
     const asking = valueAt(requested, nowMs) ?? session.ceilingAmps;
     const flowing = derated ? DERATED_A : Math.min(commandedAmps ?? session.ceilingAmps, asking);
     ampSeconds += flowing;
-    if (throttledFromMs === null && commandedAmps !== null && commandedAmps < Math.floor(session.ceilingAmps)) {
-      throttledFromMs = nowMs;
-    }
-    if (throttledFromMs !== null) {
-      throttledAmpSeconds += flowing;
-    }
     const coolant = valueAt(coolantIn, nowMs) ?? 35;
     const watts = flowing * flowing * PACK_OHMS - corner.wattsPerKelvin * (temperatureC - coolant);
     temperatureC += (watts / corner.joulesPerKelvin) * (stepMs / 1000);
@@ -273,15 +245,11 @@ export function replayClosedLoop(
     name: session.name,
     commands,
     commandsAt,
-    reasons,
     peakC,
     crossings: crossingsAt.length,
     longestTrain: longestTrain(crossingsAt),
     ampHours,
-    ampHoursPerMinute: ampHours / minutes,
     minutes,
-    throttledAmpHours: throttledAmpSeconds / 3600,
-    throttledMinutes: throttledFromMs === null ? 0 : (session.spanMs - throttledFromMs) / 60_000,
   };
 }
 
@@ -294,17 +262,6 @@ function longestTrain(crossingsAt: number[]): number {
     longest = Math.max(longest, run);
   }
   return longest;
-}
-
-/** Every session, every plant corner, one phase. */
-export function runArchive(phaseSeconds: number, control = true): SessionRun[] {
-  const runs: SessionRun[] = [];
-  for (const session of ARCHIVE_SESSIONS) {
-    for (const corner of PLANT_CORNERS) {
-      runs.push(replayClosedLoop(session, phaseSeconds, corner, control));
-    }
-  }
-  return runs;
 }
 
 interface Row {
@@ -328,10 +285,6 @@ export function parseSamples(packed: string): TemperatureSample[] {
 
 function parseSoc(packed: string): SocSample[] {
   return parseRows(packed).map(row => ({ atMs: row.atMs, percent: row.value }));
-}
-
-function toRow(sample: TemperatureSample): Row {
-  return { atMs: sample.atMs, value: sample.celsius };
 }
 
 /** Zero-order hold: what the signal last said at or before `nowMs`, or null before its first row. */
@@ -358,19 +311,4 @@ function ringAt(samples: TemperatureSample[], nowMs: number): TemperatureSample[
 /** The SOC ring, trimmed the same way and with no anchor — src/charge/soc.ts says why. */
 function socRingAt(samples: SocSample[], nowMs: number): SocSample[] {
   return samples.filter(sample => sample.atMs <= nowMs && sample.atMs >= nowMs - SOC_WINDOW_MS);
-}
-
-/** How long from the first tick until the command sits within `withinA` of `target` and stays. */
-export function minutesToSettle(run: SessionRun, target: number, withinA: number): number | null {
-  for (let index = 0; index < run.commands.length; index += 1) {
-    if (run.commands.slice(index).every(amps => Math.abs(amps - target) <= withinA)) {
-      return index;
-    }
-  }
-  return null;
-}
-
-/** The floor is not a settled equilibrium, it is the rule giving up — scored separately. */
-export function ticksAtTheFloor(run: SessionRun): number {
-  return run.commands.filter(amps => amps <= MIN_COMMAND_A).length;
 }
