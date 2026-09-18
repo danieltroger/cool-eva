@@ -40,6 +40,10 @@ import {
 } from "./charge-auto-plant.ts";
 import { boundsFor } from "../public/lib/bounds.js";
 import {
+  SEPTEMBER_18_EPISODE,
+  SEPTEMBER_18_STALL,
+  SEPTEMBER_18_STALL_TICKS,
+  SEPTEMBER_18_TICKS,
   COOLING_AT_53_MS,
   COOLING_EPISODE,
   DRIFTING_AT_53_MS,
@@ -100,6 +104,11 @@ const HEALTHY: ChargeAutoInput = {
   socAgeMs: null,
   socSamples: [],
   requestedAmps: null,
+  // ⚠️ NOTHING COMMANDED YET, deliberately, and every section before §20 inherits it: with no last
+  // command there is nothing for the pace to measure against, so those fixtures are byte-identical
+  // to what they asserted before it existed — which is itself the demonstration that a first
+  // command is never paced. The sections that exercise the pace set both fields explicitly.
+  lastCommandAtMs: null,
   nowMs: 700_000,
 };
 
@@ -135,20 +144,51 @@ for (const guard of FAIL_SAFE) {
 // bounds the rate. An earlier design read it as an absence and descended on a pack that was stable,
 // BECAUSE it was stable.
 const flat = estimateHeatingRate(steady(51, RATE_WINDOW_MS), RATE_WINDOW_MS);
-if (flat.kind !== "bounded") {
-  failures.push(`§2 a pack sitting still for the whole window reads ${flat.kind}, not a bounded rate`);
+if (flat.kind !== "not-rising") {
+  failures.push(
+    `§2 a pack sitting still for the whole window reads ${flat.kind}, not "not-rising" — a bound on the MAGNITUDE ` +
+      `spent as a heating rate is #276, and it is what made the setpoint unreachable from below`
+  );
 }
-// ⚠️ The bound's VALUE, two-sided. Only checking it is not too loose misses the dangerous direction:
-// an optimistic bound understates how fast the pack may be moving, and the controller then thinks
-// it has more time than it does.
-if (flat.kind === "bounded") {
-  const expected = (1 * 60_000) / RATE_WINDOW_MS;
-  if (Math.abs(flat.perMinute - expected) > 1e-9) {
-    failures.push(
-      `§2 one distinct reading over ${RATE_WINDOW_MS / 60_000} min should bound the rate at ` +
-        `${expected.toFixed(3)} K/min, got ${flat.perMinute.toFixed(3)} — an optimistic bound is the unsafe direction`
-    );
-  }
+// ⚠️ The bound's VALUE, two-sided, asserted where the estimator still returns one — a window whose
+// reading actually ROSE. Only checking it is not too loose misses the dangerous direction: an
+// optimistic bound understates how fast the pack may be moving, and the controller then thinks it
+// has more time than it does.
+//
+// ⚠️ AND NOT BEHIND A `kind` GUARD. Written as `if (rate.kind === "bounded") { …assert… }` it stops
+// asserting the moment the classification changes — which is exactly what happened to this line
+// when `not-rising` split off, and is the "assertion that cannot fail" shape this file keeps
+// rediscovering. A wrong kind must make the comparison fail, so it goes through NaN.
+const risingBound = estimateHeatingRate(
+  [
+    { atMs: 100_000, celsius: 51 },
+    { atMs: 200_000, celsius: 52 },
+  ],
+  400_000
+);
+const expectedBound = (2 * 60_000) / RATE_MIN_SPAN_MS;
+const measuredBound = risingBound.kind === "bounded" ? risingBound.perMinute : Number.NaN;
+if (!(Math.abs(measuredBound - expectedBound) <= 1e-9)) {
+  failures.push(
+    `§2 two distinct readings rising over ${RATE_MIN_SPAN_MS / 60_000} min should bound the rate at ` +
+      `${expectedBound.toFixed(3)} K/min, got ${JSON.stringify(risingBound)} — an optimistic bound is the unsafe direction`
+  );
+}
+// ⚠️ THE DIRECTION SPLIT ITSELF (#276). The same two readings the other way up are not evidence of
+// heating: spending that bound as a rate is what charged a cooling pack 0.2 K/min of phantom climb
+// at 17:24 on 2026-09-18 and answered the give-back with 1 A a tick.
+const fallingBound = estimateHeatingRate(
+  [
+    { atMs: 100_000, celsius: 52 },
+    { atMs: 200_000, celsius: 51 },
+  ],
+  400_000
+);
+if (fallingBound.kind !== "not-rising") {
+  failures.push(
+    `§2 a window whose only movement was DOWNWARD reads ${JSON.stringify(fallingBound)} — a bound is evidence of ` +
+      `heating only in the direction the reading actually went`
+  );
 }
 // ⚠️ And that a bound is USED. Treating it as "no rate" downstream would quietly undo the fix it
 // exists to be: this pack is 1 °C from the cliff with a bound that says it arrives inside the horizon.
@@ -671,11 +711,10 @@ if (!exercisedByEpisode.includes(CHARGE_AUTO_REASON.NEAR_CEILING)) {
 // ⚠️ The SET, not just the count: naming which plants cross says whether a change added new ones
 // or merely moved the boundary, which are different findings and only one of them is a regression.
 //
-// ⚠️ RE-DERIVED for #186, 24 → 16, a STRICT SUBSET — eight stopped crossing, none started. Two
-// changes moved it in OPPOSITE directions and reading 16 as "the estimator cap was free" is the
-// wrong conclusion: docs/charge-auto.md § "The silence is a bound too" carries both tables.
+// ⚠️ RE-DERIVED twice, 24 → 16 (#186) → 15 (#276), each a STRICT SUBSET. Both times two changes
+// moved it in opposite directions, so neither number reads as "that half was free": the two
+// sections of docs/charge-auto.md they name carry the tables.
 const EXPECTED_CROSSINGS = [
-  "44/35/0.0044",
   "44/39/0.0044",
   "48/30/0.0044",
   "48/35/0.0044",
@@ -1141,7 +1180,7 @@ for (const taper of [false, true]) {
 }
 
 /** Measured over TAPER_GRID with no taper. Pinned, so "veto everything" cannot pass §15 quietly. */
-const EXPECTED_UNTAPERED_VETOES = 152;
+const EXPECTED_UNTAPERED_VETOES = 150;
 /** ⚠️ The cost of suppressing a step for a taper that never comes. Measured 1.6 min, bounded here. */
 const VETO_TIME_COST_BOUND_MIN = 2;
 /**
@@ -1220,10 +1259,15 @@ if (vetoesOnPinnedReplays !== 0) {
 }
 
 /** Measured over CROSSING_GRID. Pinned so §11's golden 16 cannot quietly stop being about this rule. */
-const EXPECTED_FROZEN_GRID_VETOES = 33;
-const EXPECTED_FROZEN_GRID_PLANTS = 15;
+// ⚠️ RE-DERIVED for #276: 33 on 15 → 20 on 8. The veto declines on a `not-rising` rate exactly as
+// it declined on a `bounded` one, and the plants it used to fire on now reach the taper band at a
+// current the pace held higher, so fewer ticks are lowering ones for it to suppress.
+const EXPECTED_FROZEN_GRID_VETOES = 20;
+const EXPECTED_FROZEN_GRID_PLANTS = 8;
 let frozenGridVetoes = 0;
 let frozenGridPlants = 0;
+/** §21's count, tallied here so it is measured over the very same runs. */
+let gridPaceHolds = 0;
 for (const arrivalC of CROSSING_GRID.arrivals) {
   for (const ambientC of CROSSING_GRID.ambients) {
     for (const cooling of CROSSING_GRID.coolings) {
@@ -1236,6 +1280,7 @@ for (const arrivalC of CROSSING_GRID.arrivals) {
       });
       const count = run.reasons.get(CHARGE_AUTO_REASON.TAPERING) ?? 0;
       frozenGridVetoes += count;
+      gridPaceHolds += run.reasons.get(CHARGE_AUTO_REASON.MEASURING) ?? 0;
       if (count > 0) {
         frozenGridPlants += 1;
       }
@@ -1343,6 +1388,185 @@ function settleBatches(): Promise<void> {
   automatic.stop();
 }
 
+// ── §20 ⚠️ #276 ON ITS OWN LOGGED SESSIONS, AND WHAT THE FIX DOES NOT DO ──
+//
+// Both sessions of 2026-09-18, `batt_temp_hi` exactly as logged, against the 80 A the station
+// advertised all day. ⚠️ OPEN-LOOP like §13 and §16: what the rule DECIDES seeing this history,
+// never what would have happened — a different current changes the trajectory and the log cannot
+// say how. §11 is the closed-loop half.
+//
+// ⚠️ THE DESCENT MUST NOT MOVE. The pace is applied to raises only, so every cut this session made
+// is still made, tick for tick. That is the assertion that goes red if it is ever extended to
+// lowerings — where the frozen grid measures 30 crossings against 15.
+{
+  let commandedAmps: number | null = null;
+  let lastCommandAtMs: number | null = null;
+  const commanded: number[] = [];
+  for (const tick of SEPTEMBER_18_TICKS) {
+    // ⚠️ Through `decideOnRing`, which takes the reading FROM the ring and throws when there is
+    // none. Open-coded here it needed a `?? 48` fallback — a fabricated reading standing in for
+    // the throw, in the section whose whole point is replaying what the bike really saw.
+    const decision = decideOnRing(SEPTEMBER_18_EPISODE, tick.atMs, commandedAmps ?? 80, {
+      ceilingAmps: 80,
+      commandedAmps,
+      lastCommandAtMs,
+    });
+    if (decision.kind === "command") {
+      lastCommandAtMs = tick.atMs;
+      commandedAmps = decision.amps;
+    }
+    commanded.push(commandedAmps ?? 80);
+  }
+  const bike = SEPTEMBER_18_TICKS.map(tick => tick.commanded);
+  if (commanded.join(",") !== bike.join(",")) {
+    failures.push(
+      `§20 replayed over session B's own rings the rule commands ${commanded.join(",")}, where the bike commanded ` +
+        `${bike.join(",")}. The descent is deliberately untouched — a pace on lowerings crosses ` +
+        `${CLIFF_C} °C on twice as many frozen plants — so a change here is a change to the half #276 did not ask for`
+    );
+  }
+}
+// ⚠️ SESSION A, AND THE PART OF #276 THIS DOES NOT FIX. Eleven ticks at the 35 A floor with the
+// reading unmoved at 53 for 18.1 minutes. The rule still does not raise inside that window, and
+// that is deliberate: at a reading of 53 the pack is anywhere in [53, 54), and the give-back
+// spends only what the silence has established BEYOND that half-degree. Measured cost of the
+// alternative: DC2 takes three amps back from a true 53.9 and creeps to 55.01 over the next half
+// hour, invisibly, because NEAR_CEILING cannot see a sub-degree climb. docs/charge-auto.md.
+for (const tick of SEPTEMBER_18_STALL_TICKS) {
+  const decision = decideOnRing(SEPTEMBER_18_STALL, tick.atMs, MIN_COMMAND_A, { ceilingAmps: 80 });
+  if (decision.kind !== "hold") {
+    failures.push(
+      `§20 at ${tick.clock} the pack read 53 at the floor with less than a reaction time of proven stillness ` +
+        `beyond the sensor's own half-degree, so the rule must not raise yet: got ${JSON.stringify(decision)}`
+    );
+  }
+}
+// ⚠️ AND THE TWO HALVES IT DOES FIX, both of them the same constant. MEASURED by porting this
+// probe to origin/main: on a still ring the bounded arm returns 0.1 K/min FOR EVER, so
+// `(54 − 51) − 1.2` is 1.8 K of headroom every tick and the rule this replaces walks to the 80 A
+// CEILING from the floor at a reading of 50, 51 and 52 alike — the give-back running open-loop,
+// and the upper half of the ±18 A swing over 2026-09-18's own history. One degree up the same
+// constant tips the deadband (`1 − 1.2 = −0.2`) and it FREEZES at 35 A, which is session A.
+//
+// ⚠️ Both bounds are the discriminating ones: the first is red on origin/main (80 A) and the
+// second is red there too (35 A). An earlier pair asserted `≥ 50` and `≤ 40`, which main passes
+// at both ends — an assertion that cannot fail, caught in review.
+{
+  const settledBelow = giveBackFromTheFloor(51, 30);
+  if (settledBelow > 70) {
+    failures.push(
+      `§20 a pack sitting still at a reading of 51 °C at the ${MIN_COMMAND_A} A floor reached ${settledBelow} A in ` +
+        `30 minutes — the give-back is supposed to be paid for by proven stillness, not to run to the ceiling on a ` +
+        `bound that never decays`
+    );
+  }
+  const atTheLastDegree = giveBackFromTheFloor(53, 30);
+  if (atTheLastDegree < 38) {
+    failures.push(
+      `§20 a pack sitting still at a reading of 53 °C at the ${MIN_COMMAND_A} A floor reached only ` +
+        `${atTheLastDegree} A in 30 minutes — #276 is that it cannot leave the floor there at all, and 34.7 A is ` +
+        `what held that reading on 2026-09-18 while 54.6 A held 54 °C`
+    );
+  }
+  if (atTheLastDegree > 45) {
+    failures.push(
+      `§20 a pack reading 53 °C reached ${atTheLastDegree} A in 30 minutes — that is the band where a true 53.9 ` +
+        `creeps past the cliff unseen, so the give-back must stay cautious there`
+    );
+  }
+}
+
+// ── §21 ⚠️ THE PACE: WHAT IT MAY DO, AND HOW OFTEN IT DOES IT ─────────────
+//
+// The same shape as §15, and for the same reason: a rule that held EVERY raise would satisfy the
+// property perfectly and park the charge wherever the first command left it. So the property is
+// asserted over generated inputs AND the fire count is pinned over the frozen grid, the way §18
+// pins the taper veto.
+let paceCases = 0;
+let paceHolds = 0;
+for (const temperature of PROPERTY_TEMPERATURES) {
+  for (const commandedAmps of [20, MIN_COMMAND_A, 40, 55, 70]) {
+    for (const samples of [
+      climbing(44, temperature),
+      rampTo(temperature + 3, temperature),
+      steady(temperature, 700_000),
+    ]) {
+      const base: ChargeAutoInput = {
+        ...HEALTHY,
+        packTemperatureC: temperature,
+        commandedAmps,
+        samples,
+        nowMs: 700_000,
+      };
+      const unpaced = decideChargeCurrent(base);
+      const paced = decideChargeCurrent({ ...base, lastCommandAtMs: 660_000 });
+      paceCases += 1;
+      if (JSON.stringify(unpaced) === JSON.stringify(paced)) {
+        continue;
+      }
+      paceHolds += 1;
+      if (paced.kind !== "hold" || paced.reason !== CHARGE_AUTO_REASON.MEASURING) {
+        failures.push(`§21 the pace produced ${JSON.stringify(paced)} — it may only ever hold, with its own reason`);
+      }
+      if (unpaced.kind !== "command" || unpaced.amps <= Math.floor(commandedAmps)) {
+        failures.push(
+          `§21 the pace changed a decision that was not a RAISE (${JSON.stringify(unpaced)} at ${temperature} °C) — ` +
+            `waiting to cut crosses the cliff on twice as many frozen plants, so it must never reach one`
+        );
+      }
+      if (temperature >= TARGET_C) {
+        failures.push(`§21 at a reading of ${temperature} the pace changed a decision; nothing it does may reach here`);
+      }
+    }
+  }
+}
+if (paceHolds === 0) {
+  failures.push(`§21 the pace never fired across ${paceCases} generated inputs, so the property holds vacuously`);
+}
+
+// ⚠️ THE V-SHAPE, and it is the reason the short wait has a second condition. `not-rising`
+// compares the WINDOW's endpoints and the window is anchored on the newest sample from BEFORE it
+// (src/charge/rate.ts), so a ring that dips and comes back reads "not rising" on a pack that has
+// demonstrably risen since the raise. The pair below isolates the branch: the same ring and the
+// same tick, differing only in whether the last command predates the dip.
+const V_SHAPE: TemperatureSample[] = [
+  { atMs: 0, celsius: 51 },
+  { atMs: 100_000, celsius: 50 },
+  { atMs: 200_000, celsius: 51 },
+];
+for (const probe of [
+  { name: "the reading rose back after the last command", lastCommandAtMs: 150_000, hold: true },
+  { name: "the last command predates the dip, so nothing has risen since it", lastCommandAtMs: 50_000, hold: false },
+]) {
+  const decision = decideChargeCurrent({
+    ...HEALTHY,
+    packTemperatureC: 51,
+    commandedAmps: 40,
+    samples: V_SHAPE,
+    lastCommandAtMs: probe.lastCommandAtMs,
+    nowMs: 600_000,
+  });
+  if ((decision.kind === "hold") !== probe.hold) {
+    failures.push(
+      `§21 ${probe.name}: a window still holding the dip looks like stillness, so a raise must wait the whole ` +
+        `window there and only there. Wanted ${probe.hold ? "a hold" : "a command"}, got ${JSON.stringify(decision)}`
+    );
+  }
+}
+
+/** Measured over CROSSING_GRID. Pinned, so "hold every raise" cannot pass §21 quietly. */
+const EXPECTED_GRID_PACE_HOLDS = 1018;
+// ⚠️ Counted off §18's walk of the SAME 150 plants rather than a third sweep of its own. Three
+// pinned numbers — §11's crossing set, §18's veto count and this — are only comparable while all
+// three are measured over one set of runs, which §18's comment asserts and a third loop with its
+// own options object would have left to luck.
+if (gridPaceHolds !== EXPECTED_GRID_PACE_HOLDS) {
+  failures.push(
+    `§21 the pace held ${gridPaceHolds} of §11's grid ticks, not the pinned ${EXPECTED_GRID_PACE_HOLDS}. Zero would ` +
+      `make §21 vacuous and a much larger number would make it a rule rather than a wait — re-derive it and say why`
+  );
+}
+
 if (failures.length > 0) {
   console.error(`✗ ${failures.length} charge-auto failure(s):`);
   for (const failure of failures) {
@@ -1392,12 +1616,24 @@ function climbing(fromC: number, toC: number): TemperatureSample[] {
  * while cooling" was asserted for a whole release against a ring whose newest reading was 53. The
  * reading is derived here rather than passed, so that class of fixture cannot be written again.
  */
-function decideOnRing(samples: TemperatureSample[], nowMs: number, commandedAmps: number): ChargeAutoDecision {
+function decideOnRing(
+  samples: TemperatureSample[],
+  nowMs: number,
+  commandedAmps: number,
+  over: Partial<ChargeAutoInput> = {}
+): ChargeAutoDecision {
   const newest = samples.filter(sample => sample.atMs <= nowMs).at(-1);
   if (newest === undefined) {
     throw new Error("decideOnRing needs at least one sample at or before nowMs");
   }
-  return decideChargeCurrent({ ...HEALTHY, packTemperatureC: newest.celsius, commandedAmps, samples, nowMs });
+  return decideChargeCurrent({
+    ...HEALTHY,
+    packTemperatureC: newest.celsius,
+    commandedAmps,
+    samples,
+    nowMs,
+    ...over,
+  });
 }
 
 /**
@@ -1534,4 +1770,28 @@ function sawtoothAround(celsius: number): TemperatureSample[] {
     samples.push({ atMs: step * 50_000, celsius: celsius + swing[step % swing.length] });
   }
   return samples;
+}
+
+/**
+ * A pack sitting perfectly still at `reading`, commanded at the floor: what the rule has given it
+ * back after `minutes` of 60 s ticks.
+ *
+ * ⚠️ The ring holds ONE unmoved sample, which is what a settled pack produces — the estimator
+ * anchors on it, so the answer is `not-rising` rather than `unknown`, and the silence grows tick by
+ * tick exactly as it does on the bike.
+ */
+function giveBackFromTheFloor(reading: number, minutes: number): number {
+  const samples: TemperatureSample[] = [{ atMs: 0, celsius: reading }];
+  const startMs = 1_200_000;
+  let commandedAmps = MIN_COMMAND_A;
+  let lastCommandAtMs: number | null = null;
+  for (let tick = 0; tick < minutes; tick += 1) {
+    const nowMs = startMs + tick * 60_000;
+    const decision = decideOnRing(samples, nowMs, commandedAmps, { ceilingAmps: 80, lastCommandAtMs });
+    if (decision.kind === "command") {
+      lastCommandAtMs = nowMs;
+      commandedAmps = decision.amps;
+    }
+  }
+  return commandedAmps;
 }

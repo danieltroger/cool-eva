@@ -117,6 +117,10 @@ export function replayCharge(options: PlantOptions): PlantRun {
   let peakC = options.arrivalC;
   let lastTick = -Infinity;
   let lastWholeDegree: number | null = null;
+  // The pace in src/charge/pace.ts needs to know when the last command landed and which way it
+  // went, so the plant carries the same two facts src/charge/auto.ts keeps. Without them every
+  // replay here would run with the pacing permanently released, which is not the shipped rule.
+  let lastCommandAtMs: number | null = null;
   const samples: TemperatureSample[] = [];
   const socSamples: SocSample[] = [];
   const reasons = new Map<ChargeAutoReason, number>();
@@ -160,10 +164,12 @@ export function replayCharge(options: PlantOptions): PlantRun {
         socAgeMs: 100,
         socSamples,
         requestedAmps,
+        lastCommandAtMs,
         nowMs: elapsed * 1000,
       });
       reasons.set(decision.reason, (reasons.get(decision.reason) ?? 0) + 1);
       if (decision.kind === "command") {
+        lastCommandAtMs = elapsed * 1000;
         commanded = decision.amps;
         commands.push(decision.amps);
       }

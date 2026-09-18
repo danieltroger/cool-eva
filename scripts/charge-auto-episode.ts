@@ -187,3 +187,71 @@ export const SEPTEMBER_13_TICKS = [
   { clock: "12:15:44", atMs: 720_203, reading: 50, soc: 82, commandedAmps: 70 },
   { clock: "12:16:44", atMs: 780_203, reading: 50, soc: 84, commandedAmps: 64 },
 ];
+
+/**
+ * 2026-09-18, session B — the stop Daniel photographed, and the one #276 is filed on.
+ *
+ * `batt_temp_hi` exactly as logged, in ms from the `charge_manager_state` → 0x23 edge at
+ * 17:08:34.246 CEST, which is where `forgetSession` clears the ring. The station advertised
+ * `fast_dc_limit_max_a` = 80 A all day (8 rows, none inside the session), so the rule starts from
+ * a ceiling of 80 rather than the 72.6 A the vehicle actually drew.
+ *
+ * ⚠️ The controller's own trace over these ticks: 68, 55, 44, 39, 36, 35 A between 17:15:18 and
+ * 17:20:18, then `CLEAR` and 37 A at 17:21:18 — the +2 A Daniel could not see on a 5 A dial. That
+ * tick's rate is a FITTED 0.175 K/min still carrying the 47 → 52 climb at 72.6 A, not the
+ * quantisation floor: the bound-as-a-rate defect is what parks a SETTLED pack, which is the stall
+ * below. docs/charge-auto.md § "A bound is not a rate".
+ */
+export const SEPTEMBER_18_EPISODE: TemperatureSample[] = [
+  { atMs: 101_447, celsius: 48 },
+  { atMs: 161_529, celsius: 49 },
+  { atMs: 233_625, celsius: 50 },
+  { atMs: 325_755, celsius: 51 },
+  { atMs: 429_893, celsius: 52 },
+  { atMs: 760_344, celsius: 51 },
+];
+
+/**
+ * The bike's own tick instants across that descent and what it commanded at each, from
+ * `charge_auto_reason` and `charge_auto_target_a`. One record per tick, like SEPTEMBER_13_TICKS
+ * above: two index-aligned arrays would let a dropped entry report an off-by-one diff instead of
+ * failing to compile.
+ */
+export const SEPTEMBER_18_TICKS = [
+  { clock: "17:15:18", atMs: 404_058, commanded: 68 },
+  { clock: "17:16:18", atMs: 464_088, commanded: 55 },
+  { clock: "17:17:18", atMs: 524_140, commanded: 44 },
+  { clock: "17:18:18", atMs: 584_096, commanded: 39 },
+  { clock: "17:19:18", atMs: 644_086, commanded: 36 },
+  { clock: "17:20:18", atMs: 704_123, commanded: 35 },
+  { clock: "17:21:18", atMs: 764_054, commanded: 37 },
+];
+
+/**
+ * 2026-09-18, session A — eleven ticks at the 35 A floor with the reading unmoved at 53 °C from
+ * 14:30:23 to 14:48:30, **eighteen minutes**, and the logged instance of #276's headline defect.
+ *
+ * ms from that session's `charge_manager_state` edge at 14:08:44.888. The controller descended
+ * 48, 45, 42, 39, 36, 35 A between 14:30:39 and 14:35:39, said `AT_FLOOR` at 14:36:39 and
+ * `SETTLED` from 14:40:39, and did nothing further until Daniel switched it off at 14:47:51.
+ *
+ * ⚠️ The 54 at the end arrives only AFTER he hand-set 80 A at 14:47:54 — the pack read 55 at
+ * 14:49:43, 109 s later, which is the measurement behind the quantisation caution on the raise.
+ */
+export const SEPTEMBER_18_STALL: TemperatureSample[] = [
+  { atMs: 454, celsius: 45 },
+  { atMs: 97_813, celsius: 46 },
+  { atMs: 154_881, celsius: 47 },
+  { atMs: 241_004, celsius: 48 },
+  { atMs: 342_146, celsius: 49 },
+  { atMs: 437_278, celsius: 50 },
+  { atMs: 741_719, celsius: 51 },
+  { atMs: 1_042_137, celsius: 52 },
+  { atMs: 1_298_498, celsius: 53 },
+];
+
+/** The first tick at the floor, and the last before Daniel switched it off 17.3 min later. */
+export const SEPTEMBER_18_STALL_TICKS = [
+  { clock: "14:36:39", atMs: 1_374_956 },
+  { clock: "14:47:39", atMs: 2_334_956 },
+];
