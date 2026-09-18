@@ -121,7 +121,7 @@ The span is measured **to now**, not to the newest sample: samples arrive only w
 
 ## A bound is not a rate (#276)
 
-⚠️ **The setpoint is 54 °C and until this change the rule could not raise the current above a reading of 52, however steady the pack was.** `estimateHeatingRate`'s bounded arm returns `distinct × 60 000 / spanMs`, and with `distinct ≥ 1` and the span clamped to the window that can never be smaller than **0.1 K/min**. `predictedHeadroomKelvin` spends it over `REACTION_MIN`, so a pack that has not moved for an hour is charged **1.2 K of phantom climb**; a raise needs `(54 − T) − 1.2 ≥ 0.5`, i.e. `T ≤ 52.3`. The guard two sections above already refuses to spend a bound **at** the setpoint — _"it says only 'the reading did not move'"_ — and nothing made the same argument one degree lower.
+⚠️ **The setpoint is 54 °C and until this change the rule could not raise the current above a reading of 52, however steady the pack was — and below 52 it could not stop.** `estimateHeatingRate`'s bounded arm returns `distinct × 60 000 / spanMs`, and with `distinct ≥ 1` and the span clamped to the window that can never be smaller than **0.1 K/min**. `predictedHeadroomKelvin` spends it over `REACTION_MIN`, so a pack that has not moved for an hour is charged **1.2 K of phantom climb**; a raise needs `(54 − T) − 1.2 ≥ 0.5`, i.e. `T ≤ 52.3`. The guard two sections above already refuses to spend a bound **at** the setpoint — _"it says only 'the reading did not move'"_ — and nothing made the same argument one degree lower.
 
 **The fix is the direction the reading actually went.** A bound is on the MAGNITUDE, so it is evidence of heating only when the window's net movement was upward. `distinct = 2` rising still answers `bounded` at its old value, which is why `check-charge-auto.ts` §2's _"a bounded rate that puts the cliff inside the horizon must still close"_ is untouched. A window that never moved, or whose net movement was down, answers **`not-rising`** — and that arm carries **no number at all**, so `rate.perMinute` is a type error on it and no future caller can spend it by accident.
 
@@ -133,7 +133,15 @@ The span is measured **to now**, not to the newest sample: samples arrive only w
 
 **Measured, and this is why it is not simply zero.** Without the half-degree term, DC2 takes three amps back from the floor with the pack at a true 53.9 — and then `NEAR_CEILING` holds that current for **thirty minutes** while the pack creeps 54.0 → 55.01, invisibly, because a whole-degree sensor cannot see a sub-degree climb. Peak 55.01 against 54.11 for the rule this replaces. With the term, DC2 gives back two amps, peaks at **54.70** and finishes **2 minutes sooner**. The same arithmetic on the bike rather than the plant: Daniel's hand-set 80 A at 14:47:54 took the pack from a reading of 53 to 55 in **109 seconds**, which is 0.018 K/min per amp of excess — so three amps over the equilibrium reaches the cliff in about twenty minutes.
 
-⚠️ **The cost is named rather than hidden: session A's eighteen-minute stall is NOT unstuck by this change.** Eighteen minutes of stillness at a reading of 53 is not enough to establish the half-degree, so the rule still holds 35 A there. What it fixes is where the amps actually were — a pack settled at a reading of 51 at the floor now climbs back above 50 A within twenty minutes, where the shipped rule gives 4 A once and then parks for ever.
+⚠️ **Both halves are the same constant, and the give-back running away is the other one.** MEASURED by porting the probe in `check-charge-auto.ts` §20 to the rule this replaces: on a still ring the bounded arm returns 0.1 K/min **for ever**, so `(54 − 51) − 1.2` is 1.8 K of headroom every tick and it walks from the 35 A floor to the **80 A ceiling** at a reading of 50, 51 and 52 alike. That is the give-back running open-loop, and it is the upper half of the ±18 A swing #275 measured over 2026-09-18's history. One degree up the same constant tips the deadband and it freezes.
+
+| still at, from the floor, after 30 min | the rule this replaces | here |
+| -------------------------------------- | ---------------------- | ---- |
+| a reading of 51 °C                     | **80 A** (the ceiling) | 59 A |
+| 52 °C                                  | **80 A**               | 47 A |
+| 53 °C                                  | **35 A** (frozen)      | 40 A |
+
+⚠️ **So below the setpoint this is mostly a SLOWDOWN, and the cost at 53 is named rather than hidden: session A's eighteen-minute stall is NOT unstuck.** Eighteen minutes of stillness there does not establish the half-degree, so the rule still holds 35 A through it. What the change buys is a give-back that is paid for by how long the pack has actually held still, in both directions from where the constant put it.
 
 ## A move the estimator cannot see
 

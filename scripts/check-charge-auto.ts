@@ -713,14 +713,9 @@ if (!exercisedByEpisode.includes(CHARGE_AUTO_REASON.NEAR_CEILING)) {
 // ⚠️ The SET, not just the count: naming which plants cross says whether a change added new ones
 // or merely moved the boundary, which are different findings and only one of them is a regression.
 //
-// ⚠️ RE-DERIVED for #186, 24 → 16, a STRICT SUBSET — eight stopped crossing, none started. Two
-// changes moved it in OPPOSITE directions and reading 16 as "the estimator cap was free" is the
-// wrong conclusion: docs/charge-auto.md § "The silence is a bound too" carries both tables.
-// ⚠️ RE-DERIVED for #276, 16 → 15, a STRICT SUBSET: 44/35/0.0044 stopped crossing and nothing
-// started. The rule gives current back where the shipped one parked at the floor, so it runs the
-// pack warmer by design — that the crossing set SHRANK is the load-bearing measurement, and the
-// pace on raises is what does it (measured over this grid: the same wait on cuts as well crosses
-// 30 plants, and on cuts alone 51). docs/charge-auto.md § "A move the estimator cannot see".
+// ⚠️ RE-DERIVED twice, 24 → 16 (#186) → 15 (#276), each a STRICT SUBSET. Both times two changes
+// moved it in opposite directions, so neither number reads as "that half was free": the two
+// sections of docs/charge-auto.md they name carry the tables.
 const EXPECTED_CROSSINGS = [
   "44/39/0.0044",
   "48/30/0.0044",
@@ -1453,25 +1448,37 @@ for (const atMs of [SEPTEMBER_18_AT_FLOOR_MS, SEPTEMBER_18_STALL_END_MS]) {
     );
   }
 }
-// ⚠️ AND THE PART IT DOES FIX, which is where the amps actually were. #276 measured the controller
-// at 35-37 A while the pack held 51-52 °C and Daniel's own hand-set 54.6 A held 54 °C: a pack
-// sitting still BELOW the last whole degree must climb back, and on the shipped rule it cannot —
-// `(54 − 51) − 0.1 × 12 = 1.8` gives 4 A once and then the reading never moves again, so it parks.
+// ⚠️ AND THE TWO HALVES IT DOES FIX, both of them the same constant. MEASURED by porting this
+// probe to origin/main: on a still ring the bounded arm returns 0.1 K/min FOR EVER, so
+// `(54 − 51) − 1.2` is 1.8 K of headroom every tick and the rule this replaces walks to the 80 A
+// CEILING from the floor at a reading of 50, 51 and 52 alike — the give-back running open-loop,
+// and the upper half of the ±18 A swing over 2026-09-18's own history. One degree up the same
+// constant tips the deadband (`1 − 1.2 = −0.2`) and it FREEZES at 35 A, which is session A.
+//
+// ⚠️ Both bounds are the discriminating ones: the first is red on origin/main (80 A) and the
+// second is red there too (35 A). An earlier pair asserted `≥ 50` and `≤ 40`, which main passes
+// at both ends — an assertion that cannot fail, caught in review.
 {
-  const reached = giveBackFromTheFloor(51, 30);
-  if (reached < 50) {
+  const settledBelow = giveBackFromTheFloor(51, 30);
+  if (settledBelow > 70) {
     failures.push(
-      `§20 a pack sitting still at a reading of 51 °C at the ${MIN_COMMAND_A} A floor reached only ${reached} A in ` +
-        `30 minutes — #276 is that it cannot climb back at all, and the measured equilibrium that day was 54.6 A`
+      `§20 a pack sitting still at a reading of 51 °C at the ${MIN_COMMAND_A} A floor reached ${settledBelow} A in ` +
+        `30 minutes — the give-back is supposed to be paid for by proven stillness, not to run to the ceiling on a ` +
+        `bound that never decays`
     );
   }
-  // ⚠️ The same probe one degree up must NOT run away: the give-back is graded by how far the
-  // reading is from the setpoint, and at 53 the sensor cannot tell 53.0 from 53.9.
-  const nearTheSetpoint = giveBackFromTheFloor(53, 30);
-  if (nearTheSetpoint > 40) {
+  const atTheLastDegree = giveBackFromTheFloor(53, 30);
+  if (atTheLastDegree < 38) {
     failures.push(
-      `§20 a pack reading 53 °C reached ${nearTheSetpoint} A in 30 minutes — that is the band where a true 53.9 ` +
-        `creeps past the cliff unseen, and the give-back must be cautious there rather than proportional`
+      `§20 a pack sitting still at a reading of 53 °C at the ${MIN_COMMAND_A} A floor reached only ` +
+        `${atTheLastDegree} A in 30 minutes — #276 is that it cannot leave the floor there at all, and 34.7 A is ` +
+        `what held that reading on 2026-09-18 while 54.6 A held 54 °C`
+    );
+  }
+  if (atTheLastDegree > 45) {
+    failures.push(
+      `§20 a pack reading 53 °C reached ${atTheLastDegree} A in 30 minutes — that is the band where a true 53.9 ` +
+        `creeps past the cliff unseen, so the give-back must stay cautious there`
     );
   }
 }
@@ -1526,6 +1533,36 @@ for (const temperature of PROPERTY_TEMPERATURES) {
 }
 if (paceHolds === 0) {
   failures.push(`§21 the pace never fired across ${paceCases} generated inputs, so the property holds vacuously`);
+}
+
+// ⚠️ THE V-SHAPE, and it is the reason the short wait has a second condition. `not-rising`
+// compares the WINDOW's endpoints and the window is anchored on the newest sample from BEFORE it
+// (src/charge/rate.ts), so a ring that dips and comes back reads "not rising" on a pack that has
+// demonstrably risen since the raise. The pair below isolates the branch: the same ring and the
+// same tick, differing only in whether the last command predates the dip.
+const V_SHAPE: TemperatureSample[] = [
+  { atMs: 0, celsius: 51 },
+  { atMs: 100_000, celsius: 50 },
+  { atMs: 200_000, celsius: 51 },
+];
+for (const probe of [
+  { name: "the reading rose back after the last command", lastCommandAtMs: 150_000, hold: true },
+  { name: "the last command predates the dip, so nothing has risen since it", lastCommandAtMs: 50_000, hold: false },
+]) {
+  const decision = decideChargeCurrent({
+    ...HEALTHY,
+    packTemperatureC: 51,
+    commandedAmps: 40,
+    samples: V_SHAPE,
+    lastCommandAtMs: probe.lastCommandAtMs,
+    nowMs: 600_000,
+  });
+  if ((decision.kind === "hold") !== probe.hold) {
+    failures.push(
+      `§21 ${probe.name}: a window still holding the dip looks like stillness, so a raise must wait the whole ` +
+        `window there and only there. Wanted ${probe.hold ? "a hold" : "a command"}, got ${JSON.stringify(decision)}`
+    );
+  }
 }
 
 /** Measured over CROSSING_GRID. Pinned, so "hold every raise" cannot pass §21 quietly. */

@@ -102,7 +102,7 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
     sink,
     mode: "automatic",
     reason: CHARGE_AUTO_REASON.NO_HISTORY,
-    commandedAmps: null,
+    lastCommand: null,
     lastSentAmps: null,
     riderOverride: false,
     samples: [],
@@ -114,7 +114,6 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
     firstSocMayNotBeACrossing: !isSocPlausible(latestValue("soc")),
     inFlight: false,
     lastSessionState: null,
-    lastCommandAtMs: null,
     timer: null,
     unsubscribe: null,
   };
@@ -184,7 +183,15 @@ interface AutoContext {
   sink: ChargeCommandSink;
   mode: ChargeAutoMode;
   reason: ChargeAutoReason;
-  commandedAmps: number | null;
+  /**
+   * The last command this controller landed this session — the amps AND when — or null.
+   *
+   * ⚠️ ONE FIELD, because they are one fact and the rule needs both: `./auto-curve.ts` steps from
+   * the amps and `./pace.ts` measures the estimator's staleness against the instant. Held apart,
+   * deleting the line that stamped the instant left every check green while the pace silently
+   * stopped engaging on the bike — caught in review, and made unrepresentable here instead.
+   */
+  lastCommand: { amps: number; atMs: number } | null;
   /** The last current this Pi put on the bus, automatic or hand-set. The echo test compares to it. */
   lastSentAmps: number | null;
   riderOverride: boolean;
@@ -196,8 +203,6 @@ interface AutoContext {
   inFlight: boolean;
   /** The last `charge_manager_state` seen, so entering and leaving a session are both edges. */
   lastSessionState: number | null;
-  /** When the last command LANDED, monotonic, so the rule can tell whether the estimate has seen it. */
-  lastCommandAtMs: number | null;
   timer: ReturnType<typeof setInterval> | null;
   unsubscribe: (() => void) | null;
 }
@@ -221,8 +226,7 @@ async function runTick(context: AutoContext): Promise<void> {
       // nothing. ⚠️ The first command of a session steps from the ceiling (`auto-curve.ts` reads
       // `commandedAmps ?? ceiling`) and `stepTo` clamps to it, so with nothing commanded yet the
       // move can only have been downwards.
-      context.lastCommandAtMs = monotonicNow();
-      context.commandedAmps = decision.amps;
+      context.lastCommand = { amps: decision.amps, atMs: monotonicNow() };
       record("charge_auto_target_a", decision.amps);
     } else {
       // Not swallowed: a refused command means the bike is not where the rule thought it was, and
@@ -247,7 +251,7 @@ function decide(context: AutoContext): ChargeAutoDecision {
     chargeManagerState: latestValue("charge_manager_state"),
     chargeManagerStateAgeMs: ageMs("charge_manager_state"),
     ceilingAmps: latestValue("fast_dc_limit_max_a"),
-    commandedAmps: context.commandedAmps,
+    commandedAmps: context.lastCommand?.amps ?? null,
     riderOverride: context.riderOverride,
     samples: context.samples,
     socPercent: latestValue("soc"),
@@ -257,7 +261,7 @@ function decide(context: AutoContext): ChargeAutoDecision {
     // current by 0.03-2.40 s in all eight captured ramps (docs/charge-manager.md), and it is the
     // signal the pack's own taper moves. `pack_a` would answer the same question later and noisier.
     requestedAmps: latestValue("fast_dc_target_a"),
-    lastCommandAtMs: context.lastCommandAtMs,
+    lastCommandAtMs: context.lastCommand?.atMs ?? null,
     nowMs: monotonicNow(),
   });
 }
@@ -335,9 +339,8 @@ function rememberSoc(context: AutoContext, percent: number): void {
  * only reads, exactly as `setMode` re-decides without commanding. docs/charge-auto.md.
  */
 function forgetSession(context: AutoContext): void {
-  context.commandedAmps = null;
+  context.lastCommand = null;
   context.lastSentAmps = null;
-  context.lastCommandAtMs = null;
   context.riderOverride = false;
   context.samples.length = 0;
   context.socSamples.length = 0;
@@ -406,6 +409,6 @@ function stateOf(context: AutoContext): ChargeAutoState {
   return {
     mode: context.mode,
     reason: context.reason,
-    commandedAmps: context.commandedAmps,
+    commandedAmps: context.lastCommand?.amps ?? null,
   };
 }

@@ -78,8 +78,12 @@ function measurableAfterMs(state: PaceState, lastCommandAtMs: number): number {
  * back 52 → 51 fifty-six seconds after the descent reached the floor, and the bike's own next tick
  * gave current back. A wait through that is a wait through the evidence.
  *
- * ⚠️ No sample either side answers TRUE: with no evidence the shipped rule decides. A wait that can
- * suppress a move must fail towards acting.
+ * ⚠️ No sample either side answers TRUE, and that arm is UNREACHABLE — kept as the fail-safe
+ * default anyway. Reaching it needs every sample to postdate the last command while the wait is
+ * still running, but the wait is at most RATE_MIN_SPAN_MS and `estimateHeatingRate` answers
+ * `unknown` until the ring spans exactly that, so the oldest sample always predates the command
+ * when this is asked. A mutation flipping it therefore SURVIVES the check, on purpose and for the
+ * reason `sessionEndsFirst`'s setpoint guard does: docs/charge-auto.md § "The taper".
  */
 function readingFellSince(state: PaceState, lastCommandAtMs: number): boolean {
   const atCommand = newestSampleAtOrBefore(state.samples, lastCommandAtMs);

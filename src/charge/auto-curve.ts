@@ -6,6 +6,7 @@ import {
   type TemperatureSample,
 } from "./rate.ts";
 import { commandIsUnmeasured } from "./pace.ts";
+import { blindStepAmps, confidentHeadroomKelvin, measuredRatePerMinute, stepAmps } from "./step.ts";
 import { sessionAheadMinutes, type SocSample } from "./soc.ts";
 import { CHARGE_MANAGER_STATE_DC } from "../fan/curve.ts";
 
@@ -284,14 +285,6 @@ export function decideChargeCurrent(input: ChargeAutoInput): ChargeAutoDecision 
   if (rate.kind === "not-rising" && confidentHeadroomKelvin(input, headroomKelvin) <= 0) {
     return { kind: "hold", reason: CHARGE_AUTO_REASON.SETTLED };
   }
-  // ⚠️ AND NOT IF THE PACK HAS BEEN AT THE SETPOINT THIS WINDOW. A reading of 53 with a 54 behind
-  // it is a pack oscillating ACROSS the setpoint at a current that already reaches it, not one
-  // being held below it — and the quantisation argument that forbids raising at 54 does not expire
-  // the moment the reading ticks back down. Measured on the frozen grid: without this, DC2 takes
-  // three amps back from the floor and peaks at 55.01 against 54.11 for the rule this replaces.
-  if (rate.kind === "not-rising" && reachedSetpointThisWindow(input)) {
-    return { kind: "hold", reason: CHARGE_AUTO_REASON.NEAR_CEILING };
-  }
   const step = stepAmps(input, rate, headroomKelvin);
   if (headroomKelvin > 0) {
     const raised = stepTo(current + step, current, ceiling, CHARGE_AUTO_REASON.CLEAR);
@@ -303,47 +296,42 @@ export function decideChargeCurrent(input: ChargeAutoInput): ChargeAutoDecision 
 }
 
 /**
- * The rate the headroom line may spend. A bound is not one; a reading that did not rise measures 0.
+ * Turns a RAISE into a hold until the estimator can see what the last command did. `./pace.ts` is
+ * the measurement; this is the policy around it.
  *
- * ⚠️ `unknown` never reaches here — `decideChargeCurrent` answers it above — and the arms are named
- * rather than defaulted so a fifth one cannot inherit a silent zero.
+ * ⚠️ RAISES ONLY, and the asymmetry is MEASURED rather than chosen: over the frozen grid the same
+ * wait costs 15 crossings on raises, 30 on both directions and 51 on cuts alone, against 16 for
+ * the rule this replaces. Quick to cut, slow to raise — an over-cut parks the charge at the floor,
+ * which the give-back walks back, and an over-raise costs 42 minutes. The table and the reasoning:
+ * docs/charge-auto.md § "A move the estimator cannot see".
+ *
+ * ⚠️ Never at or above the setpoint (nothing may raise there, so a wait would suppress a step that
+ * cannot exist), and like the taper veto it may only ever turn a COMMAND into a HOLD.
  */
-function measuredRatePerMinute(rate: HeatingRate): number {
-  return rate.kind === "rate" || rate.kind === "bounded" ? rate.perMinute : 0;
-}
-
-/**
- * How many amps this tick may move, and ⚠️ THE ANTI-WINDUP THE PHANTOM USED TO PROVIDE.
- *
- * A `not-rising` answer establishes the DIRECTION — the pack is under the setpoint and not climbing
- * towards it — and nothing about the size of the error, because the reading cannot resolve where
- * inside its whole degree the pack sits. Sized proportionally it is `AMPS_PER_KELVIN × (54 − T)`,
- * which at a reading of 51 is 6 A **every measurement interval with nothing above it but the
- * ceiling**: measured over 2026-09-18's own history, that walks to the 80 A ceiling and enters the
- * 54 °C band with more current in flight than the shipped rule managed. Daniel hand-set 80 A at
- * 14:47:54 with the reading at 53 and the pack read 55 at 14:49:43 — 109 s.
- *
- * So a non-measurement may move the command by the smallest step the bike accepts and no more. The
- * pack answers, the estimator fits a slope, and the full proportional step comes back with it.
- */
-function stepAmps(input: ChargeAutoInput, rate: HeatingRate, headroomKelvin: number): number {
-  if (rate.kind === "not-rising") {
-    return Math.min(
-      MAX_STEP_A,
-      Math.max(MIN_STEP_A, Math.round(AMPS_PER_KELVIN * confidentHeadroomKelvin(input, headroomKelvin)))
-    );
+function measurementPending(
+  input: ChargeAutoInput,
+  stepped: ChargeAutoDecision,
+  current: number,
+  temperature: number,
+  rate: HeatingRate
+): ChargeAutoDecision | null {
+  if (temperature >= TARGET_C || stepped.kind !== "command" || stepped.amps <= current) {
+    return null;
   }
-  return Math.min(MAX_STEP_A, Math.max(MIN_STEP_A, Math.round(AMPS_PER_KELVIN * Math.abs(headroomKelvin))));
-}
-
-function reachedSetpointThisWindow(input: ChargeAutoInput): boolean {
-  const from = input.nowMs - RATE_WINDOW_MS;
-  return input.samples.some(sample => sample.atMs >= from && sample.atMs <= input.nowMs && sample.celsius >= TARGET_C);
-}
-
-function confidentHeadroomKelvin(input: ChargeAutoInput, headroomKelvin: number): number {
-  const silentMinutes = minutesSinceNewestSample(input.samples, input.nowMs);
-  return silentMinutes === null ? 0 : headroomKelvin - QUANTISATION_K - REACTION_MIN / silentMinutes;
+  // ⚠️ NOT THE FLOOR RECOVERY. `stepTo` clamps with `max(MIN_COMMAND_A, …)`, so from a command
+  // below the floor even a step DOWN comes back as a raise to MIN_COMMAND_A, and waiting to
+  // measure that is waiting to return to the least current this rule may command. Unreachable
+  // through ./auto.ts; guarded for the reason `sessionEndsFirst` guards the same shape.
+  if (current < MIN_COMMAND_A) {
+    return null;
+  }
+  const unmeasured = commandIsUnmeasured({
+    samples: input.samples,
+    nowMs: input.nowMs,
+    lastCommandAtMs: input.lastCommandAtMs,
+    rateIsNotRising: rate.kind === "not-rising",
+  });
+  return unmeasured ? { kind: "hold", reason: CHARGE_AUTO_REASON.MEASURING } : null;
 }
 
 /**
@@ -413,47 +401,6 @@ function sessionEndsFirst(
 }
 
 /**
- * Turns a RAISE into a hold until the estimator can see what the last command did. `./pace.ts` is
- * the measurement; this is the policy around it.
- *
- * ⚠️ RAISES ONLY, and that asymmetry is MEASURED rather than chosen. Over the frozen 150-plant grid
- * the same wait applied to both directions crosses the cliff on 30 plants and applied to cuts alone
- * on 51, against 16 for the rule this replaces — a descent that waits for the pack to cross another
- * whole degree before cutting again is far too slow on a pack that is climbing. Applied to raises
- * alone it is 15, a strict subset of those 16. The costs are asymmetric in the same direction: an
- * over-cut parks the charge at the floor and the give-back below now walks it back, while an
- * over-raise crosses 55 °C at a measured cost of 42 minutes. Quick to cut, slow to raise.
- * docs/charge-auto.md § "A move the estimator cannot see".
- *
- * ⚠️ It still measures against the last command WHICHEVER WAY IT WENT: a raise two minutes after a
- * cut is decided on a rate the cut has not reached yet, which is the same staleness.
- *
- * ⚠️ NEVER AT OR ABOVE THE SETPOINT — the boundary `sessionEndsFirst` keeps, and for a sharper
- * reason: nothing may raise there at all, so a wait would be suppressing a step that cannot exist.
- *
- * ⚠️ Like the taper veto, it may only ever turn a COMMAND into a HOLD: a hold is already the
- * shipped answer and relabelling it would claim this rule did what the deadband or the floor did.
- */
-function measurementPending(
-  input: ChargeAutoInput,
-  stepped: ChargeAutoDecision,
-  current: number,
-  temperature: number,
-  rate: HeatingRate
-): ChargeAutoDecision | null {
-  if (temperature >= TARGET_C || stepped.kind !== "command" || stepped.amps <= current) {
-    return null;
-  }
-  const unmeasured = commandIsUnmeasured({
-    samples: input.samples,
-    nowMs: input.nowMs,
-    lastCommandAtMs: input.lastCommandAtMs,
-    rateIsNotRising: rate.kind === "not-rising",
-  });
-  return unmeasured ? { kind: "hold", reason: CHARGE_AUTO_REASON.MEASURING } : null;
-}
-
-/**
  * How far below the setpoint the pack is predicted to be `horizonMinutes` from now.
  *
  * ⚠️ ONE definition, called twice: once with REACTION_MIN, which is the shipped rule, and once with
@@ -463,32 +410,6 @@ function measurementPending(
  */
 function predictedHeadroomKelvin(temperatureC: number, ratePerMinute: number, horizonMinutes: number): number {
   return TARGET_C - temperatureC - ratePerMinute * horizonMinutes;
-}
-
-/**
- * How far to descend with no fitted slope to descend on.
- *
- * ⚠️ Sized from the SILENCE, not from a constant: the reading has not moved for `t` minutes, so the
- * rate is under `1/t`, and substituting that bound into `headroomKelvin` at the setpoint leaves
- * `REACTION_MIN / t` kelvin of deficit. Same bound the estimator's cap uses, so the blind branch
- * and the headline fix rest on one measurement rather than two guesses. No samples at all is the
- * one case with no bound to read, and it takes the largest step the rule allows — a pack reading
- * ≥ 54 with no history whatsoever is the least safe thing this branch ever sees.
- *
- * ⚠️ It SATURATES: this branch only runs while the span is under RATE_MIN_SPAN_MS, and the silence
- * cannot exceed the span, so for short silences the deficit exceeds the cap and the step is simply
- * MAX_STEP_A. The frozen grid therefore cannot tell this apart from a fixed maximum step — the
- * evidence for the derivation is the argument and the unit fixture, not the crossing count.
- */
-function blindStepAmps(input: ChargeAutoInput): number {
-  // No samples at all is the only case with no bound to read. A zero silence needs no branch of its
-  // own: `REACTION_MIN / 0` is Infinity, which the clamp below turns into MAX_STEP_A anyway.
-  const silentMinutes = minutesSinceNewestSample(input.samples, input.nowMs);
-  if (silentMinutes === null) {
-    return MAX_STEP_A;
-  }
-  const deficitKelvin = REACTION_MIN / silentMinutes;
-  return Math.min(MAX_STEP_A, Math.max(MIN_STEP_A, Math.round(AMPS_PER_KELVIN * deficitKelvin)));
 }
 
 /**
