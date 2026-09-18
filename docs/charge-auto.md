@@ -186,13 +186,17 @@ Read as permission, that return hands the rule a raise straight back into the ba
 
 `scripts/check-charge-archive.ts` drives the rule over **18 DC sessions, 2026-09-07 to 09-18**, twice: open-loop against the logged rings (what it DECIDES, and the only honest way to score a command) and closed-loop against a two-node plant measured from the same archive (what would then HAPPEN). Pooled, at both ends of the plant's fitted constants:
 
-|                                        | crossings of 55 | longest train | Ah/min     |
-| -------------------------------------- | --------------- | ------------- | ---------- |
-| do nothing — the station's own current | 832             | 78            | 0.5650     |
-| the rule before this change (#279)     | 5               | 1             | 0.5682     |
-| **with the band clause**               | **5**           | **1**         | **0.5681** |
+|                                        | crossings of 55 | longest train | Ah over 2 196 min |
+| -------------------------------------- | --------------- | ------------- | ----------------- |
+| do nothing — the station's own current | 117             | 21            | 997               |
+| the rule before this change (#279)     | 0               | 0             | 961               |
+| **with the band clause**               | **0**           | **0**         | **961**           |
 
-It changes **167 of 1 080 session/phase replays** and costs 0.02 % of charge. ⚠️ The model **cannot** show what it buys: one thermal node with τ = C/k ≈ 25–35 min cannot produce the hottest cell's saw-tooth, so it under-produces the very trains this clause exists to prevent. The crossing numbers are a floor on the benefit, not a measure of it.
+The clause changes **107 of 1 080 session/phase replays**, and the closed loop cannot separate the two rules at all — the trade it makes is invisible to a model that cannot saw-tooth.
+
+⚠️ **Two honest things about that table.** The controller delivers **3.6 % less charge than doing nothing**, and buys 117 crossings and a 21-crossing train with it; whether that is a good trade turns on what a crossing really costs, which the field puts at 42 minutes over two stops and this model at about a minute each. And the model **cannot** show what the clause itself buys: one thermal node with τ = C/k ≈ 25–35 min cannot produce the hottest cell's saw-tooth, so it under-produces the very trains the clause exists to prevent. The crossing numbers are a floor on the benefit, never a measure of it.
+
+⚠️ **The baseline's own numbers depend on a modelling choice**, so read them as a shape rather than a count: the clamp is held for `DERATE_HOLD_MS` (60 s, the measured saw-tooth period) and the baseline's crossings scale roughly as one per hold — 25 545 at no hold, 1 635 at 30 s, 832 at 60 s, 429 at 120 s on the earlier fixture. The controlled numbers are stable above the measured period, which is why they are the ones pinned.
 
 ### Daniel's hunch, and the answer the archive gives
 
@@ -204,6 +208,8 @@ _"Don't be too scared of hitting 55 every now and then — that gives faster sig
 | wait 3 min, bold                | 6         | 1             | 0.5712 |
 | wait 3 min, bold, fall-released | 21        | 7             | 0.5794 |
 | wait 2 min, bold, fall-released | 24        | 5             | 0.5834 |
+
+⚠️ Those four were measured on an earlier build of the fixture, before the decode-gap prefix was cut out of thirteen sessions, so they are comparable **with each other** and not with the table above.
 
 **The hunch is directionally right and it is not shipped.** A bolder rule really does deliver more charge — up to **+2.7 %** pooled — and that is _after_ the model has charged it for every derate, so the crossings do pay for themselves on this evidence. What it buys them with is the train: 5 to 7 crossings in a row, which is the one thing the archive measures as expensive in the field (42 minutes over two stops on 2026-09-07) and the one thing this model under-states. ⚠️ **No variant beat the shipped rule on both axes, and per session the seeker is a wash** — better on 2026-09-18 10:29, worse on 09-15 09:42 and 09-18 13:19. So the equilibrium seeker, the 45 A prior and both policies stay out, and the +2.7 % stays on the table with its price written down.
 

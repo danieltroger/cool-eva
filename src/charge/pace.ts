@@ -81,19 +81,13 @@ function measurableAfterMs(state: PaceState, atCommand: TemperatureSample | unde
  * 17:21:14: the reading came back 52 → 51 fifty-six seconds after the descent reached the floor,
  * and the bike's own next tick gave current back.
  *
- * ⚠️ A FALL OUT OF THE SETPOINT BAND IS NOT A FALL, and that is #280. 31 of the 50 charging
- * crossings in the archive return 55 → 54 within about a minute with ~50 A still flowing, which
- * no conductance model can call cooling — it is the hottest cell's saw-tooth, whose period is
- * 1.6 min across all charging crossings and 1.2 min in the 54 band. Read as permission it hands
- * the rule a raise straight back into the band, and the cost is not the one excursion but the
- * TRAIN: 15 crossings in 48 minutes on 2026-09-07. A wait through that is a wait through the evidence.
+ * ⚠️ A FALL OUT OF THE SETPOINT BAND IS NOT A FALL, and that is #280: 31 of the 50 charging
+ * crossings in the archive return 55 → 54 inside a minute with ~50 A still flowing, which is the
+ * hottest cell's saw-tooth and not cooling. The measurements and what a train costs:
+ * docs/charge-auto.md § "Riding the setpoint: what the whole archive says".
  *
- * ⚠️ No sample either side answers TRUE, and that arm is UNREACHABLE — kept as the fail-safe
- * default anyway. Reaching it needs every sample to postdate the last command while the wait is
- * still running, but the wait is at most RATE_MIN_SPAN_MS and `estimateHeatingRate` answers
- * `unknown` until the ring spans exactly that, so the oldest sample always predates the command
- * when this is asked. A mutation flipping it therefore SURVIVES the check, on purpose and for the
- * reason `sessionEndsFirst`'s setpoint guard does: docs/charge-auto.md § "The taper".
+ * ⚠️ The no-sample arm is UNREACHABLE and kept as the fail-safe default, so a mutation flipping
+ * it SURVIVES the check on purpose — same as `sessionEndsFirst`'s guard, same doc § "The taper".
  */
 function readingFellSince(state: PaceState, atCommand: TemperatureSample | undefined): boolean {
   const newest = newestSampleAtOrBefore(state.samples, state.nowMs);
