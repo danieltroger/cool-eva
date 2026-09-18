@@ -113,7 +113,7 @@ Boot 80's rows jump **419.399 s at contiguous `seq`** (2915 → 2916). §4's rec
 
 Prefer (3). It is also what dates the boots against each other: `bms_uptime_min` reads **0** at the first row of 78, 79 and 80, so the **bike's LV rail** cycled three times — a crashing service would have come back to an uptime of ~124. And the 0 → 1 edge is what proves the boots sequential rather than concurrent: processes on one Pi share `CLOCK_REALTIME`, so three concurrent readers of one physical edge would stamp it identically. They stamp it 25.343, 25.780 and 26.674 s after their own first rows, six seconds apart.
 
-⚠️ **Do not reach for `MIN(bms_uptime_min)`**: it is 0 in every boot in the archive, including pairs nobody disputes, so its answer does not depend on the question. The edge discriminates; the minimum cannot.
+⚠️ **Do not reach for `MIN(bms_uptime_min)`**: it is 0 in **145 of the 173** boots that carry it, including every pair this question is ever asked about, so its answer there does not depend on the question. (The other 28 began with the BMS already awake; the highest minimum is 721.) The edge discriminates; the minimum cannot.
 
 ### What cannot be recovered
 

@@ -789,13 +789,15 @@ The climb, the four crossings and the current all belong to **one** boot (80 in 
 2. `publishDecision()` in `src/fan/auto.ts` is **synchronous and above every await** in `evaluate()`, so a tick that reaches it has published, whatever happens later;
 3. `record()` is log-on-change.
 
-⇒ the curve was evaluated ~1 250 times and answered `DC_SESSION` / 100 % every one of them.
+⇒ the curve was evaluated **~1 067** times and answered `DC_SESSION` / 100 % every one of them.
+
+⚠️ 1 067, not the 1 250 the stamps give: `seq` 227 → 18188 spans 2 553 112 ms of `ts` and **419 399 ms of that is the clock step**. A duration taken across one is not a duration — `docs/ride-log-clock.md` §6, this document's own rule, which the first draft of this section broke twice.
 
 ⚠️ That reasoning needs `fan_auto_reason`, not the duty. `src/fan/control.ts` gained its unconditional `publish()` at the end of `commandDuty()` in #206, **after** the commit the Pi was running that day, so on that build an absent `fan_duty_pct` row is weaker evidence than it would be today. The reason is published from `auto.ts` and is unaffected.
 
 ⚠️ And a hung command would **not** have produced #282's signature. Because `publishDecision()` is above the await and `setInterval` re-enters regardless, a wedged `runExclusively()` chain freezes `fan_duty_pct`/`fan_target_pct` while `fan_auto_reason` and `fan_temp_input` keep moving — the mirror image of the three-silent-two-talking shape reported. The first version of this investigation had that backwards.
 
-### The measurement: the loop has never stopped applying its own answer
+### The measurement, and which arm of it can see what
 
 `evidence/fan-tick-stall/curve-lag.py` replays every boot's decisions against what it had already commanded, on **both** branches that set a duty — the pack curve and a DC session — grouped by boot and ordered by `seq`. Over **71 boots that contribute a judgeable sample (64 on the curve arm, 15 on the DC arm, 7 of them DC-only)**:
 
@@ -805,6 +807,8 @@ The climb, the four crossings and the current all belong to **one** boot (80 in 
 | longest ever held         | **3.2 s** (under two ticks) | **none over 1 s**   |
 | mutant +7, 30 s grace     | 35 held                     | 49 held             |
 
+⚠️ **The two arms are not equally strong, and only one of them can see a dead loop.** The curve arm's input `batt_temp_hi` arrives off the bus through `src/can/registry.ts` and owes nothing to the fan loop, so a loop that stopped evaluating shows up as the curve's answer walking away from a frozen duty. **The DC arm's inputs — `fan_auto_mode`, `fan_auto_reason` and `fan_target_pct` — are all outputs of the loop under test**, and log-on-change latches all three, so a dead loop leaves the same rows a healthy one does: on 2026-09-09 `fan_target_pct` reached 100 at `seq` 228 and did not move again until `seq` 43881, which is 34 of that boot's 37 DC samples reading one latched value. The DC arm is therefore a **branch-consistency** check — whenever the loop said `DC_SESSION`, the duty standing was 100 % — and is not evidence of liveness. Liveness rests on the curve arm and on the three facts above, and #287 is the one failure the DC arm would genuinely catch, because there the loop keeps publishing while the duty stops moving.
+
 ⚠️ 667 curve samples and 45 DC samples disagree at the **instant** sampled; all of them close inside the same publish batch. The claim is about what was _held_, and the 3.2 s case is the road-speed gate handing the fan back at 54 °C, not a stall. The mutant column is there because a detector that cannot fire proves nothing.
 
 ⚠️ **The DC arm rests on 15 boots**, so quote it with that number. It exists at all because a detector that judges only `PACK_TEMPERATURE` is silent on the regime #282 was about, and the silence is self-concealing: a loop that dies while the reason is `DC_SESSION` leaves that reason latched, so the sample never becomes judgeable.
@@ -813,14 +817,14 @@ The climb, the four crossings and the current all belong to **one** boot (80 in 
 
 §8 asked for a hot DC charge logged against the curve. This is it, and it is the first:
 
-|                     |                                               |
-| ------------------- | --------------------------------------------- |
-| pack `batt_temp_hi` | **42 → 55 °C** over ~37 min                   |
-| delivered `pack_a`  | 19.6–72.7 A, **58–65 A** across the crossings |
-| fan                 | commanded **100 %** end to end                |
-| `coolant_in`        | 37.4–39.6 °C (38.0–38.3 at the crossings)     |
-| `coolant_out`       | 37.8–39.4 °C                                  |
-| crossings of 55 °C  | **four**, 12:48–12:56                         |
+|                     |                                                                                    |
+| ------------------- | ---------------------------------------------------------------------------------- |
+| pack `batt_temp_hi` | **42 → 55 °C**, 22.0 min to the first crossing and 29.5 to the last                |
+| delivered `pack_a`  | 19.6–72.7 A, **58–65 A** across the crossings                                      |
+| fan                 | commanded **100 %** end to end                                                     |
+| `coolant_in`        | 37.4–39.6 °C (**38.1–38.4** at the four crossings: 38.139, 38.276, 38.445, 38.377) |
+| `coolant_out`       | 37.8–39.4 °C                                                                       |
+| crossings of 55 °C  | **four**, 12:48–12:56                                                              |
 
 🔥 **100 % duty was not enough at 60 A.** The radiator, at full commanded duty, did not stop the pack reaching the cliff — so the curve's top end is not the binding constraint there and a better _input_ would not have helped either. That bears directly on [#123](https://github.com/danieltroger/cool-eva/issues/123) (the curve never reads `coolant_in`/`coolant_out`) and on #276's pack-to-coolant conductance work. ⚠️ One session, one ambient, no fan feedback of any kind (§8) — it bounds nothing on its own.
 
