@@ -25,6 +25,13 @@ export interface PaceState {
   lastCommandAtMs: number | null;
   /** Whether the present estimate is the "the reading did not rise" arm rather than a fitted slope. */
   rateIsNotRising: boolean;
+  /**
+   * The setpoint, passed in rather than imported: `./auto-curve.ts` owns it and imports this file,
+   * so reaching back for it would close a cycle. ⚠️ `./step.ts` answers the same question the other
+   * way and imports the constants back, which is the cycle #279 left named as follow-up — this is
+   * the direction a shared tuning module would take both. The band below is relative to it.
+   */
+  setpointC: number;
 }
 
 /**
@@ -42,7 +49,7 @@ export function commandIsUnmeasured(state: PaceState): boolean {
   // What the sensor last said when the command went out — the reference BOTH questions below are
   // about, so it is resolved once here rather than twice from two different functions.
   const atCommand = newestSampleAtOrBefore(state.samples, state.lastCommandAtMs);
-  if (readingFellSince(state, atCommand)) {
+  if (cooledFromBelowSetpoint(state, atCommand)) {
     return false;
   }
   return state.nowMs - state.lastCommandAtMs < measurableAfterMs(state, atCommand);
@@ -71,23 +78,26 @@ function measurableAfterMs(state: PaceState, atCommand: TemperatureSample | unde
 }
 
 /**
- * Whether the reading has FALLEN since the last command. Only raises wait, so this is the one
- * direction that matters: a pack that has cooled since we last touched the current is a pack with
- * room, whichever way that last command went. Measured 2026-09-18 at 17:21:14 — the reading came
- * back 52 → 51 fifty-six seconds after the descent reached the floor, and the bike's own next tick
- * gave current back. A wait through that is a wait through the evidence.
+ * Whether the reading has fallen since the last command **from below the setpoint** — a pack that
+ * has cooled is a pack with room, whichever way that last command went. Measured 2026-09-18 at
+ * 17:21:14: the reading came back 52 → 51 fifty-six seconds after the descent reached the floor,
+ * and the bike's own next tick gave current back.
  *
- * ⚠️ No sample either side answers TRUE, and that arm is UNREACHABLE — kept as the fail-safe
- * default anyway. Reaching it needs every sample to postdate the last command while the wait is
- * still running, but the wait is at most RATE_MIN_SPAN_MS and `estimateHeatingRate` answers
- * `unknown` until the ring spans exactly that, so the oldest sample always predates the command
- * when this is asked. A mutation flipping it therefore SURVIVES the check, on purpose and for the
- * reason `sessionEndsFirst`'s setpoint guard does: docs/charge-auto.md § "The taper".
+ * ⚠️ A FALL OUT OF THE SETPOINT BAND IS NOT A FALL, and that is #280: 31 of the 50 charging
+ * crossings in the archive return 55 → 54 inside a minute with ~50 A still flowing, which is the
+ * hottest cell's saw-tooth and not cooling. The measurements and what a train costs:
+ * docs/charge-auto.md § "Riding the setpoint: what the whole archive says".
+ *
+ * ⚠️ The no-sample arm is UNREACHABLE and kept as the fail-safe default, so a mutation flipping
+ * it SURVIVES the check on purpose — same as `sessionEndsFirst`'s guard, same doc § "The taper".
  */
-function readingFellSince(state: PaceState, atCommand: TemperatureSample | undefined): boolean {
+function cooledFromBelowSetpoint(state: PaceState, atCommand: TemperatureSample | undefined): boolean {
   const newest = newestSampleAtOrBefore(state.samples, state.nowMs);
   if (atCommand === undefined || newest === undefined) {
     return true;
+  }
+  if (atCommand.celsius >= state.setpointC) {
+    return false;
   }
   return newest.celsius < atCommand.celsius;
 }
