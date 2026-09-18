@@ -527,7 +527,12 @@ const CHECKS: SelfCheck[] = [
       "and then a second banner when the duty caught up, and inside a stop 'Fan: manual 68 %' over a fan being " +
       "stopped. Driven against a bridge PARKED mid-command rather than merely slowed, because a timing race " +
       "that resolves the wrong way leaves the ordering accidentally correct and the section green having " +
-      "exercised nothing; the parked state is asserted as a premise before each tap",
+      "exercised nothing; the parked state is asserted as a premise before each tap. And the SIGNATURE a " +
+      "wedged bridge leaves on the wire, which is what docs/fan-control.md §9 rests its refutation of #282 " +
+      "on: publishDecision() is synchronous and above evaluate()'s first await, so a bridge that never " +
+      "answers freezes fan_duty_pct and fan_target_pct while fan_auto_reason goes on moving — the opposite " +
+      "of what #282 reported, and the symptom #287 would present with. Moving that publish below the await, " +
+      "which reads like a tidy-up, inverts it and takes the proof with it",
   },
   {
     script: "scripts/check-fan-endpoint.ts",

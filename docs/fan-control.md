@@ -811,7 +811,7 @@ The climb, the four crossings and the current all belong to **one** boot (80 in 
 
 ⚠️ 667 curve samples and 45 DC samples disagree at the **instant** sampled; all of them close inside the same publish batch. The claim is about what was _held_, and the 3.2 s case is the road-speed gate handing the fan back at 54 °C, not a stall. The mutant column is there because a detector that cannot fire proves nothing.
 
-⚠️ **The DC arm rests on 15 boots**, so quote it with that number. It exists at all because a detector that judges only `PACK_TEMPERATURE` is silent on the regime #282 was about, and the silence is self-concealing: a loop that dies while the reason is `DC_SESSION` leaves that reason latched, so the sample never becomes judgeable.
+⚠️ **The DC arm rests on 15 boots**, so quote it with that number.
 
 ### The DC session itself, which is the part worth keeping
 
@@ -826,8 +826,10 @@ The climb, the four crossings and the current all belong to **one** boot (80 in 
 | `coolant_out`       | 37.8–39.4 °C                                                                       |
 | crossings of 55 °C  | **four**, 12:48–12:56                                                              |
 
+⚠️ This is charge-thermal data living in the fan doc because it is what answers §8's open question. `docs/dc-taper.md` carries the per-session table of the same shape — including the OTHER 2026-09-09 session, at 10:31 — and anyone working #123 or #276 starts there; this session is not in it. Moving it is left to that track rather than done here, to keep two panes off one file.
+
 🔥 **100 % duty was not enough at 60 A.** The radiator, at full commanded duty, did not stop the pack reaching the cliff — so the curve's top end is not the binding constraint there and a better _input_ would not have helped either. That bears directly on [#123](https://github.com/danieltroger/cool-eva/issues/123) (the curve never reads `coolant_in`/`coolant_out`) and on #276's pack-to-coolant conductance work. ⚠️ One session, one ambient, no fan feedback of any kind (§8) — it bounds nothing on its own.
 
 ### What was going on that afternoon
 
-`bms_uptime_min` reads 0 at the first row of boots 78, 79 **and** 80, so the **bike's LV rail cycled three times**; a crashing service would have come back to an uptime of ~124. Boot 79 recorded a full DC handshake (`charge_manager_state` 2 → 20 → 4 → 7 → 9 → 16 → 17 → 18 → 35) and straight back to 2 with `pack_a` never leaving −0.6 … −0.1 A — three attempts that delivered nothing, and a fourth that stuck. In true time that leaves **at least 202 s of the charge attempt with no process running at all**, the bridge held in the standby `config.txt`'s `gpio=17,op,dl` / `gpio=27,op,dl` leaves it in. Nothing in this repo caused it and nothing here can fix it; it is recorded because "what was the fan doing" has that as part of its honest answer.
+Boot 79 recorded a full DC handshake (`charge_manager_state` 2 → 20 → 4 → 7 → 9 → 16 → 17 → 18 → 35) and straight back to 2 with `pack_a` never leaving −0.6 … −0.1 A — three attempts that delivered nothing, and a fourth that stuck. The bike's LV rail cycled three times underneath them; `docs/ride-log-clock.md` §6 has that derivation and the true-time reconstruction, and its conclusion is the fan fact worth carrying here: **for at least 202 s of the charge attempt no process was running at all**, so the bridge sat in the standby `config.txt`'s `gpio=17,op,dl` / `gpio=27,op,dl` leaves it in. Nothing in this repo caused it and nothing here can fix it; it is recorded because "what was the fan doing" has that as part of its honest answer.

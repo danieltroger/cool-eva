@@ -48,9 +48,10 @@ import {
 // near-miss that would be wrong only sometimes, which is the worst kind.
 //
 // The last section drives the real controller through a recording FanPwm, so it also
-// covers the running-phase duty changes — at the level of what the controller BELIEVES.
-// scripts/check-fan-ordering.ts §4 covers the same drop-out at the register, which is the
-// half a state() assertion cannot see.
+// covers the running-phase duty changes — mostly at the level of what the controller
+// BELIEVES. Its closing ramp is the exception and reads the bridge's own calls.
+// scripts/check-fan-ordering.ts §4 covers the drop-out at the register itself, over a
+// simulated sysfs, which is the half no state() assertion can see.
 
 let failures = 0;
 
@@ -438,6 +439,15 @@ check(
   "the code the dashboard paints as a fault is still FAN_REASON.TEMPERATURE_FAULT",
   TEMPERATURE_FAULT_REASON === FAN_REASON.TEMPERATURE_FAULT
 );
+// ⚠️ …and three codes as LITERALS, because the loop above pins none of them: it asks only
+// that a code sit inside `fan_auto_reason`'s [0, 8] and have a sentence, and 6 and 7 are
+// retired and free (src/fan/curve.ts). So renumbering PACK_TEMPERATURE to either passes
+// every assertion in this repo — while evidence/fan-tick-stall/curve-lag.py, which selects
+// its samples on these numbers from OUTSIDE the TypeScript, silently judges nothing and
+// reports the same "0 held" a healthy archive reports. A detector that cannot fire.
+check("FAN_REASON.PACK_TEMPERATURE is still 5, which curve-lag.py selects on", FAN_REASON.PACK_TEMPERATURE === 5);
+check("FAN_REASON.DC_SESSION is still 8, which its DC arm selects on", FAN_REASON.DC_SESSION === 8);
+check("FAN_TEMPERATURE_INPUT.LIVE is still 0, which its curve arm selects on", FAN_TEMPERATURE_INPUT.LIVE === 0);
 for (const [name, code] of Object.entries(FAN_TEMPERATURE_INPUT)) {
   check(
     `FAN_TEMPERATURE_INPUT.${name} = ${code} is inside its bound and has an entry`,
@@ -674,6 +684,7 @@ check(
 // ending over a HOT pack, and then a climb. The case above ends one over a 10 °C pack,
 // where the fan correctly stops and a loop that never evaluated again would look identical.
 // Here every later duty is one only a re-evaluation can produce. docs/fan-control.md §9.
+calls.length = 0;
 record("charge_manager_state", CHARGE_MANAGER_STATE_DC);
 record("batt_temp_hi", 42);
 await ticks(2);
@@ -692,7 +703,9 @@ for (let waited = 0; waited < KICK_START_MS + 250; waited += 100) {
 }
 check(
   "a DC session over a 42 °C pack is flat out, and the bridge has it",
-  controller.state().dutyPercent === 100 && controller.state().phase === "running"
+  controller.state().dutyPercent === 100 &&
+    controller.state().phase === "running" &&
+    calls.some(call => call.method === "duty" && call.value === 100)
 );
 
 await goStale();

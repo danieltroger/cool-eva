@@ -16,11 +16,9 @@ curve branch is silent on exactly that regime. The silence is self-concealing: a
 dies while the reason is DC_SESSION leaves that reason latched under log-on-change, so the
 sample never becomes judgeable at all.
 
-⚠️ The two arms are NOT equally strong. `batt_temp_hi` comes off the bus and owes nothing to
-the fan loop, so the curve arm can see a loop that stopped evaluating. Every input the DC arm
-has is an OUTPUT of that same loop, all three log-on-change, so a dead loop leaves the rows a
-healthy one leaves and the DC arm reads clean either way. It is a branch-consistency check —
-"when the loop said DC_SESSION, was the duty 100?" — not a liveness one.
+⚠️ The two arms are NOT equally strong: only the curve arm can see a loop that stopped, because
+only its input comes off the bus. The DC arm is a branch-consistency check, not a liveness one.
+Which claim rests on which: docs/fan-control.md §9.
 
 Rules this obeys, and why:
   * rows are grouped by session_id and ordered by `seq`, NEVER by `ts`. One session is one
@@ -35,6 +33,11 @@ import collections
 import os
 import sqlite3
 
+# ⚠️ `mode=ro`, where evidence/keyoff/clock-figures.py opens `immutable=1` and warns never
+# to point it at the working rides.db. Deliberate rather than drift: `immutable=1` PROMISES
+# the file cannot change and may return wrong rows if it does, which is what a concurrent
+# scripts/ride-import.ts would make it. This script is meant to be run against the live
+# file, so it takes the mode that stays correct there.
 DB = os.environ.get("RIDES_DB", os.path.expanduser("~/Documents/cool-eva/rides.db"))
 # The mutant's magnitude: degrees C added to the curve's input, and percent subtracted from
 # the DC arm's answer. A MAGNITUDE, not a flag — BIAS_C=7 is what the committed column is
@@ -42,13 +45,21 @@ DB = os.environ.get("RIDES_DB", os.path.expanduser("~/Documents/cool-eva/rides.d
 BIAS_C = float(os.environ.get("BIAS_C", 7))
 GRACES_MS = [30_000, 20_000, 10_000, 5_000, 3_000, 2_000, 1_000]
 
-# src/fan/control.ts and src/fan/curve.ts. Kept as literals rather than parsed out of the
-# TypeScript: a copy that drifts is caught by scripts/check-fan-curve.ts, which pins every
-# one of them against the source, and a parser here would be a second thing to be wrong.
+# src/fan/control.ts and src/fan/curve.ts, kept as literals rather than parsed out of the
+# TypeScript — a parser here would be a second thing to be wrong. What keeps the copies
+# honest is scripts/check-fan-curve.ts: §1 over-determines the four curve numbers with
+# literal arithmetic, and §8 pins the three wire codes below BY NAME as the numbers this
+# file selects on. ⚠️ Until then it pinned neither 5 nor 0, and renumbering either — 6 and 7
+# are retired and free — would have left this script judging nothing and still printing
+# "0 held", which is the one result it must never be able to print by accident.
 MIN_RUNNING, FAN_ON, TOP, MAX_DUTY = 30, 35, 48, 100
 REASON_PACK, REASON_DC, MODE_AUTOMATIC, INPUT_LIVE = 5, 8, 1, 0
 
 # A ts jump bigger than this between rows at CONSECUTIVE seq is a clock step, not a wait.
+# ⚠️ evidence/keyoff/clock-figures.py calls the same jump over the same table at 60_000, so
+# it reports a smaller set (75 sessions there, 108 here) and the two numbers are NOT in
+# conflict: that script is counting boots that started badly wrong, this one is refusing
+# intervals, and an interval spanning a 25 s step is as unmeasurable as one spanning 25 min.
 STEP_MS = 20_000
 
 # `fan_duty_pct` is never read below. It is here as a SAMPLING CLOCK: a divergence is only
@@ -94,8 +105,9 @@ def load_steps(con):
     return steps
 
 
-def load_boots(con, signal_ids, name_of):
+def load_boots(con, name_of):
     """The six-key row stream, per boot, in write order. Returns (boots, rows dropped)."""
+    signal_ids = list(name_of)
     boots = collections.defaultdict(list)
     dropped = 0
     for session, seq, ts, signal, value in con.execute(
@@ -171,8 +183,7 @@ def measure(boots, steps, grace_ms, bias_c):
     return stats
 
 
-def summarise(stats, arm, grace_ms):
-    arm_stats = stats[arm]
+def summarise(arm_stats):
     longest = max((finding[3] for finding in arm_stats["held"]), default=0) / 1000
     return f"{len(arm_stats['held']):3d} held (longest {longest:7.1f}s), {arm_stats['refused']:3d} refused"
 
@@ -184,7 +195,7 @@ def main():
     readings, sessions = con.execute("SELECT (SELECT COUNT(*) FROM reading), (SELECT COUNT(*) FROM session)").fetchone()
 
     steps = load_steps(con)
-    boots, dropped = load_boots(con, list(ids.values()), name_of)
+    boots, dropped = load_boots(con, name_of)
     total_steps = sum(len(found) for found in steps.values())
     backward = sum(1 for found in steps.values() for _, jump in found if jump < 0)
 
@@ -200,7 +211,12 @@ def main():
     print(f"clock steps over the full table: {total_steps} in {len(steps)} sessions ({backward} backward)")
     print(f"boots carrying any of the {len(KEYS)} keys: {len(boots)}  (rows dropped for a NULL session_id or seq: {dropped})")
 
-    baseline = measure(boots, steps, GRACES_MS[0], 0)
+    # Every grace, both biases, once — then everything below reads out of this. The three
+    # summary passes this replaces recomputed results the sweep already had, and named the
+    # same grace two ways (`GRACES_MS[0]` and `min(GRACES_MS)`), one of which quietly
+    # assumed the list stays sorted.
+    swept = {grace: (measure(boots, steps, grace, 0), measure(boots, steps, grace, BIAS_C)) for grace in GRACES_MS}
+    baseline = swept[GRACES_MS[0]][0]
     judging = baseline["curve"]["boots"] | baseline["dc"]["boots"]
     dc_only = baseline["dc"]["boots"] - baseline["curve"]["boots"]
     print(
@@ -214,15 +230,14 @@ def main():
     print(f"{'grace':>6} | {'real archive':^47} | {'mutant +' + format(BIAS_C, 'g'):^47}")
     print(f"{'':>6} | {'curve':^23} {'dc':^23} | {'curve':^23} {'dc':^23}")
     for grace in GRACES_MS:
-        real = measure(boots, steps, grace, 0)
-        mutant = measure(boots, steps, grace, BIAS_C)
+        real, mutant = swept[grace]
         print(
-            f"{grace / 1000:5.0f}s | {summarise(real, 'curve', grace)} {summarise(real, 'dc', grace)} | "
-            f"{summarise(mutant, 'curve', grace)} {summarise(mutant, 'dc', grace)}"
+            f"{grace / 1000:5.0f}s | {summarise(real['curve'])} {summarise(real['dc'])} | "
+            f"{summarise(mutant['curve'])} {summarise(mutant['dc'])}"
         )
 
     print("\n--- every divergence the real archive ever held, at the tightest grace ---")
-    tightest = measure(boots, steps, min(GRACES_MS), 0)
+    tightest = swept[GRACES_MS[-1]][0]
     for arm in ("curve", "dc"):
         for session, from_seq, to_seq, held, pack, target, want in tightest[arm]["held"]:
             print(
@@ -231,7 +246,7 @@ def main():
             )
 
     print(f"\n--- the 2026-09-09 DC charge (boot 80) under the mutant, {GRACES_MS[0] / 1000:.0f} s grace ---")
-    mutated = measure(boots, steps, GRACES_MS[0], BIAS_C)
+    mutated = swept[GRACES_MS[0]][1]
     boot80 = [finding for finding in mutated["dc"]["held"] if finding[0] == 80]
     print(f"  {len(boot80)} findings, durations {sorted(round(finding[3] / 1000) for finding in boot80)} s")
 
