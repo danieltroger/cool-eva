@@ -49,7 +49,7 @@ Method for the painted-map figure, reproducing `docs/route-map.md` §"What it is
 
 ## The covering index: measured, and not the fix
 
-`idx_reading_sig_ts` is `(signal_id, ts)`, so every `value` read is a table lookup. Cold that is expensive and warm it is not, per the table above. A probe database holding only `gps_speed_kmh` and `odometer_can_km` rows, indexed `(signal_id, ts, value)`, returns the identical answers (`385.0` and `4739.4`) in **0.01–0.02 s** with `SEARCH … USING COVERING INDEX`.
+`idx_reading_sig_ts` is `(signal_id, ts)`, so every `value` read is a table lookup. Cold that is expensive and warm it is not, per the table above. A probe database holding only `gps_speed_kmh` and `odometer_can_km` rows, indexed `(signal_id, ts, value)`, returns the identical answers (`385.0` and `4739.4`) in **0.01–0.02 s** with `SEARCH … USING COVERING INDEX` — warm, on a 13 MB probe, which is not comparable to the 12.9 s cold figure three lines up and is quoted only to show the plan changes.
 
 Cost, measured two ways:
 
@@ -101,12 +101,12 @@ The whole track, 249 151 rows, out of SQLite with `.raw()`: **21–64 ms** warm 
 | encoding | bytes | server cost |
 | --- | --- | --- |
 | GeoJSON `FeatureCollection`, string | 34.7 MB | 138–178 ms to `JSON.stringify` |
-| … gzip -6 | 3.30 MB | + 198–213 ms |
+| … gzip -6 | 3.30 MB | + 195–242 ms over six runs |
 | … brotli q5 | 3.42 MB | + 219–350 ms |
 | delta int32 µdegrees + int32 second-deltas + uint8 speed, **column-major**, gzip -6 | **0.81 MB** | 85 ms total |
 | the same **row-major** (interleaved), gzip | 1.06 MB | — |
 
-Over loopback none of that is worth doing: 35 MB `curl`s in **7.7 ms** and the browser fetches it in 81 ms and parses it in 64 ms, against **320 ms** merely to gzip it server-side. Handing MapLibre `data: <URL>` rather than `data: <object>` measured 1 053 vs 1 115 ms — a wash on time, but the URL form does the fetch and parse off the main thread. **Ship plain uncompressed GeoJSON.** The codec is recorded here because it is the right answer if this ever leaves loopback, not because it should be built.
+Over loopback none of that is worth doing: 35 MB `curl`s in **7.7 ms** and the browser fetches it in 81 ms and parses it in 64 ms, against **195–242 ms** merely to gzip it server-side. Handing MapLibre `data: <URL>` rather than `data: <object>` measured 1 053 vs 1 115 ms — a wash on time, but the URL form does the fetch and parse off the main thread. **Ship plain uncompressed GeoJSON.** The codec is recorded here because it is the right answer if this ever leaves loopback, not because it should be built.
 
 ## The startup snapshot, and why it is persisted
 
@@ -115,7 +115,14 @@ The viewer serves the non-track panels from a snapshot built by running the dash
 - Building it in memory at startup: **22 289 ms**, then **16 381 ms** immediately after — not the 3 436 ms a warm serial run suggests.
 - The snapshot is **72 136 B** and reads back from a file in **0.19–0.40 ms**.
 
-So it is persisted beside the database as `rides.db.mapcache`, keyed on the database's mtime and size, and rebuilt only when those change. ⚠️ `.gitignore:205` already covers it — `git check-ignore -v rides.db.mapcache` returns that line — so no gitignore change is needed and none should be added.
+So it is persisted beside the database as `rides.db.mapcache`, keyed on the database's mtime and size **and a hash of the query text that produced it**, and rebuilt when any of those change. Four things this has to get right, each of which fails silently otherwise:
+
+- **The queries run unbounded, and the window is applied in the browser.** The dashboard's SQL takes `$__from`/`$__to`. Build the snapshot for `now-90d`, cache it against a database that then does not change, and every later start serves a frozen window — invisible, because the map still shows ninety days of _something_, and doubly so while the archive is only 47.7 days long. Running unbounded and slicing client-side is also the more correct reading of `docs/route-map.md` §"Charge sessions need slack at the window edges too".
+- **The query text is part of the key.** Phase 1 edits that SQL daily; keyed on the database alone, a stale cache survives every edit of it.
+- **Write to a temporary file and `rename`**, so a truncated file or a second viewer process cannot be read as a complete one.
+- ⚠️ **The extensionless name is load-bearing.** Measured: `prettier --write .` leaves `rides.db.mapcache` alone and **rewrites** `rides.db.mapcache.json`. `.gitignore:205` covers both — `git check-ignore -v rides.db.mapcache` returns that line — so no gitignore change is needed and none should be added.
+
+⚠️ So the viewer does not write _into_ `rides.db`, but it does write **one gitignored sibling beside it**. Opened `readonly` against a `journal_mode=delete` file it creates no `-wal`/`-shm`, and it cannot collide with an import: `scripts/ride-import.ts` scans only `-wal`/`-shm`/`-journal` siblings (`SIBLING_SUFFIXES`, `:241`) and the `.import-` and `.bak-` prefixes (`:257`, `:350`).
 
 ⚠️ **Reopen the database, do not just re-query it.** `scripts/ride-import.ts:154` renames the replaced database aside rather than unlinking it, so a process holding an open handle keeps reading the old file forever, with nothing to say so.
 
@@ -123,7 +130,7 @@ So it is persisted beside the database as `rides.db.mapcache`, keyed on the data
 
 **OpenFreeMap's public instance.** From openfreemap.org: no API key, no registration, no request limits stated, commercial use allowed, attribution required and "if you are using MapLibre, they are automatically added". From its TileJSON at `tiles.openfreemap.org/planet`: `minzoom 0`, `maxzoom 14`. Past z14 the basemap overzooms; the track does not, being a client-side source rather than a tiled one.
 
-**Not `tile.openstreetmap.org`**, which `grafana/dashboards/route-map.json` uses today via the `osm-standard` basemap. Its usage policy forbids bulk download and prefetch outright, requires a `User-Agent` a browser cannot set, and offers no SLA.
+**Not `tile.openstreetmap.org`**, which `grafana/dashboards/route-map.json` uses today via the `osm-standard` basemap. Its usage policy forbids bulk download and prefetch outright and offers no SLA. ⚠️ An earlier draft also claimed it "requires a `User-Agent` a browser cannot set"; the policy refutes that in its own words — "Browsers will use the browser's default User-Agent" and "Modern browsers, with default settings, already satisfy these technical requirements." The prefetch prohibition is the part that actually rules it out for offline.
 
 **Offline** is a Protomaps PMTiles regional extract: the v4 planet basemap is ~120 GB at z0–15, and `pmtiles extract` cuts a region, with `--maxzoom` to trim further. ⚠️ `pmtiles extract` takes a bounding box, **which is a place** — that command is a local step and must never be committed, for the same reason `.gitignore` keeps rendered route PNGs out of this repo.
 
@@ -147,5 +154,13 @@ shadcn-svelte's Tailwind v4 support landed in May 2025 (`docs/content/changelog/
 ### ⚠️ Three MapLibre v6 traps, each of which cost time here
 
 1. **ESM only, and no default export.** `dist/maplibre-gl.mjs` exports `Map` by name; `import maplibregl from "maplibre-gl"` throws `does not provide an export named 'default'`.
-2. **The worker is a separate asset.** The bundle fetches `./maplibre-gl-worker.mjs` beside itself. When that 404s, the browser logs a bare resource error and **MapLibre says nothing at all** — no console message of its own, no `error` event, no map, indefinitely. The fix that reports it (#8018) is in `main` and unreleased as of 6.10.0. A bundler handles the asset; copying `dist/` by hand does not.
+2. **The worker is a separate asset.** The bundle fetches `./maplibre-gl-worker.mjs` beside itself. When that 404s, the browser logs a bare resource error and **MapLibre says nothing at all** — no console message of its own, no `error` event, no map, indefinitely. ⚠️ The fix is **PR #8454** ("Report worker script load failures"), merged `2026-09-15T21:04:49Z`; 6.10.0 was published `2026-09-15T20:31:00.778Z`, **34 minutes earlier**, so it is not in this release. An earlier draft cited **#8018** as the fix — that is the _issue_ ("Map hangs silently when the worker script fails to load…"), not the change, and citing a bug report as its own fix is the `docs/can-capture.md` failure this repo names. A bundler handles the asset; copying `dist/` by hand does not.
 3. `maplibre-gl.mjs` and `maplibre-gl-worker.mjs` both import `./maplibre-gl-shared.mjs`, so all three must be served.
+
+## Still unverified, and what each would cost
+
+- **`better-sqlite3` inside a SvelteKit server route.** It is a native module, so Vite must externalise it for SSR (`ssr.external`) rather than try to bundle it. ⚠️ This is the one open item that can **invalidate** the data path rather than merely slow it, and the materialised tables that could have sidestepped it are deleted — so it is the first thing phase 1 proves, before anything is built on top of it.
+- **Speed-banding a split `MultiLineString`**, either as per-feature `line-color` runs or one gradient layer per ride. Benched before it is built.
+- **The 1 000 000-feature ceiling** is an observed hang, not a measured limit.
+- **`map/node_modules` size**, unmeasured because scaffolding was out of scope while this was a plan.
+- **Neither existing gate covers this viewer.** `scripts/check-route-map-sql.ts:117` builds its fixture with `new Database(":memory:")`, so it cannot back a screenshot; a file-backed synthetic fixture is phase-1 work. And `scripts/check-phone-width.ts:7` imports `TABS` from `public/lib/router.js`, so it measures the Pi dashboard's tabs and not `map/` — the viewer needs its own width gate.
