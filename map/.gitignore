@@ -1,0 +1,31 @@
+node_modules
+
+# Output
+.output
+.vercel
+.netlify
+.wrangler
+/.svelte-kit
+/build
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.*
+!.env.example
+!.env.test
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# The persisted snapshot, if anyone points RIDES_DB at a copy inside this directory.
+# The real one lives beside rides.db and .gitignore's `rides.db*` covers it there.
+*.mapcache
+*.mapcache.tmp-*
+
+# The map.yml smoke step writes this beside the build
+smoke.log

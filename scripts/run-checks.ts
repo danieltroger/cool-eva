@@ -1056,6 +1056,23 @@ const CHECKS: SelfCheck[] = [
       "no behavioural assertion can notice the clause going missing from them",
   },
   {
+    script: "scripts/check-ride-map.ts",
+    covers:
+      "the laptop-side map viewer in `map/` \u2014 its UNBOUNDED queries and its pure track builder, " +
+      "run against a SYNTHETIC ride log (scripts/map-fixture.ts) because the real archive can neither " +
+      "be committed nor screenshotted. The queries are IMPORTED from map/src/lib/server/queries.ts " +
+      "rather than restated, so a pass is a claim about what the server will really run. " +
+      "\u26a0 The viewer has no `$__to`, so `ts < 2000000000000` is the ONLY thing left excluding the " +
+      "49 772 readings a corrupt GPS frame stamped in 2060 \u2014 the dashboard had that guard AND a " +
+      "relative window, and dropping the window dropped the second one. A 2060-stamped waypoint is " +
+      "planted and asserted absent, so the guard is proven to BITE rather than merely to be present " +
+      "in the SQL text. Every assertion here was mutation-tested: deleting the gap split, the " +
+      "one-vertex filter, the band split, the 2060 guard or the charge-splits-a-ride clause each " +
+      "turns it red. The charge one only does so since the fixture's gaps were shortened \u2014 with " +
+      "35 minutes after each stop the gap rule split those rides anyway and that assertion could " +
+      "not fail",
+  },
+  {
     script: "scripts/check-route-track.ts",
     covers:
       "the route map's TRACK, which is no longer rebuilt on every dashboard load: " +

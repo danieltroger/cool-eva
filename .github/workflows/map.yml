@@ -1,0 +1,67 @@
+name: Map viewer
+
+# The laptop-side ride map in `map/`, which is its own npm package with its own lockfile and
+# is never installed on the Pi. It gets its own job for the same reason dashboard.yml does:
+# a second toolchain in front of a suite whose claim is that it runs anywhere.
+#
+# ⚠️ `npm run lint` is NOT redundant with `npm run check`. `sv create` puts formatting under
+# `lint` and svelte-check under `check`, and the ROOT prettier run cannot cover this tree at
+# all — it resolves map/prettier.config.js but not the prettier-plugin-svelte that config
+# names, so it fails outright, which is why `map` is in the root .prettierignore. If this job
+# does not run `lint`, nothing formats-checks the viewer.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  map:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: map/package-lock.json
+      # `npm ci` in map/ only. The root install is a separate tree and this job needs none of it.
+      - run: npm ci
+        working-directory: map
+      - run: npm run lint
+        working-directory: map
+      - run: npm run check
+        working-directory: map
+      - run: npm run build
+        working-directory: map
+
+      # ⚠️ Building is not running, and the difference shipped a bug. `defaultRideLogPath()`
+      # used to walk up from `import.meta.url`, which is the repo root under `vite dev` and
+      # `map/` in the adapter-node output, because the bundler emits that code one directory
+      # deeper — so the built server answered 500 `unable to open database file` while dev was
+      # fine and this job was green. This starts the BUILT server and asserts it looks for the
+      # ride log one level above `map/`. No database needed: the error names the path.
+      - name: The built server resolves the ride log to the repo root
+        working-directory: map
+        run: |
+          set -euo pipefail
+          PORT=5199 node build > smoke.log 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 30); do
+            if curl -fsS -o /dev/null "http://127.0.0.1:5199/" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          curl -sS -o /dev/null -w 'summary: HTTP %{http_code}\n' "http://127.0.0.1:5199/api/summary" || true
+          expected="$(cd .. && pwd)/rides.db"
+          if ! grep -qF "no ride log at $expected" smoke.log; then
+            echo "::error::the built server did not resolve the ride log to $expected"
+            echo "--- server log ---"; cat smoke.log
+            exit 1
+          fi
+          echo "resolved to $expected"

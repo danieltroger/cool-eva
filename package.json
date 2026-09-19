@@ -14,6 +14,7 @@
     "check:grafana-dtc": "node --experimental-strip-types scripts/generate-grafana-dtc.ts --check",
     "preview": "node --experimental-strip-types scripts/build-service-preview.ts",
     "check:phone-width": "node --experimental-strip-types scripts/check-phone-width.ts",
+    "map": "npm --prefix map ci && npm --prefix map run dev",
     "test": "node --experimental-strip-types scripts/run-checks.ts"
   },
   "keywords": [],
