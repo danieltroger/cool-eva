@@ -47,6 +47,8 @@ import { bringUpCan, openChannel } from "./can/socket.ts";
 import { startCanLinkMonitor } from "./can/link-status.ts";
 import { startWifiMonitor } from "./wifi/status.ts";
 import { WIFI_DIAG_DIRNAME } from "./wifi/dump.ts";
+import { RECOVER_TRIGGER } from "./wifi/ladder.ts";
+import { recoverWifi, wifiHoldGesture, type RecoverContext } from "./wifi/recover.ts";
 import { decodeFrame, STREAM_IDS } from "./can/decode.ts";
 import { frameArrival } from "./can/frame-arrival.ts";
 import { configurePackTemperature, resolvePackTemperatures } from "./can/pack-temperature.ts";
@@ -112,6 +114,16 @@ const WIFI_IFACE = process.env.WIFI_IFACE ?? "wlan0";
 // is off — see src/wifi/status.ts. Set it in /etc/default/cool-eva; README and
 // docs/wifi.md §2 both say so.
 const WIFI_HOTSPOT_SSID = process.env.WIFI_HOTSPOT_SSID ?? "";
+// ⚠️ ONE recovery, TWO triggers — the poller's watchdog and the handlebar hold — and
+// src/wifi/recover.ts holds the in-flight flag they share, so a thumb landing inside a
+// watchdog run cannot start a second ladder against the same radio. Declared up here
+// with the configuration it is made of rather than beside the monitor, because
+// startHoldGestures() runs well before the monitor does.
+const wifiContext: RecoverContext = {
+  iface: WIFI_IFACE,
+  hotspotSsid: WIFI_HOTSPOT_SSID,
+  dumpDirectory: join(ROOT, WIFI_DIAG_DIRNAME),
+};
 // ⚠️ OPT IN, NOT OPT OUT — `=== "1"`, not `!== "0"`, and the asymmetry is deliberate:
 // every flag above except FAN_ENABLED turns something off, these two turn something on,
 // so a Pi nobody has told about it cannot change a motorcycle's EEPROM. Separate
@@ -200,9 +212,15 @@ const fanAutomatic = startFanAutomatic(fanController);
 // /fan route is behind, so a Pi with no fan wired up watches one button instead of two.
 const waypointFixes = startWaypointFixTracking();
 const fanCycle = fanController.configured ? startFanCycleGesture(fanAutomatic) : null;
-const handlebarGestures = startHoldGestures(
-  fanCycle === null ? [waypointHoldGesture()] : [fanCycle.gesture, waypointHoldGesture()]
-);
+// ⚠️ The wifi hold is only offered when the poller is running: without it
+// `wifi_link_state` is never recorded, and the gesture reads that signal to decide
+// whether the link is up and therefore whether to touch it at all.
+const holdGestures = [
+  ...(fanCycle === null ? [] : [fanCycle.gesture]),
+  waypointHoldGesture(),
+  ...(WIFI_ENABLED ? [wifiHoldGesture(wifiContext)] : []),
+];
+const handlebarGestures = startHoldGestures(holdGestures);
 
 // --- CAN: broadcast decode + OBD-II polling ---
 let channel: RawChannel | undefined;
@@ -445,7 +463,16 @@ const canLinkMonitor = startCanLinkMonitor(CAN_IFACE);
 // so importing that module in a check on a laptop does not shell out to an nmcli that
 // is not there. docs/wifi.md.
 const wifiMonitor = WIFI_ENABLED
-  ? startWifiMonitor(WIFI_IFACE, WIFI_HOTSPOT_SSID, join(ROOT, WIFI_DIAG_DIRNAME))
+  ? startWifiMonitor(WIFI_IFACE, WIFI_HOTSPOT_SSID, () => {
+      // Deliberately not awaited by the poll — see startWifiMonitor. The rejection arm is
+      // here because an escaped one ends the process and takes the CAN logging with it.
+      // ⚠️ The outcome is NOT captured here. runLadder owns it and publishes it; a
+      // refused-because-running call answers NONE, and writing that over a live outcome
+      // would make the signal disagree with the counter beside it.
+      void recoverWifi(wifiContext, RECOVER_TRIGGER.WATCHDOG).catch(error =>
+        console.warn("wifi-recover: the watchdog ladder threw:", error)
+      );
+    })
   : null;
 
 // --- Bluetooth: Connectivity Hub (torque/power, odometer, vehicle state, GPS) ---

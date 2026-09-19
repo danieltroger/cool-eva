@@ -139,7 +139,20 @@ sudo systemctl restart cool-eva
 
 ⚠️ **`wifi_hotspot_seen` is the one that answers this failure**, and only together with `wifi_link_state`: _"the hotspot is in range **and** we are not on it"_ is the shape of the fault, and neither half says it alone. The journal gets the same sentence, once, when it changes: `wifi: NOT connected, and the hotspot IS in range`.
 
-It is readable during the silence, which is not obvious — a blocked profile might have meant no scanning either. It does not: `nm-device-wifi.c`'s `_scan_notify_allowed()` sets `periodic_allowed = TRUE` for `DISCONNECTED` and `FAILED` (_"Can always scan when disconnected"_), rescheduled 3 → +20 → 120 s and independent of any autoconnect block. ⚠️ **That citation came from a reviewer and has not been opened by the author of this document**; it is the one claim here not read at first hand, and it wants confirming before anything is built on it.
+It is readable during the silence, which is not obvious — a blocked profile might have meant no scanning either. It does not: `nm-device-wifi.c`'s `_scan_notify_allowed()` sets `periodic_allowed = TRUE` for `DISCONNECTED` and `FAILED` (_"Can always scan when disconnected"_), rescheduled 3 → +20 → 120 s and independent of any autoconnect block. ✅ **Read at first hand for #290's recovery, which builds on it.** `nm-device-wifi.c`, `_scan_notify_allowed()`:
+
+```c
+    } else if (NM_IN_SET(state, NM_DEVICE_STATE_DISCONNECTED, NM_DEVICE_STATE_FAILED)) {
+        /* Can always scan when disconnected */
+        explicit_allowed = TRUE;
+        periodic_allowed = TRUE;
+    } else if (NM_IN_SET(state, NM_DEVICE_STATE_ACTIVATED)) {
+        /* Prohibit periodic scans when connected; we ask the supplicant to
+         * background scan for us, unless the connection is locked to a specific
+         * BSSID (in which case scanning is effectively disabled). */
+```
+
+⚠️ **And the second half of that quote is a rule for us:** locking a profile to a BSSID _disables scanning while connected_. The profile pins none today; nothing may start.
 
 ### ⚠️ Their own `wifi` group, and the trap that forced it
 
@@ -168,16 +181,46 @@ Measured on this Pi Zero 2 W (quad-core): ten sequential cycles of the two `nmcl
 - **Secrets**: `nmcli connection show` prints the PSK as `<hidden>` unless `--show-secrets` is passed, and it is never passed — that is the control that matters. `buildWifiDump()` redacts secret-looking settings as a second line of defence, and the check feeds it a fixture _carrying_ a real-looking PSK, because a redaction test whose input has nothing to redact passes with the redactor deleted.
 - **Failures are reported, never dropped**: a non-zero exit, its stderr, a timeout and a truncation all reach the file. ⚠️ Node's `execFile` default buffer is 1 MB and it **kills** the child on overflow, so the command that overflows is the one whose output is lost — and the likeliest to overflow is the journal, whose size grows with exactly the trouble worth capturing. The buffer is 8 MB, the journal call is bounded by `--lines` as well as `--since`, and a truncated capture says `TRUNCATED` rather than looking complete.
 
-## 4. What is not built yet
+## 4. The recovery
 
-- **The handlebar gesture** — a 5 s hold that takes a dump and forces a rejoin. Designed and reviewed on #290, and lands in its own PR. **The button is `btn_set_back`**, the left-pod SET/BACK below the flash-to-pass (`0x400` b2 bit 0), chosen by the owner 2026-09-19 with the Traction Control screen it opens under a hold accepted as a known cost.
+**The watchdog is the fix; the gesture is the manual override.** Both run the same ladder, and `src/wifi/recover.ts` holds the in-flight flag they share, so a thumb landing inside a watchdog run cannot start a second one.
 
-  ⚠️ **`btn_cruise_set` — "speedo-set", the name the request used — was measured and ruled out.** It has **26 presses at or over 5 s** across the two archives, and the obvious rescue fails: 16 of the 21 in the ride log were made at **≤ 2.5 km/h**, so a stationary gate does not separate them. The owner adds that those long presses were him playing with the button rather than ordinary riding, which is consistent with the data and does not change the conclusion — a gesture cannot tell one thumb from another. `docs/handlebar-gestures.md` §"The `0x400` buttons" has the table.
+| rung | what                                                       |
+| ---- | ---------------------------------------------------------- |
+| 0    | write a dump — always, on every trigger                    |
+| 1    | `nmcli device wifi list --rescan yes` — the refreshed scan |
+| 2    | `nmcli connection up "<profile>"`, **by name**             |
 
-- ⚠️ **A rejoin will rescue the link but will not cure the latch.** `nmcli connection up` is an explicit `ActivateConnection`, and `autoconnect_is_blocked` is consulted only on the autoconnect path — so it works while blocked, but the block survives it. After one `no-secrets` event, every later drop in that boot needs another hold. The cure is a secret agent, or an unattended watchdog; both are follow-ups.
-- **A watchdog** that rejoins on its own after N minutes of "disconnected with the hotspot in range". Deliberately not in the first change: the ask was diagnosis, logging and a button.
+⚠️ **`--rescan yes` is the whole of "rescan and settle".** nmcli sets the scan cutoff to now and waits until NetworkManager's results are provably newer, bounded internally — so there is no hand-rolled wait loop and no timeout constant of ours to get wrong. It is also why this must never run on the poll path, whose contract is `2 × WIFI_POLL_TIMEOUT_MS < WIFI_POLL_MS`.
 
-## 5. Reading it back
+⚠️ **The hotspot missing from the refreshed scan does not stop the attempt.** A hidden SSID, or one missed by a single scan, is not proof of absence — and `ssid-not-found` never reaches the auth path, so the attempt cannot spend the `connection.auth-retries` budget the backoff exists to protect. It gets its own outcome code rather than being called a failure.
+
+### When the watchdog fires
+
+Two minutes of **disconnected while the hotspot is in the scan**, then a backoff of 2 → 4 → 8 → 15 minutes, the last repeating.
+
+⚠️ **The backoff is a safety property, not politeness.** Every attempt that reaches an association failure spends one of `connection.auth-retries`, and exhausting that budget is exactly what raises `NO_SECRETS` and latches the profile (§1). An over-eager watchdog would _create_ the fault it exists to escape.
+
+⚠️ **The fault clock has three states, and an earlier design had two.** CONNECTED clears it; the fault shape runs it; **everything else suspends it** — out of range, radio unavailable, or an activation of our own in flight. That third arm bites twice: a bike parked out of range would otherwise bank fault time it never spent trying and fire on the first poll the hotspot reappeared, racing NetworkManager's own autoconnect; and our `connection up` reads as CONNECTING, so without it an attempt would reset the clock that paces attempts and the backoff could never advance.
+
+⚠️ **One poll of CONNECTED does not forgive the backoff — two consecutive ones do.** A single poll can be a flap, and forgiving on it would pin the backoff at its floor through exactly the flapping episode it should be pacing.
+
+### The gesture
+
+A **5 s hold of `btn_set_back`**, the left-pod SET/BACK below the flash-to-pass (`0x400` b2 bit 0). Chosen by the owner 2026-09-19, with the bike's own Traction Control screen — which a hold of that button opens — accepted as a known cost.
+
+> **A hold always dumps.** Link **down** → it recovers. Link **up** → it dumps, leaves the link alone and arms a 60-second window; only a second hold inside that window touches the radio.
+
+The window exists for one case: a curious hold while the rider is watching a working dashboard must not drop the link they are watching it on. Above **0 km/h** the gesture does nothing at all — its own constant, not the fan's 15, because nothing about a wifi dump is useful while moving — and it fails closed on a stale speed reading.
+
+⚠️ **The rejoin rescues the link but does not clear the latch.** `connection up` is an explicit activation and bypasses the autoconnect block; the block itself survives, so after one `no-secrets` event every later drop that boot needs another recovery. **`connection.auth-retries 0` is the thing that stops the latch forming**, it is applied on this Pi, and it works when this service is not running at all — which nothing here does.
+
+## 5. What is still not built
+
+- **Clearing the latch itself.** `nmcli networking off && nmcli networking on` does clear it — `nm-policy.c`'s `sleeping_changed()` → `reset_autoconnect_all(…, only_no_secrets = FALSE)` on `notify::networking-enabled` — but it drops every interface, and it was cut from #290's recovery as the only destructive action there. Its whole value is undone by `connection.auth-retries 0`, which stops the latch forming. Filed with its prerequisites: verify `can0` is unmanaged **at the moment of use** and refuse otherwise.
+- **Why the supplicant kept choosing a dead BSSID.** `Failed to initiate sched scan` appears in every failure window and a starved scan cache is the leading hypothesis, filed as one rather than asserted. The recovery's forced rescan works whichever layer held the stale entry, so nothing waits on the answer.
+
+## 6. Reading it back
 
 ```
 ssh pi@cool-eva.local 'ls -t /home/pi/cool-eva/wifi-diag | head'

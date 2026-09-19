@@ -16,15 +16,7 @@ import { REDACTED, buildWifiDump, redactSecrets } from "../src/wifi/diag.ts";
 import { JOURNAL_MAX_LINES, readOnlyCommands } from "../src/wifi/collect.ts";
 import { MAX_OUTPUT_BYTES, runCommand } from "../src/wifi/nmcli.ts";
 import { WIFI_DIAG_KEEP, dumpFilename, dumpsToRemove, writeDumpText } from "../src/wifi/dump.ts";
-import {
-  WIFI_DUMP_MIN_GAP_MS,
-  WIFI_FAULT_DUMP_AFTER_MS,
-  WIFI_POLL_MS,
-  WIFI_POLL_TIMEOUT_MS,
-  describeState,
-  shouldDumpNow,
-  signalsToRecord,
-} from "../src/wifi/status.ts";
+import { WIFI_POLL_MS, WIFI_POLL_TIMEOUT_MS, describeState, signalsToRecord } from "../src/wifi/status.ts";
 import {
   WIFI_LINK_STATE,
   WIFI_NETWORK,
@@ -406,21 +398,6 @@ check("over the cap, the OLDEST goes", dumpsToRemove(dumps, 2).length === 1 && d
 check("…and the newest is never chosen", !dumpsToRemove(dumps, 1).includes(dumps[2]));
 check("…in order, oldest first", dumpsToRemove(dumps, 1).join(",") === `${dumps[0]},${dumps[1]}`);
 check("files that are not dumps are left alone", dumpsToRemove([...dumps, "README"], 0).length === 3);
-
-console.log("\n9. when a fault is worth a dump");
-
-// ⚠️ Two minutes, so ordinary roaming cannot reach it: NetworkManager retried after
-// twelve of thirteen failures on 2026-09-19, the quickest in 0.6 s.
-check("a momentary drop takes no dump", !shouldDumpNow(30_000, null));
-check("a drop just under the threshold takes no dump", !shouldDumpNow(WIFI_FAULT_DUMP_AFTER_MS - 1, null));
-check("a sustained fault takes one", shouldDumpNow(WIFI_FAULT_DUMP_AFTER_MS, null));
-check("…and not a second one straight after", !shouldDumpNow(10 * 60_000, 60_000));
-check("…but does again once the gap has passed", shouldDumpNow(40 * 60_000, WIFI_DUMP_MIN_GAP_MS));
-// ⚠️ Deliberately BELOW the longest ordinary retry seen (14 min 58 s on 2026-09-19), not
-// above it: those long gaps are the same fault class and each is worth a dump. What the
-// threshold has to clear is a roam, which is seconds.
-check("the threshold sits below the longest ordinary retry gap", WIFI_FAULT_DUMP_AFTER_MS < 14 * 60_000);
-check("…and well above any roam", WIFI_FAULT_DUMP_AFTER_MS > 30_000);
 
 console.log("\n10. a failed read claims nothing");
 

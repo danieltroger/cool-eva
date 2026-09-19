@@ -78,6 +78,16 @@ export const SIGNALS: SignalDef[] = [
   // The decisive one: "the hotspot is in range AND we are not on it" is the shape of the
   // 2026-09-19 failure, and neither half says it alone.
   { key: "wifi_hotspot_seen", unit: "", group: "wifi", source: "poll", bounds: [0, 1] },
+  // What the recovery did, and how many times it has run (src/wifi/recover.ts). They move
+  // only on a recovery, but src/wifi/status.ts re-records both on EVERY poll — record()
+  // seals a row only when the value changes, so that costs no rows and keeps this group
+  // fully live rather than standing part-dark for ever. ⚠️ A COUNTER beside the code
+  // because two identical outcomes in a row would otherwise write one row and raise one
+  // banner, and the second hold at the same charger would look like it had worked.
+  { key: "wifi_rejoin_seq", unit: "", group: "wifi", source: "poll", unbounded: "counter" },
+  // REJOIN_OUTCOME in src/wifi/ladder.ts: 0 none · 1 dump only, link untouched ·
+  // 2 rejoined · 3 attempted and failed · 4 no saved profile carries the configured SSID.
+  { key: "wifi_rejoin_outcome", unit: "", group: "wifi", source: "poll", bounds: [0, 4] },
   // ⚠️ There is deliberately NO `wifi_signal_pct`. A signal has no honest value while the
   // radio is disconnected, and an unwritten one goes stale — so a percent key would drag
   // this group's /status liveness fraction down during exactly the fault the group exists

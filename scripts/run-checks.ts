@@ -488,6 +488,31 @@ const CHECKS: SelfCheck[] = [
       "otherwise have taken away",
   },
   {
+    script: "scripts/check-wifi-recover.ts",
+    covers:
+      "the automatic wifi recovery and the handlebar hold that overrides it (#290). The fault clock first, " +
+      "because it has three states and an earlier design had two: a CONNECTED poll clears it, the fault shape " +
+      "(disconnected AND the hotspot in the scan) runs it, and EVERYTHING ELSE suspends it — out of range, radio " +
+      "unavailable, or an activation of our own in flight. That third arm is the one that bites twice over: a bike " +
+      "parked out of range would otherwise bank fault time it never spent trying and fire a ladder on the first " +
+      "poll the hotspot reappeared, racing NetworkManager's own autoconnect; and our own `connection up` reads as " +
+      "CONNECTING, so without it an attempt would reset the very clock that paces attempts and the backoff could " +
+      "never advance. Then the backoff, which is a SAFETY property rather than politeness — every attempt that " +
+      "reaches an association failure spends one of `connection.auth-retries`, and exhausting that budget is " +
+      "precisely what raises NO_SECRETS and latches the profile, so an over-eager watchdog would create the fault " +
+      "it exists to escape — capped rather than growing, and forgiven only by a connection that HOLDS for two " +
+      "polls, because one poll of CONNECTED is a flap and forgiving on it would pin the backoff at its floor " +
+      "through exactly the flapping episode it should be pacing. Then that the rejoin cadence is NOT the dump " +
+      "cadence: at #291's one-dump-per-15-minutes a 20-minute outage would have got a single attempt. Then the " +
+      "guard rule — a hold ALWAYS dumps, but while the link is UP the first one leaves it alone and arms a 60 s " +
+      "window, so a curious hold cannot drop the link the rider is watching the dashboard on. Then ONE HOLD IS ONE " +
+      "ACTION, replayed through the shipped recogniser at the real 29 664 ms press from the ride log — the press " +
+      "that nearly disqualified this button — which must fire exactly once where a broken latch fires once per " +
+      "50 ms beat. Finally the binding and its evidence: 5000 ms clears the capture archive's 300 ms worst by " +
+      "16x and does NOT clear that 29 664 ms one, which is asserted rather than hidden; and the margin that " +
+      "governs is 0x400's own worst intra-press frame gap of 160.2 ms against SAMPLE_MAX_AGE_MS, not 0x102's 14 ms",
+  },
+  {
     script: "scripts/check-wifi-diag.ts",
     covers:
       "the wifi logging and the dump builder behind #290, where NetworkManager latched the hotspot profile out of " +
