@@ -15,8 +15,17 @@ import type { ChargeSession, Waypoint } from './server/snapshot';
  * OpenFreeMap's public instance: no key, no registration, commercial use allowed, attribution
  * added by MapLibre automatically. Its tiles stop at z14, so past that the basemap overzooms
  * while the track — a client-side source, not a tiled one — stays at full resolution.
+ *
+ * Two styles, because one is a defect in the other's theme: a dark sidebar beside a pale green
+ * basemap is what the first screenshot of this page showed. `positron` is also deliberately
+ * muted rather than `liberty`, so the basemap does not compete with the speed colours it is
+ * underneath — the track is the data, the map is context.
  */
-export const BASEMAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
+export function basemapStyleUrl(dark: boolean): string {
+	return dark
+		? 'https://tiles.openfreemap.org/styles/dark'
+		: 'https://tiles.openfreemap.org/styles/positron';
+}
 
 /** A style with no basemap at all, for the offline case and for deterministic screenshots. */
 export function blankStyle(background: string): StyleSpecification {

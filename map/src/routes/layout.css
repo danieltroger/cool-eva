@@ -57,13 +57,38 @@ body {
 		sans-serif;
 }
 
-/* The attribution control is required by OpenFreeMap's terms and by OSM's licence, so it is
-   restyled to be readable in both themes rather than hidden. */
-.maplibregl-ctrl-attrib {
-	background: color-mix(in srgb, var(--surface) 82%, transparent);
+/* The attribution is REQUIRED by OpenFreeMap's terms and by OSM's licence, so it is restyled
+   to sit quietly in both themes rather than hidden. The compact variant carries its own
+   background rule, so these selectors have to be at least as specific or a white pill lands on
+   the dark basemap — which is what the first dark screenshot showed. */
+.maplibregl-ctrl-attrib,
+.maplibregl-ctrl-attrib.maplibregl-compact,
+.maplibregl-ctrl-group,
+.maplibregl-ctrl-scale {
+	background: color-mix(in srgb, var(--surface) 78%, transparent);
 	color: var(--text-dim);
+	border-color: var(--border);
+}
+.maplibregl-ctrl-attrib {
 	font-size: 10px;
 }
-.maplibregl-ctrl-attrib a {
+.maplibregl-ctrl-attrib a,
+.maplibregl-ctrl-scale {
 	color: var(--text-dim);
+}
+/* The button glyphs are SVG masks tinted by `color`, so they follow the token too. */
+.maplibregl-ctrl-group button + button {
+	border-top-color: var(--border);
+}
+.maplibregl-ctrl-group button .maplibregl-ctrl-icon {
+	filter: var(--control-icon-filter, none);
+}
+:root[data-theme='dark'],
+:root:not([data-theme='light']) {
+	@media (prefers-color-scheme: dark) {
+		--control-icon-filter: invert(1);
+	}
+}
+:root[data-theme='dark'] {
+	--control-icon-filter: invert(1);
 }

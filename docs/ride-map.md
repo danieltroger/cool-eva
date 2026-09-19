@@ -154,7 +154,7 @@ shadcn-svelte's Tailwind v4 support landed in May 2025 (`docs/content/changelog/
 ### ⚠️ Three MapLibre v6 traps, each of which cost time here
 
 1. **ESM only, and no default export.** `dist/maplibre-gl.mjs` exports `Map` by name; `import maplibregl from "maplibre-gl"` throws `does not provide an export named 'default'`.
-2. **The worker is a separate asset.** The bundle fetches `./maplibre-gl-worker.mjs` beside itself. When that 404s, the browser logs a bare resource error and **MapLibre says nothing at all** — no console message of its own, no `error` event, no map, indefinitely. ⚠️ The fix is **PR #8454** ("Report worker script load failures"), merged `2026-09-15T21:04:49Z`; 6.10.0 was published `2026-09-15T20:31:00.778Z`, **34 minutes earlier**, so it is not in this release. An earlier draft cited **#8018** as the fix — that is the _issue_ ("Map hangs silently when the worker script fails to load…"), not the change, and citing a bug report as its own fix is the `docs/can-capture.md` failure this repo names. A bundler handles the asset; copying `dist/` by hand does not.
+2. **The worker is a separate asset.** The bundle fetches `./maplibre-gl-worker.mjs` beside itself. When that 404s, the browser logs a bare resource error and **MapLibre says nothing at all** — no console message of its own, no `error` event, no map, indefinitely. ⚠️ The fix is **PR #8454** ("Report worker script load failures"), merged `2026-09-15T21:04:49Z`; 6.10.0 was published `2026-09-15T20:31:00.778Z`, **34 minutes earlier**, so it is not in this release. An earlier draft cited **#8018** as the fix — that is the _issue_ ("Map hangs silently when the worker script fails to load…"), not the change, and citing a bug report as its own fix is the `docs/can-capture.md` failure this repo names. ⚠️ **And a bundler does NOT handle it for you** — an earlier draft of this file said it did. Vite's dependency pre-bundler moves the entry into `node_modules/.vite/deps/` and leaves the worker behind, so it 404s there too. See [Vite pre-bundling breaks the worker](#vite-pre-bundling-breaks-the-worker).
 3. `maplibre-gl.mjs` and `maplibre-gl-worker.mjs` both import `./maplibre-gl-shared.mjs`, so all three must be served.
 
 ## Still unverified, and what each would cost
@@ -199,3 +199,38 @@ Measured after `sv create --template minimal --types ts --add prettier tailwindc
 ### The root Prettier run really does collide with `map/`
 
 Predicted from the parser-less-`.svelte` measurement, then observed for a different and worse reason: `npx prettier --write map/src/...` from the repo root picks up `map/prettier.config.js`, which names `prettier-plugin-svelte`, and **fails outright** — `Cannot find package 'prettier-plugin-svelte' imported from …/noop.js` — because the plugin lives in `map/node_modules` and the root run resolves from the root. So `map` in the root `.prettierignore` is not a tidiness preference; without it the root `format:check` job is red. `map/` carries its own Prettier and its own `npm run lint`.
+
+## What the pixel gate found, and reasoning had not
+
+Three defects survived a clean `svelte-check`, a clean `npm test` and a set of endpoints that returned correct data. Each was found by looking at a rendered screenshot, which is what the gate is for.
+
+### Vite pre-bundling breaks the worker
+
+**Symptom:** the map loads its style, its sprites and its Natural Earth raster tiles, never requests a single vector tile, leaves `isStyleLoaded()` `false` for ever, and paints a flat background. No `error` event, no console message, no exception — 6.10.0 reports a failed worker nowhere at all.
+
+**Cause, read off the network log:** `GET /node_modules/.vite/deps/maplibre-gl-worker.mjs` → **404**. MapLibre's ESM build creates its worker with `new Worker(new URL('./maplibre-gl-worker.mjs', import.meta.url))`; Vite's optimizer rewrites the entry into `.vite/deps/` without moving the worker beside it, so that relative URL resolves to nothing.
+
+**Fix:** `optimizeDeps: { exclude: ['maplibre-gl'] }` in `map/vite.config.ts`.
+
+### A Tailwind `absolute` that MapLibre overrides
+
+The map container was `<div class="absolute inset-0">` inside a `relative` parent. MapLibre adds its own `maplibregl-map` class to that element and that rule sets `position: relative`, which wins on source order — so `inset-0` stops applying and the element collapses. Measured at phone width: a **0 px tall** container inside a 792 px parent, with the canvas at MapLibre's **400×300 fallback**, leaving two thirds of the map blank. Sizing it as a plain flex child (`min-h-0 flex-1`) has nothing to override.
+
+⚠️ A `ResizeObserver` calling `map.resize()` did **not** fix this and was the wrong instinct: the container's size never changed, it was always zero.
+
+### The basemap has a theme too
+
+The first dark-mode screenshot was a dark sidebar beside a pale green basemap. The style now follows `prefers-color-scheme` — `dark` against `positron`, the muted light style rather than `liberty`, so the basemap does not compete with the speed colours drawn over it. `setStyle` discards every added layer, so the three layers are added on `style.load` rather than once on `load`. MapLibre's controls needed restyling at equal specificity too: `.maplibregl-ctrl-attrib.maplibregl-compact` carries its own background, and without matching it a white attribution pill lands on the dark map.
+
+## Memory, measured
+
+The full real archive — 17 627 segments over 249 151 points — in the isolated Chrome, summing RSS across the whole browser process tree:
+
+|                                    | browser tree | page renderer | GPU process |
+| ---------------------------------- | ------------ | ------------- | ----------- |
+| first paint                        | 1 013 MB     | 250 MB        | 147 MB      |
+| after 120 s of continuous pan/zoom | **1 235 MB** | 294 MB        | 291 MB      |
+
+Sampled every 30 s during the run: 1 179 → 1 206 → 1 282 → 1 291 MB, then **1 235 MB, and exactly 1 235 MB again after 20 s idle** — it plateaus and gives memory back, so the growth is tile cache rather than a leak. The page's own JS heap is small and stable: **23.8 MB** at first paint and **30.8 MB** after the pan run, during which 14 400 frames were driven.
+
+Attributable to the page: ~294 MB of renderer plus ~291 MB of GPU textures. The rest of the tree — browser process, utility processes, a second renderer — is Chrome's own baseline, there whatever the page does.

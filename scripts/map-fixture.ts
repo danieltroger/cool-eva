@@ -159,3 +159,24 @@ const SIGNAL_KEYS = [
   "waypoint_lat",
   "waypoint_lon",
 ];
+
+// Run directly to write a fixture somewhere, which is how the screenshots in a pull request
+// are made reproducible:
+//
+//   node --experimental-strip-types scripts/map-fixture.ts --out /tmp/fixture.db
+//   RIDES_DB=/tmp/fixture.db npm --prefix map run dev
+//
+// Guarded, because scripts/check-ride-map.ts imports this module and a bare top-level main()
+// would run on import and write a file the check never asked for.
+if (process.argv[1]?.endsWith("map-fixture.ts") === true) {
+  const flag = process.argv.indexOf("--out");
+  if (flag === -1 || process.argv[flag + 1] === undefined) {
+    console.error("usage: map-fixture.ts --out <path.db>");
+    process.exit(2);
+  }
+  const target = process.argv[flag + 1];
+  const written = buildMapFixture(target);
+  const points = written.prepare("SELECT COUNT(*) AS n FROM route_track").get() as { n: number };
+  written.close();
+  console.log(`wrote ${target}: ${points.n} synthetic track points (not a place)`);
+}

@@ -7,7 +7,7 @@
 		addChargeLayer,
 		addTrackLayer,
 		addWaypointLayer,
-		BASEMAP_STYLE_URL,
+		basemapStyleUrl,
 		chargeGeoJson,
 		waypointGeoJson
 	} from '$lib/mapLayers';
@@ -25,6 +25,7 @@
 
 	let container: HTMLDivElement;
 	let map: MapLibreMap | null = null;
+	const resizeObservers: ResizeObserver[] = [];
 	let loadError = $state<string | null>(null);
 	let rides = $state<Ride[]>([]);
 	let charges = $state<ChargeSession[]>([]);
@@ -49,7 +50,12 @@
 
 	onMount(() => {
 		void start();
-		return () => map?.remove();
+		return () => {
+			for (const observer of resizeObservers) {
+				observer.disconnect();
+			}
+			map?.remove();
+		};
 	});
 
 	async function start() {
@@ -69,9 +75,10 @@
 			console.error('could not load the ride summary', error);
 			return;
 		}
+		const darkMode = window.matchMedia('(prefers-color-scheme: dark)');
 		map = new MapLibreMap({
 			container,
-			style: BASEMAP_STYLE_URL,
+			style: basemapStyleUrl(darkMode.matches),
 			center: [0, 20],
 			zoom: 1,
 			attributionControl: { compact: true }
@@ -83,15 +90,37 @@
 			// unreachable basemap looks exactly like a slow one.
 			console.error('maplibre error', event.error ?? event);
 		});
-		map.on('load', () => {
+		// ⚠️ MapLibre falls back to 400x300 when its container has no size at construction, and
+		// this container is a flex child that has none until the sidebar has laid out. Measured
+		// at phone width: a 390x792 container held a 390x300 canvas, so two thirds of the map was
+		// blank background. Its own ResizeObserver does eventually fire, but not before the first
+		// paint — which is exactly what a screenshot catches. Observing the container ourselves
+		// makes the first frame right rather than the second.
+		const resizeObserver = new ResizeObserver(() => map?.resize());
+		resizeObserver.observe(container);
+		resizeObservers.push(resizeObserver);
+
+		// A handle for the check harness and for a human poking at it in devtools. Dev only:
+		// `import.meta.env.DEV` is statically replaced, so this disappears from a production build.
+		if (import.meta.env.DEV) {
+			(window as unknown as { __map: MapLibreMap }).__map = map;
+		}
+
+		// `setStyle` throws away every layer we added, so they are re-added on `style.load`
+		// rather than only once — which is also what makes the theme switch work at all.
+		map.on('style.load', () => {
 			if (map === null) {
 				return;
 			}
+			map.resize();
 			addTrackLayer(map, '/api/track');
 			addChargeLayer(map, charges);
 			addWaypointLayer(map, waypoints);
 			applyRange();
-			map.once('idle', () => fitToData());
+		});
+		map.once('idle', () => fitToData());
+		darkMode.addEventListener('change', (event) => {
+			map?.setStyle(basemapStyleUrl(event.matches));
 		});
 	}
 
@@ -237,7 +266,11 @@
 		/>
 	</aside>
 
-	<div class="relative min-h-0 flex-1">
-		<div bind:this={container} class="absolute inset-0"></div>
-	</div>
+	<!-- ⚠️ No `absolute inset-0` wrapper here, and that is load-bearing. MapLibre adds its own
+	     `maplibregl-map` class to the container, and that rule sets `position: relative` — which
+	     beats Tailwind's `absolute` on source order, so `inset-0` stops applying and the element
+	     collapses to height 0. Measured at phone width: the container was 0 px tall inside a
+	     792 px parent and the canvas sat at MapLibre's 400x300 fallback, leaving two thirds of
+	     the map blank. Sizing it as a plain flex child has nothing to override. -->
+	<div bind:this={container} class="min-h-0 flex-1"></div>
 </div>
