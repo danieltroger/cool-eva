@@ -3,6 +3,7 @@ import { readFile } from "fs/promises";
 import { fileURLToPath } from "url";
 import { promisify } from "util";
 import { CAN_CAPTURE_UNIT_PATH, canCaptureUnitText } from "./can-capture/unit.ts";
+import { runCaptureScriptWithStubs } from "./can-capture/stub-run.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -27,12 +28,21 @@ const PROJECT_DIR = "/opt/probe-project-dir";
 const unit = canCaptureUnitText(PROJECT_DIR);
 const failures: string[] = [];
 
-// The line that does the work. Everything below is about this one command. Matched on
-// `exec` rather than on "candump", which also appears in the guard above it — the loose
-// version silently pointed every assertion below at the wrong line.
-const candumpLine = script.split("\n").find(line => line.trimStart().startsWith("exec ") && line.includes("candump"));
-if (!candumpLine) {
-  failures.push("capture.sh no longer exec's candump");
+// The line that does the work. Everything below is about this one command, so the anchor
+// is the load-bearing part of this file: five assertions below are `if (candumpLine && …)`
+// and ALL of them silently become no-ops if it matches nothing.
+//
+// ⚠️ Anchored on the invocation SHAPE, not on the word "candump" — which also appears in
+// the tool guard above it, and matching that line is the exact bug the previous version of
+// this comment recorded. `exec ` was the old anchor, and it went when the pipeline arrived.
+const CANDUMP_INVOCATION = /^\s*stdbuf -oL timeout \d+ candump\b/;
+const candumpLines = script.split("\n").filter(line => CANDUMP_INVOCATION.test(line));
+const candumpLine = candumpLines[0];
+if (candumpLines.length !== 1) {
+  failures.push(
+    `capture.sh should hold exactly one \`stdbuf -oL timeout <n> candump\` line; found ${candumpLines.length}. ` +
+      `Zero means every flag assertion below is a silent no-op; two means one of them is unguarded`
+  );
 }
 
 if (candumpLine && !/\s-D(\s|$)/.test(candumpLine)) {
@@ -43,22 +53,80 @@ if (candumpLine && !/\s-D(\s|$)/.test(candumpLine)) {
   );
 }
 
-// ⚠️ Positive assertion, and the direction is deliberate. -D removes the file boundary
-// that used to mark a gap, so candump's own "can0: interface down" on stderr becomes the
-// only evidence IN THE FILE that one happened — and the file is what gets archived, not
-// the journal. docs/charge-manager.md's E2 reading turns on exactly this kind of evidence.
-// The redirect moved off the candump line onto the brace group when the header echo was
-// added (#188), so it is found by what it DOES rather than by which line it is on — a test
-// pinned to the exec line would have gone green the day the redirect stopped covering it.
-const redirectLine = script.split("\n").find(line => /^\}?\s*>\s*"\$OUTPUT"/.test(line.trimStart()));
-if (!redirectLine) {
-  failures.push('nothing in capture.sh redirects to "$OUTPUT" any more — the capture would go to the journal');
+// ⚠️ Every assertion in this block is positive, and the direction is deliberate. -D
+// removes the file boundary that used to mark a gap, so candump's own "can0: interface
+// down" on stderr is the only evidence IN THE FILE that one happened — and the file is
+// what gets archived, not the journal. docs/charge-manager.md's E2 reading turns on
+// exactly this kind of evidence.
+//
+// The single `> "$OUTPUT"` line used to do two jobs; the pipeline splits them into three
+// places, so each is found by what it DOES rather than by which line it sits on.
+const createLine = script.split("\n").find(line => /^:\s+>\s+"\$OUTPUT"$/.test(line.trimStart()));
+if (!createLine) {
+  failures.push('capture.sh no longer creates "$OUTPUT" with `: > "$OUTPUT"`');
 }
 
-if (redirectLine && !redirectLine.includes("2>&1")) {
+const filterMatch = /--filter='([^']*)'/.exec(script);
+if (!filterMatch) {
+  failures.push("capture.sh no longer passes a --filter to split — the capture would be uncompressed, or absent");
+} else {
+  const filter = filterMatch[1];
+  // ⚠️ Two characters, and both decide whether the capture exists at all. Without `-c`
+  // gzip writes nowhere. With `>` in place of `>>` EVERY member truncates the file, which
+  // leaves a valid, readable gzip holding the last 64 kB of an eight-hour ride — no error,
+  // no red unit, nothing anywhere saying the other eight hours were overwritten.
+  if (!/(^|\s)-c(\s|$)/.test(filter)) {
+    failures.push(
+      `the split filter has lost gzip's -c, so gzip writes a file of its own and not the capture: ${filter}`
+    );
+  }
+  if (!filter.includes('>> "$OUTPUT"')) {
+    failures.push(
+      `the split filter no longer APPENDS to "$OUTPUT" (found: ${filter}). A single \`>\` makes every 64 kB member ` +
+        `truncate the file, and the result is a perfectly readable gzip holding only the end of the ride`
+    );
+  }
+  if (!/\bgzip\b/.test(filter)) {
+    failures.push(`the split filter no longer runs gzip: ${filter}`);
+  }
+}
+
+// ⚠️ The chunk bound is the whole reason split is in this pipeline. gzip -1 emits nothing
+// until ~786 kB of input has accumulated — 7 s of bus at the measured 112 kB/s — so a
+// larger chunk hands a power cut more of the capture's tail. 65536 is the largest value
+// whose worst case stays under the 1.367 s shutdown walk docs/power-cuts.md §7 rests on.
+const chunkMatch = /\bsplit\s+-C\s+(\d+)/.exec(script);
+if (!chunkMatch) {
   failures.push(
-    "the candump redirect has lost 2>&1. With -D that removes the only in-band record of an " +
+    "capture.sh no longer bounds the gzip member with `split -C <bytes>` — a cut would cost ~7 s of capture"
+  );
+} else if (Number(chunkMatch[1]) > 65536) {
+  failures.push(
+    `split -C is ${chunkMatch[1]}, above 65536: worst-case loss is chunk/112000 + 0.38 s, and above 65536 that ` +
+      `exceeds the 1.367 s shutdown walk in docs/power-cuts.md §7 — the smallest thing the capture tail measures`
+  );
+}
+
+// -C and not -b: members end on a line boundary, so only the final partial member of a
+// cut capture can ever yield a partial line.
+if (/\bsplit\s+-b\b/.test(script)) {
+  failures.push("capture.sh splits with -b, which cuts mid-line; -C keeps every member ending on a line boundary");
+}
+
+const pipeLine = script.split("\n").find(line => /^\}\s*2>&1\s*\|\s*split\b/.test(line.trimStart()));
+if (!pipeLine) {
+  failures.push(
+    "the capture group no longer ends in `} 2>&1 | split`. Losing 2>&1 removes the only in-band record of an " +
       "interface bounce, leaving a silently gappy capture — see docs/can-capture.md"
+  );
+}
+
+// ⚠️ Without pipefail the pipeline's status is split's, so a candump that dies exits 0,
+// systemd calls the unit cleanly finished, and the capture stops until the next boot.
+if (!/\(set -o pipefail\) 2>\/dev\/null/.test(script) || !/^\s*set -o pipefail$/m.test(script)) {
+  failures.push(
+    "capture.sh no longer sets pipefail behind a portability guard. Without it a candump that dies " +
+      "(SIOCGIFINDEX, ENODEV) exits 0 through the pipeline and Restart=on-failure never fires"
   );
 }
 
@@ -81,7 +149,7 @@ if (candumpLine && !/\btimeout\s+28800\b/.test(candumpLine)) {
 
 // The exec has to sit INSIDE the group the redirect covers, or candump writes to the
 // journal while the header line is the only thing in the file.
-const redirectIndex = redirectLine ? script.indexOf(redirectLine) : -1;
+const redirectIndex = pipeLine ? script.indexOf(pipeLine) : -1;
 const groupIndex = script.indexOf('{\n  echo "# boot');
 if (candumpLine && redirectIndex >= 0) {
   const candumpIndex = script.indexOf(candumpLine);
@@ -120,20 +188,27 @@ const namePattern2 = /^NAME = re\.compile\(r"(.+)"\)$/m.exec(reductionSource)?.[
 if (!namePattern2) {
   failures.push("evidence/keyoff/capture-figures.py no longer declares a NAME regex to check the filename against");
 } else {
-  const sample = "capture-20260914-120000-7ce067a7-00001234.log";
+  const sample = "capture-20260914-120000-7ce067a7-00001234.log.gz";
+  const uncompressed = "capture-20260914-120000-7ce067a7-00001234.log";
   const legacy = "capture-20260808-211445-2b4b0868.log";
   if (!new RegExp(namePattern2).test(sample)) {
     failures.push(`evidence/keyoff/capture-figures.py cannot parse the name capture.sh now writes (${sample})`);
+  }
+  if (!new RegExp(namePattern2).test(uncompressed)) {
+    failures.push(
+      `evidence/keyoff/capture-figures.py no longer parses the uncompressed names beside them (${uncompressed})`
+    );
   }
   if (!new RegExp(namePattern2).test(legacy)) {
     failures.push(`evidence/keyoff/capture-figures.py can no longer parse the archive's existing names (${legacy})`);
   }
 }
-const namePattern = /OUTPUT="\$DIRECTORY\/capture-\$\(date [^)]*\)-\$BOOT_ID-\$UPTIME\.log"/;
+const namePattern = /OUTPUT="\$DIRECTORY\/capture-\$\(date [^)]*\)-\$BOOT_ID-\$UPTIME\.log\.gz"/;
 if (!namePattern.test(script)) {
   failures.push(
-    "the capture filename is no longer <date>-<bootid>-<uptime>: the date leads so a plain `ls` stays " +
-      "chronological, and the uptime trails so a clock step cannot reorder one boot's files"
+    "the capture filename is no longer <date>-<bootid>-<uptime>.log.gz: the date leads so a plain `ls` stays " +
+      "chronological, the uptime trails so a clock step cannot reorder one boot's files, and .gz is what every " +
+      "reader now switches on"
   );
 }
 
@@ -161,10 +236,17 @@ if (!/^OUTPUT="\$DIRECTORY\//m.test(script)) {
 // can-utils is not a default Raspberry Pi OS package, and `exec … > "$OUTPUT"` truncates the
 // file in the SHELL before exec'ing — so without this guard a missing candump leaves one
 // empty capture per restart in the directory the archive is swept from.
-if (!/if ! command -v candump/.test(script)) {
-  failures.push("capture.sh no longer checks that candump exists before creating the output file");
-} else if (!/command -v candump[\s\S]{0,400}?\bexit 1\b/.test(script)) {
-  failures.push("the candump guard no longer exits — it has to stop before the redirect, or it does nothing at all");
+// Three binaries now, not one: `: > "$OUTPUT"` truncates the file whether or not the
+// pipeline can run, so any of the three missing would leave one empty capture per restart.
+for (const tool of ["candump", "gzip", "split"]) {
+  if (!new RegExp(`command -v ${tool}\\b`).test(script)) {
+    failures.push(`capture.sh no longer checks that ${tool} exists before creating the output file`);
+  }
+}
+if (!/command -v candump[\s\S]{0,400}?\bexit 1\b/.test(script)) {
+  failures.push(
+    "the candump guard no longer exits — it has to stop before the file is created, or it does nothing at all"
+  );
 }
 
 // The name has to stay unique per boot without trusting the clock: this Pi has no RTC and
@@ -177,9 +259,9 @@ if (!script.includes("/proc/sys/kernel/random/boot_id")) {
 // cannot be bound to an interface that does not exist yet. The two overlap, neither is
 // redundant, and this has to come first.
 const waitIndex = script.indexOf("ip link show can0");
-const execIndex = script.indexOf("exec stdbuf");
-if (waitIndex === -1 || execIndex === -1 || waitIndex > execIndex) {
-  failures.push("capture.sh no longer waits for can0 to appear before exec'ing candump");
+const candumpIndexForWait = candumpLine ? script.indexOf(candumpLine) : -1;
+if (waitIndex === -1 || candumpIndexForWait === -1 || waitIndex > candumpIndexForWait) {
+  failures.push("capture.sh no longer waits for can0 to appear before running candump");
 }
 
 // `/bin/sh <script>` so a lost exec bit cannot break the unit at boot with 203/EXEC —
@@ -219,6 +301,100 @@ try {
   failures.push(`capture.sh does not parse as POSIX sh: ${(error as Error).message.split("\n").slice(0, 3).join(" ")}`);
 }
 
+// ⚠️ Everything above reads the script. This runs it — under stubbed `ip`, `candump`,
+// `df`, `stdbuf`, `timeout`, `sleep` and `split`, in a temp directory — because three of
+// the properties that matter are ORDERINGS the regexes above can only approximate, and
+// because the floor's fail-closed direction is not a property any regex can see.
+const scriptPath = fileURLToPath(CAPTURE_SCRIPT);
+
+const healthy = await runCaptureScriptWithStubs(scriptPath);
+if (healthy.exitCode !== 0) {
+  failures.push(`capture.sh does not run to completion under stubs: exit ${healthy.exitCode}\n${healthy.output}`);
+}
+if (healthy.captureFiles.length !== 1) {
+  failures.push(`a healthy run wrote ${healthy.captureFiles.length} capture files, expected exactly 1`);
+} else if (!/^capture-\d{8}-\d{6}-[0-9a-f]{8}-\d{8}\.log\.gz$/.test(healthy.captureFiles[0])) {
+  failures.push(`a healthy run wrote ${healthy.captureFiles[0]}, which is not the documented capture name`);
+}
+// The file must be real gzip AND carry the header, the frames and candump's stderr. That
+// last one is what proves 2>&1 actually reaches the pipe rather than the journal.
+if (healthy.capturedText === null) {
+  failures.push("the capture a healthy run wrote could not be gunzipped");
+} else {
+  for (const expected of ["# boot 7ce067a8 uptime 00001234", "can0  101   [8]", "can0: interface down"]) {
+    if (!healthy.capturedText.includes(expected)) {
+      failures.push(`the capture is missing ${JSON.stringify(expected)} — got:\n${healthy.capturedText}`);
+    }
+  }
+}
+if (healthy.splitArgv === null || !healthy.splitArgv.includes("-C 65536")) {
+  failures.push(`split was not invoked with the 64 kB chunk bound (argv: ${healthy.splitArgv})`);
+}
+
+// Below the floor: refuse, say so, and create NOTHING. The stub `sleep` aborts the wait,
+// so this observes the refusal rather than sitting in the retry loop for a minute.
+const starved = await runCaptureScriptWithStubs(scriptPath, { availableKb: "10485759" });
+if (starved.captureFiles.length !== 0) {
+  failures.push(`the disk floor let a capture be created with 10485759 kB free: ${starved.captureFiles.join(", ")}`);
+}
+if (!/disk floor: 10485759 kB free/.test(starved.output)) {
+  failures.push(`the disk floor refused quietly — nothing in the journal names the free space:\n${starved.output}`);
+}
+
+// One kB the other side of it must proceed, or the floor is not a floor but a wall.
+const justEnough = await runCaptureScriptWithStubs(scriptPath, { availableKb: "10485760" });
+if (justEnough.captureFiles.length !== 1) {
+  failures.push(`the disk floor refused at exactly 10485760 kB free, which is ON the floor and must pass`);
+}
+
+// ⚠️ An unreadable df FAILS CLOSED. Not knowing the free space is not permission to fill
+// the card — the .celog ride log is the thing that must not lose.
+const blindfolded = await runCaptureScriptWithStubs(scriptPath, { dfFails: true });
+if (blindfolded.captureFiles.length !== 0) {
+  failures.push("a df that prints nothing let a capture start — the floor must fail closed, not open");
+}
+if (!/could not read free space/.test(blindfolded.output)) {
+  failures.push(`an unreadable df was swallowed rather than logged:\n${blindfolded.output}`);
+}
+
+// A candump that dies must take the unit down with it, or Restart=on-failure never fires.
+const dyingCandump = await runCaptureScriptWithStubs(scriptPath, { candumpExitCode: 1 });
+if (dyingCandump.exitCode === 0) {
+  failures.push(
+    "capture.sh exited 0 with a candump that failed. systemd would call the unit cleanly finished and the " +
+      "capture would stop until the next boot — this is what `set -o pipefail` is for"
+  );
+}
+
+// …and the mutation that proves the line above is load-bearing rather than decorative.
+const withoutPipefail = script.replace(/^  set -o pipefail$/m, "  : # pipefail removed by the mutation run");
+if (withoutPipefail === script) {
+  failures.push("the pipefail mutation did not apply — the assertion below would be testing nothing");
+} else {
+  const mutated = await runCaptureScriptWithStubs(scriptPath, { candumpExitCode: 1, scriptText: withoutPipefail });
+  if (mutated.exitCode !== 0) {
+    failures.push(
+      `removing pipefail was expected to hide a failing candump behind exit 0, but the run exited ` +
+        `${mutated.exitCode}. Either the shell defaults changed or this check no longer proves what it claims`
+    );
+  }
+}
+
+// Any of the three binaries missing: exit non-zero, say which, and leave NO file behind.
+// `: > "$OUTPUT"` truncates whether or not the pipeline can run, so an ungated missing
+// binary means one empty capture per restart — ~17 000 a day at RestartSec=5.
+for (const tool of ["gzip", "candump"]) {
+  const without = await runCaptureScriptWithStubs(scriptPath, { omitFromPath: [tool] });
+  if (without.exitCode === 0) {
+    failures.push(`capture.sh exited 0 with ${tool} missing from PATH`);
+  }
+  if (without.captureFiles.length !== 0) {
+    failures.push(
+      `capture.sh created ${without.captureFiles.join(", ")} with ${tool} missing — the guard runs too late`
+    );
+  }
+}
+
 if (failures.length > 0) {
   console.error("\nFAILED:");
   for (const failure of failures) {
@@ -227,5 +403,7 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(
-  "\n✓ capture.sh keeps -D, its stderr marker, the boot-id name and the can0 wait; the unit runs the tracked script"
+  "\n✓ capture.sh keeps -D, its stderr marker, the boot-id name and the can0 wait; the 64 kB gzip members, the " +
+    "three-binary guard and pipefail all hold; the disk floor refuses below 10 GiB and fails closed on an " +
+    "unreadable df; the unit runs the tracked script"
 );

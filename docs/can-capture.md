@@ -101,7 +101,7 @@ The dashboard's **CAN bus restart** button is unchanged and still there (`src/ht
 
 ## The capture unit itself
 
-`can-capture.service` runs `capture.sh`, which `exec`s one long-lived `candump -D -tA can0` per boot into `/home/pi/ride-captures/capture-<date>-<boot_id8>.log`. Both files are tracked under `scripts/can-capture/` and installed by `scripts/setup-service.ts`.
+`can-capture.service` runs `capture.sh`, which runs one long-lived `candump -D -tA can0` per boot into `/home/pi/ride-captures/capture-<date>-<boot_id8>-<uptime>.log.gz`, through `split -C 65536 --filter='gzip -1 -c >> …'`. Both files are tracked under `scripts/can-capture/` and installed by `scripts/setup-service.ts`. Why it is compressed, and what that costs: §"Why the capture is compressed, and what a power cut now costs".
 
 ⚠️ **Until 2026-09 neither was in this repo.** They existed as one copy on one SD card, with no revert path and no review, while producing the corpus that essentially every decode finding in `docs/` rests on. That is the finding, and it is why they are here now.
 
@@ -175,3 +175,128 @@ can: can0 is already up @500k ACTIVE (TX enabled) — skipping the down/up (stat
 ```
 
 with **no** `can-capture` restart in `journalctl -u can-capture` around it, and the same capture file still growing.
+
+## Why the capture is compressed, and what a power cut now costs
+
+`candump` writes **394 MB/h** of text into `/home/pi/ride-captures/`. On 2026-09-19 that directory held 625 files and 88.9 GiB against 17.2 GB free — about **43 powered-on hours** of headroom before the capture, the `.celog` ride log and journald would be fighting over the last gigabytes, and the ride log is the one that must not lose. Compressing the stream at 7.6:1 turns those 43 hours into **~320**. Issue #289.
+
+The cost is the tail. Everything below is measured on the Pi, feeding a real capture into each candidate at 112 kB/s — the archive's own average rate — and snapshotting the output file after 25 s.
+
+| writer | raw capture in flight when the 12 V dies | ratio, 200 MB sample of a real capture |
+| --- | --- | --- |
+| plain text, `stdbuf -oL` (what this replaces) | **0 B** — the control run | 1.00 |
+| `gzip -1` | 799 kB = **7.1 s** | 7.92 |
+| `gzip -1 --rsyncable` | 1 047 kB = **9.4 s** | 7.08 |
+| `zstd -1` | 824 kB = **7.4 s** | 10.23 |
+| **`split -C 65536 \| gzip -1`** | see below | **7.60** at 131072; ~7.35 at 65536 |
+
+⚠️ **A naive `\| gzip -1` costs seven seconds of bus per power cut, and every capture here ends in a power cut.** The mechanism is deflate's block size measured in _input_: zlib emits a block when its 16 384-symbol buffer fills, and on text this repetitive one match covers dozens of bytes, so the first output byte does not appear until **786 432 B** of input has gone in (reproduced independently on a second machine). `--rsyncable` makes it worse, not better. `zstd` is no better and has a fatal reader problem — see below.
+
+### The chunk size is derived, not chosen
+
+`split -C 65536` starts a fresh gzip **member** every 64 kB, and members concatenate: `gzip -dc`, `zcat`, Node's `zlib.createGunzip()` and Python's `gzip` module all read a multi-member file as one stream. So the in-flight quantity stops being "gzip's whole deflate block" and becomes "how much of the current chunk `split` has handed over", which is uniform on 0…CHUNK.
+
+    worst-case loss  =  CHUNK / 112000        (the chunk not yet compressed)
+                     +  5.6 kB × 7.6 / 112000 (the compressed tail ext4 had not written back)
+
+`docs/power-cuts.md` §7 measures that second term on the existing archive: the file tail a cut costs is **≤ ~5.6 kB**, which on a `.gz` is _compressed_ bytes and so worth ~43 kB of frames, ≈ 0.38 s. Then:
+
+| CHUNK     | typical loss | worst-case loss |
+| --------- | ------------ | --------------- |
+| 131072    | ~0.96 s      | **1.55 s**      |
+| **65536** | **~0.57 s**  | **0.97 s**      |
+
+**65536 is the largest chunk whose worst case stays under 1.367 s** — the longest of the three complete shutdown walks in `docs/power-cuts.md` §7, which end 0.000 / 0.184 / 1.367 s after the bike's last `0x101` substate change. At 131072 a power cut could swallow that measurement whole; at 65536 it cannot. The ratio cost of the smaller chunk is **3.4 %**, measured on the same window.
+
+⚠️ **Say what this does and does not cost, because the two classes differ by two orders of magnitude.** Park-lead measurements — the 10.03–442.11 s between entering state 60 and the end of the boot, which is what `src/storage/seal-on-park.ts` is built on — are untouched; §7 already treats them as lower bounds that tail loss only makes more conservative. The shutdown-walk class (0–1.4 s) is preserved by this chunk size and would not be by a larger one. Nothing moves retroactively: all three of those files are in the uncompressed archive on the laptop.
+
+### Truncated captures are the normal case, and every reader must survive one
+
+The Pi takes its power from the bike, so almost every capture ends mid-stream. Measured on a real 37.9 MB capture, cut, and then cut and NUL-padded (the ext4 delayed-allocation signature `evidence/keyoff/tail-shape.py` measures):
+
+| reader                                | truncated multi-member `.gz`  | + a trailing NUL run      |
+| ------------------------------------- | ----------------------------- | ------------------------- |
+| `gzip -dc` (GNU 1.13, on the Pi)      | 380 534 B of 400 000, exit 1  | prefix, exit 1            |
+| `gzip -dc` (Apple gzip 479, on a Mac) | **327 567 B** — 53 kB less    | prefix, exit 1            |
+| Node `zlib.createGunzip()`            | 380 534 B, then `Z_BUF_ERROR` | same, then `Z_DATA_ERROR` |
+| Python `gzip.open()`                  | 380 534 B, then `EOFError`    | same                      |
+
+⚠️ **How much a CLI recovers from a cut member is implementation-dependent** — Apple's gzip gives up 53 kB earlier than GNU's on the identical file — so `scripts/check-capture-reader.ts` asserts against **Node's** number, which is the same on both platforms because it is the same zlib. What every reader agrees on is that the recovered bytes are a **byte-exact prefix**, and that the last line is routinely a partial one. `scripts/replay-capture.ts` counts an unparseable line as `framesSkipped` and `evidence/keyoff/reduce-captures.awk` guards with `NF < 6`, so a partial final line costs a reader nothing.
+
+`scripts/capture-lines.ts` is the one place that opens a capture: it treats `Z_BUF_ERROR` and `Z_DATA_ERROR` as end-of-data, warns once with the line count, and re-throws anything else — so a missing or unreadable file is still a fault and not an empty capture.
+
+⚠️ **The `grep -a` trap has a sibling.** `docs/handlebar-gestures.md` records that a NUL-tailed capture reads as binary to `grep`. A `.gz` is binary to `grep` _always_: it is `gzip -dc file.log.gz | grep …`, never `grep … file.log.gz`, and a cut capture is binary **and** truncated, so the pipe's exit status will be non-zero even when the grep found what you wanted.
+
+### ❌ Why not zstd, which is better at everything except the thing that matters
+
+`zstd -1` is installed on the Pi, compresses these captures **10.23:1** against gzip's 7.92, and is cheaper on a Zero 2 W (20.0 MB/s against gzip's 13.3). Chunked the same way it ties on tail loss exactly. It was still rejected:
+
+> Three concatenated `zstd -1` frames, 852 000 B of capture text. `zstd -dc` → 852 000 B ✓. Node 24 `zlib.createZstdDecompress()` → **284 000 B**, which is frame 1 and nothing else.
+
+Node's zstd decompressor **stops at the first frame of a concatenated file**, and in one of the two reproductions it did so with a clean `end` event and **no error at all** — a silent one-third. `scripts/replay-capture.ts` is a Node reader, so a `.zst` capture would replay the first 64 kB of a 3 GB file and report success. `createGunzip()` walks concatenated members natively. That single difference is the whole reason these files are gzip.
+
+(An earlier draft of this decision argued from Python instead — that 3.13 has no stdlib zstd and `evidence/keyoff/` is Python. That argument is **wrong and withdrawn**: `capture-figures.py` never opens a capture, it reads the reduction's output. The Node defect is the real reason.)
+
+### `split` waits for each filter before starting the next — from the source, not from behaviour
+
+Two `gzip … >> "$OUTPUT"` alive at once would interleave their members' bytes and leave the file unreadable past the splice. `create()` in `coreutils/src/split.c` keeps an `open_pipes[]` array and a comment about _"holding a write-pipe that will prevent the earlier process from reading an EOF"_, which makes concurrent filters look possible. They are not, on this path. `cwrite()`:
+
+```c
+  if (new_file_flag)
+    {
+      if (!bp && bytes == 0 && elide_empty_files)
+        return true;
+      closeout (NULL, output_desc, filter_pid, outfile);
+      next_file_name ();
+      output_desc = create (outfile);
+```
+
+and `closeout()` blocks:
+
+```c
+  if (pid > 0)
+    {
+      int wstatus;
+      if (waitpid (pid, &wstatus, 0) < 0)
+        error (EXIT_FAILURE, errno, _("waiting for child process"));
+```
+
+`closeout` — closing the write end and **blocking in `waitpid`** — runs before `create` spawns the next filter, and `line_bytes_split` (the `-C` path) writes only through `cwrite`. So the previous `gzip` has exited, and flushed its complete member and trailer, before the next one starts. Confirmed on the Pi: 207 samples over a 20 s paced run, **max concurrent `gzip` = 1**, and the output decompressed to a byte-exact copy of the input.
+
+That same `closeout` turns a filter's non-zero exit into `error (ex, 0, "with FILE=%s, exit %d from command: %s")`, so **a gzip that dies makes `split` exit non-zero** — which with `pipefail` restarts the unit rather than quietly writing nothing.
+
+### ⚠️ `pipefail`, or a dying candump exits 0
+
+`candump` used to be the unit's main process, so its exit status was the unit's. In a pipeline the status is `split`'s. Without `set -o pipefail` a `candump` that dies — `SIOCGIFINDEX: No such device` after the 240 s wait loop gives up, `ENODEV` on an unplugged adapter — would exit **0**, systemd would call the unit cleanly finished, and the capture would stop until the next boot. The loud 240 s restart loop described above would become silence. `/bin/sh` on this Pi is dash, which supports `pipefail`; the guard `(set -o pipefail) 2>/dev/null` is there so a shell without it still runs, and says in the journal what it has lost.
+
+### The disk floor waits; it does not exit
+
+`capture.sh` refuses to start a capture under **10 GiB free**, rechecking every 60 s and logging every 5 minutes. It never touches the ride log or the journal — it only declines to open a capture.
+
+- `exit 1` would restart-loop at 0.2 Hz forever; `exit 0` would leave the unit dead with nothing to restart it when space appeared. Waiting keeps the unit `active` and starts capturing within a minute of `scripts/free-pi-captures.ts` freeing space.
+- ⚠️ **An unreadable `df` fails CLOSED.** Not knowing the free space is not permission to fill the card.
+- A start-time check is enough: at 7.6:1 an 8 h capture is ~415 MB, where it used to be 3.15 GB, so no single capture can eat the floor.
+- `freeBytes` in `/status` is `statfs().bavail`, the same number `df -Pk` reports in Available — measured on the Pi as root at 17 081 612 kB against statfs's 17 081 476 kB, while `bfree` reads 22 096 004 kB. Mixing up `bavail` and `bfree` would put 5 GB between the floor and the dashboard.
+
+### ❌ The alternative that was rejected, with its best case on the record
+
+Compress each finished capture at the **next boot** instead of streaming. It costs no tail at all, which is its real argument, and its strongest form is more elegant than the obvious one: the `boot_id` already in every filename makes _"not my boot"_ an exact, **clock-free** liveness test, strictly better than `mtime > N minutes` on a Pi with no RTC.
+
+It was not taken because Daniel asked for the stream (_"if you can stream to a gzipped file, go on that too so future writes need less data"_) and the condition turned out to be meetable at ~0.6 s; because it writes ~1.13× as much to the card rather than 0.13×; and because it holds an uncompressed 3.15 GB capture _plus_ the previous boot's file on the card at once — which is what the 10 GiB floor would then be spending itself on.
+
+### ⚠️ Still open: the loss figures are arithmetic plus one evening
+
+The 0.57 s / 0.97 s above are a measured chunk distribution plus §7's `≤ 5.6 kB` scaled by the compression ratio. They are **not** a corpus. `evidence/keyoff/tail-shape.py` grew a `.gz` mode to settle them — member count, last-member raw size, and whether the last complete line parses — and it wants a week of real `.log.gz` captures before any of these numbers should be quoted as measured rather than derived.
+
+### How the committed fixtures were made
+
+`scripts/fixtures/capture-pipeline-{clean,truncated}.log.gz` came off the Pi, through the real pipeline, so that `scripts/check-capture-reader.ts` tests GNU `split`'s actual output on a Mac that has no GNU `split`:
+
+```sh
+export OUTPUT=clean.log.gz; : > "$OUTPUT"
+head -c 400000 /home/pi/ride-captures/capture-20260919-165030-dcf59758-00000024.log \
+  | split -C 65536 --filter='gzip -1 -c >> "$OUTPUT"'
+head -c $(( $(stat -c %s clean.log.gz) - 2000 )) clean.log.gz > truncated.log.gz
+```
+
+7 members, 400 000 B, `cmp`-clean against the input; the truncated one keeps 6 members and 388 097 B, a byte-exact prefix. The clean fixture's own last line is partial because `head -c` cut it there — deliberately, so a reader that mishandles a partial final line cannot pass.

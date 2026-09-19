@@ -1,4 +1,4 @@
-import { readdir, stat } from "fs/promises";
+import { readdir, stat, statfs } from "fs/promises";
 import { join } from "path";
 import type { ServerResponse } from "http";
 import { ageMs, snapshot, type SignalDef } from "../can/signals.ts";
@@ -61,6 +61,20 @@ export interface StatusPayload {
    * ⚠️ Nor is it one file per day any more — see measureLog().
    */
   log: { files: number; bytes: number; enabled: boolean };
+  /**
+   * Free space on the card the captures and the ride log share.
+   *
+   * ⚠️ `freeBytes` is `bavail`, NOT `bfree`. The two differ by the ~5 GB of reserved
+   * blocks, and `scripts/can-capture/capture.sh` gates its disk floor on `df -Pk`'s
+   * Available column — which GNU df also takes from `bavail`, whoever runs it (measured
+   * on the Pi as root: 17 081 612 kB against statfs's 17 081 476 kB, while `bfree` reads
+   * 22 096 004 kB). Reaching for the more obvious-looking `bfree` here would make the
+   * floor and this field disagree by 5 GB.
+   *
+   * No dashboard reads it, like the group summary below; it answers "how close is the
+   * capture unit to its floor" from a laptop over `curl`.
+   */
+  disk: { freeBytes: number; totalBytes: number } | null;
   /** Live-vs-total signal counts per group, e.g. `{ battery: [16, 16] }`. */
   groups: Record<string, [live: number, total: number]>;
 }
@@ -72,6 +86,7 @@ export async function handleStatusEndpoint(res: ServerResponse, directory: strin
     waypointsRefused: waypointsRefused(),
     waypointEvents: waypointEventsOf(waypointLog),
     log: { ...(await measureLog(directory)), enabled: logEnabled },
+    disk: await measureDisk(directory),
     groups: summariseGroups(),
   };
 
@@ -82,6 +97,25 @@ export async function handleStatusEndpoint(res: ServerResponse, directory: strin
     "Cache-Control": "no-store",
   });
   res.end(body);
+}
+
+/**
+ * Free and total space on the filesystem holding the ride log.
+ *
+ * Null rather than throwing or guessing: /status is read while the bike is being
+ * diagnosed, and one unreadable statfs must not take the other fields with it.
+ */
+async function measureDisk(directory: string): Promise<{ freeBytes: number; totalBytes: number } | null> {
+  try {
+    const filesystem = await statfs(directory);
+    return {
+      freeBytes: filesystem.bavail * filesystem.bsize,
+      totalBytes: filesystem.blocks * filesystem.bsize,
+    };
+  } catch (error) {
+    console.warn(`status: could not statfs ${directory}: ${(error as Error).message}`);
+    return null;
+  }
 }
 
 /**
