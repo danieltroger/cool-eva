@@ -12,6 +12,15 @@ const RFKILL_DIR = "/sys/class/rfkill";
 // the 1 s the experiment used rather than anything shorter, which is untested.
 const POWER_CYCLE_GAP_MS = 1_000;
 
+// ⚠️ EVERY bluetoothctl await is bounded, because bluetoothctl's own is not. Verified in
+// bluez@0efa20cb: `src/shared/shell.c` arms a quit timer only `if (data.timeout)`, which
+// `-t` sets and nothing else does, and `client/main.c:3436-3440` does the same — so with
+// no `-t` there is no ceiling at all. Worse, `client_ready()` (main.c:3380) does not run
+// the command until org.bluez is ready, so a down or restarting bluetoothd blocks it
+// forever. That await sits in the reconnect loop: unbounded, it kills BLE for the rest of
+// the boot and the journal says nothing. Same class as #287.
+const BLUETOOTHCTL_TIMEOUT_MS = 10_000;
+
 // On this Pi image Bluetooth comes up rfkill soft-blocked with hci0 DOWN, so
 // every BLE connect fails until it's cleared. Doing it here rather than in the
 // systemd unit means it also fixes installs that predate the BLE work — the unit
@@ -51,7 +60,7 @@ async function clearBluetoothRfkillBlock(): Promise<void> {
 export async function ensureBluetoothAdapterUp(): Promise<void> {
   await clearBluetoothRfkillBlock();
   try {
-    await runCommand("bluetoothctl", ["power", "on"]);
+    await runCommand("bluetoothctl", ["power", "on"], { timeout: BLUETOOTHCTL_TIMEOUT_MS });
   } catch (error) {
     console.warn("ble: `bluetoothctl power on` failed:", (error as Error).message);
   }
@@ -73,7 +82,7 @@ export async function resetBluetoothAdapter(): Promise<void> {
 
 async function runBluetoothctl(args: string[]): Promise<void> {
   try {
-    const { stdout } = await runCommand("bluetoothctl", args);
+    const { stdout } = await runCommand("bluetoothctl", args, { timeout: BLUETOOTHCTL_TIMEOUT_MS });
     const lastLine = stdout.trim().split("\n").pop();
     console.warn(`ble: adapter reset — \`bluetoothctl ${args.join(" ")}\`: ${lastLine || "(no output)"}`);
   } catch (error) {
@@ -83,7 +92,7 @@ async function runBluetoothctl(args: string[]): Promise<void> {
 
 async function readAdapterPowered(): Promise<string> {
   try {
-    const { stdout } = await runCommand("bluetoothctl", ["show"]);
+    const { stdout } = await runCommand("bluetoothctl", ["show"], { timeout: BLUETOOTHCTL_TIMEOUT_MS });
     const powered = stdout.split("\n").find(line => line.includes("Powered:"));
     return powered ? powered.trim() : "Powered: (not reported by `bluetoothctl show`)";
   } catch (error) {

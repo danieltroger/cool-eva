@@ -151,6 +151,10 @@ export function startBleClient(options: BleClientOptions): BleClient {
       const hubAddress = options.macAddress || (await discoverHubAddress(adapter));
       device = await adapter.waitDevice(hubAddress);
       await device.connect();
+      // Here, not four awaits later at the log line: connect() returning IS the proof the
+      // adapter works, and that is what clears the power-cycle cooldown. stopDiscovery()
+      // and the GATT reads below can fail for reasons a power-cycle would not fix.
+      logAll(retryPolicy.onSessionConnected(monotonicNow()));
       // Scanning for the whole session burns power and can degrade the very link
       // we just established. Each reconnect builds a fresh createBluetooth(), so
       // the isDiscovering() check above would otherwise just observe a scan that
@@ -167,7 +171,6 @@ export function startBleClient(options: BleClientOptions): BleClient {
       const notifyCharacteristic = await service.getCharacteristic(NOTIFY_CHARACTERISTIC_UUID);
       const writeCharacteristic = await service.getCharacteristic(WRITE_CHARACTERISTIC_UUID);
       console.log(`ble: connected to ${hubAddress}, our address ${ourAddress}`);
-      logAll(retryPolicy.onSessionConnected(monotonicNow()));
 
       const reassembler = new FrameReassembler();
       const decoder = new BleTelemetryDecoder();

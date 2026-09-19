@@ -30,9 +30,10 @@ export const ADAPTER_RESET_AFTER_BUSY_FAILURES = 3;
 
 // Between two power-cycles with NO successful connect in between — i.e. a remedy that
 // did not work, being retried. A bounce that IS followed by a connect clears this, so
-// the next wedge is treated as a fresh event rather than a retry. Without that clause
-// the wedge re-forms in 35-57 s (14/14 measured) while the remedy waits ten minutes,
-// which parks the adapter wedged ~92 % of the time.
+// the next wedge is a fresh event rather than a retry of a failed remedy. That is the
+// constant's own semantics, and it needs no rate to justify: the floor spaces out
+// retries, and a bounce a connect followed did not need retrying. Without the clause a
+// second wedge would wait out the floor, and today a wedge costs the rest of the boot.
 export const ADAPTER_RESET_MIN_INTERVAL_MS = 600_000;
 
 /** Consecutive power-cycles that bought nothing before the log stops being routine. */

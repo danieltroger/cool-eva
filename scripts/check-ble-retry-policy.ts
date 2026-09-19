@@ -4,6 +4,7 @@ import {
   ADAPTER_RESET_AFTER_BUSY_FAILURES,
   ADAPTER_RESET_MIN_INTERVAL_MS,
   BleRetryPolicy,
+  ESCALATE_AFTER_RESETS,
   LOG_REPEAT_INTERVAL_MS,
   MAX_RECONNECT_DELAY_MS,
   RECONNECT_DELAY_MS,
@@ -21,9 +22,8 @@ import {
 // `Operation already in progress` lines — 14.9 % of every line it held — in 14 episodes,
 // NOT ONE of which recovered before its boot ended. Three behaviours answer that, and each
 // has a way of failing silently: a rate limiter that drops the count instead of carrying it,
-// a reset cooldown that outlives the 35-57 s in which the wedge re-forms (which parks the
-// adapter wedged ~92 % of the time), and a reset gate that fires on failures a power-cycle
-// cannot fix. §7 is the one the plan's reviewer required: the journal probe must never throw,
+// a reset cooldown that outlives the wedge it is meant to space out, and a reset gate that
+// fires on failures a power-cycle cannot fix. §7 is the one the plan's reviewer required: the journal probe must never throw,
 // because its error would replace the busy reply and disarm the gate keyed on it.
 
 const failures: string[] = [];
@@ -41,25 +41,21 @@ interface Printed {
 function driveWedge(
   durationMs: number,
   message: string
-): { printed: Printed[]; tail: Printed[]; failureCount: number; resets: number } {
+): { printed: Printed[]; tail: Printed[]; failureCount: number } {
   const policy = new BleRetryPolicy();
   const printed: Printed[] = [];
   let nowMs = 0;
   let failureCount = 0;
-  let resets = 0;
   while (nowMs <= durationMs) {
     const plan = policy.onFailure(message, nowMs);
     failureCount += 1;
     for (const line of plan.logLines) {
       printed.push({ atMs: nowMs, line });
     }
-    if (plan.resetAdapter) {
-      resets += 1;
-    }
     nowMs += plan.delayMs;
   }
   const tail = policy.flush(nowMs).map(line => ({ atMs: nowMs, line }));
-  return { printed, tail, failureCount, resets };
+  return { printed, tail, failureCount };
 }
 
 /** Failures at a fixed spacing, for the case where the window always elapses. */
@@ -97,6 +93,22 @@ if (JSON.stringify(actualDelays) !== JSON.stringify(expectedDelays)) {
 }
 if (MAX_RECONNECT_DELAY_MS <= RECONNECT_DELAY_MS) {
   failures.push("§1 MAX_RECONNECT_DELAY_MS must exceed RECONNECT_DELAY_MS or there is no backoff at all");
+}
+// ⚠️ Pinned as literals for the same reason as the threshold in §5: every assertion below
+// that scales with one of these is true for ANY value of it. A diff reviewer's mutants
+// widened the log window to 5 min and the cooldown to an hour, and both survived a version
+// of this file that only ever compared the policy against its own constants.
+const PINNED: [string, number, number][] = [
+  ["RECONNECT_DELAY_MS", RECONNECT_DELAY_MS, 5_000],
+  ["MAX_RECONNECT_DELAY_MS", MAX_RECONNECT_DELAY_MS, 30_000],
+  ["LOG_REPEAT_INTERVAL_MS", LOG_REPEAT_INTERVAL_MS, 60_000],
+  ["ADAPTER_RESET_MIN_INTERVAL_MS", ADAPTER_RESET_MIN_INTERVAL_MS, 600_000],
+  ["ESCALATE_AFTER_RESETS", ESCALATE_AFTER_RESETS, 3],
+];
+for (const [name, actual, expected] of PINNED) {
+  if (actual !== expected) {
+    failures.push(`§1 ${name} is ${actual}, not ${expected} — docs/ble-adapter-wedge.md argues each of these`);
+  }
 }
 
 // --- §2 a small, hand-checkable rate-limit case ------------------------------------
@@ -222,6 +234,30 @@ if (clearedResets !== 6) {
 if (ADAPTER_RESET_MIN_INTERVAL_MS <= LOG_REPEAT_INTERVAL_MS) {
   failures.push("§6 the cooldown must outlast the log window or a failed remedy is retried every minute");
 }
+// After a bounce the busy run starts again from zero, so the SECOND bounce needs three
+// fresh busy replies and not just one once the cooldown expires. Without this, dropping
+// `consecutiveBusyFailures = 0` from the reset block changed nothing any assertion saw.
+const policy6c = new BleRetryPolicy();
+const bounceAt: number[] = [];
+const schedule = [
+  0,
+  1,
+  2,
+  ADAPTER_RESET_MIN_INTERVAL_MS + 1,
+  ADAPTER_RESET_MIN_INTERVAL_MS + 2,
+  ADAPTER_RESET_MIN_INTERVAL_MS + 3,
+];
+for (const [index, at] of schedule.entries()) {
+  if (policy6c.onFailure(ADAPTER_BUSY_MESSAGE, at).resetAdapter) {
+    bounceAt.push(index + 1);
+  }
+}
+if (JSON.stringify(bounceAt) !== JSON.stringify([3, 6])) {
+  failures.push(
+    `§6 the second bounce needs three fresh busy replies after the cooldown, not one: ` +
+      `expected bounces on busy replies 3 and 6, got ${JSON.stringify(bounceAt)}`
+  );
+}
 
 // --- §7 the journal probe must never throw, and never disarm the gate -------------
 const thrower = async (): Promise<never> => {
@@ -272,6 +308,35 @@ if (policy8.flush(3_000).length !== 1) {
   failures.push("§8 stop() must emit the counted-but-unprinted tail — 13 of 14 episodes ended at a reboot");
 }
 
+// --- §10 the escalation, and the flush on connect ----------------------------------
+// Three bounces that bought nothing must stop reading as routine, and a connect must not
+// swallow the tail of the window it ends. Mutants that made ESCALATE_AFTER_RESETS
+// unreachable and that removed the flush from onSessionConnected both survived without this.
+const policy10 = new BleRetryPolicy();
+const escalations: string[] = [];
+for (let round = 0; round < 4; round += 1) {
+  for (let i = 0; i < 3; i += 1) {
+    const at = round * (ADAPTER_RESET_MIN_INTERVAL_MS + 1_000) + i;
+    for (const line of policy10.onFailure(ADAPTER_BUSY_MESSAGE, at).logLines) {
+      if (line.includes("Only a reboot")) {
+        escalations.push(line);
+      }
+    }
+  }
+}
+if (escalations.length !== 4 - ESCALATE_AFTER_RESETS + 1) {
+  failures.push(
+    `§10 four unrelieved bounces should escalate on the 3rd and 4th, got ${escalations.length} escalation line(s)`
+  );
+}
+const policy10b = new BleRetryPolicy();
+policy10b.onFailure(ADAPTER_BUSY_MESSAGE, 0);
+policy10b.onFailure(ADAPTER_BUSY_MESSAGE, 1_000);
+const onConnect = policy10b.onSessionConnected(2_000);
+if (!onConnect.some(line => line.includes("more in the last"))) {
+  failures.push(`§10 a connect must flush the window it ends, got ${JSON.stringify(onConnect)}`);
+}
+
 // --- §9 the caller passes the MONOTONIC clock -------------------------------------
 // ⚠️ Not visible to anything above: the policy takes nowMs, so a synthetic clock passes
 // either way. This Pi steps its wall clock from GPS (src/monotonic.ts), and a backwards
@@ -283,6 +348,10 @@ const WIRING = [
   {
     needle: "retryPolicy.onFailure((error as Error).message, monotonicNow(), hubObjectNote)",
     why: "the backoff and the cooldown are durations",
+  },
+  {
+    needle: "logAll(plan.logLines)",
+    why: "without it every line this whole feature computes is discarded, silently, with the suite green",
   },
   {
     needle: "retryPolicy.onSessionConnected(monotonicNow())",

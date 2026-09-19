@@ -118,8 +118,8 @@ const CHECKS: SelfCheck[] = [
       "\u2192 30 s, that an 11 h 42 min episode prints at most one line a minute AND that the suppressed failures " +
       "survive as counts summing back to the total, that a changed message flushes the old count and prints at " +
       "once, that the power-cycle fires only on the busy reply and never on the three other failures that reach " +
-      "the same catch, that its cooldown governs FAILED remedies only \u2014 a connect clears it, because the " +
-      "wedge re-forms in 35-57 s and a ten-minute floor would park the adapter wedged ~92 % of the time \u2014 " +
+      "the same catch, that its cooldown governs FAILED remedies only \u2014 a connect clears it, since a " +
+      "bounce a connect followed did not need retrying, which is what that floor is for \u2014 " +
       "that stop() emits the final partial window, and that the journal probe never throws, since its error would " +
       "replace the busy reply the whole gate is keyed on. Plus the one thing a synthetic clock cannot see: that " +
       "client.ts passes monotonicNow() and not Date.now()",
