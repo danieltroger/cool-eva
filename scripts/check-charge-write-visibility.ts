@@ -125,6 +125,22 @@ const viewSources = new Map(
     )
   )
 );
+// ⚠️ The SOC limit's VALUE is a read-only signal and must not sit behind the writes gate: a Pi with
+// SERVICE_WRITE_ENABLED unset still receives `charge_soc_limit_pct` whenever the rider sets the
+// limit on the bike's own menu, and gating the whole tile made the one read-only thing that feature
+// adds invisible on every ordinary phone. Asserted on the SOURCE because the preview harness pins
+// `enabled: true` (scripts/preview-harness-bike.js), so no screenshot can reach that state.
+const socLimitSource = viewSources.get("charge-soc-limit.js") ?? "";
+if (!socLimitSource.includes("if (!known && !writesEnabled())")) {
+  failures.push(
+    "§3 charge-soc-limit.js no longer hides its tile only when BOTH the value is unknown AND writes " +
+      "are off — a writes-disabled phone would stop showing a limit it is still receiving"
+  );
+}
+if (!socLimitSource.includes("writesEnabled() ? SetRow() : div()")) {
+  failures.push("§3 charge-soc-limit.js no longer gates only its BUTTONS on writesEnabled()");
+}
+
 for (const [view, source] of viewSources) {
   if (source.includes("liveChargeType")) {
     failures.push(
