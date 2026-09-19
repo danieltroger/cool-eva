@@ -26,3 +26,10 @@ obd-garage
 # in this repo catches, because nothing here executes the bundle.
 scripts/service-preview-template.html
 scripts/app-preview-template.html
+# The laptop-side map viewer formats itself, with its own Prettier and
+# prettier-plugin-svelte in map/node_modules. Without this entry the root run
+# picks up map/prettier.config.js, fails to resolve the plugin it names, and
+# errors out — and even with the plugin it would silently skip every .svelte
+# file, since Prettier 3.8.4 drops a file it can infer no parser for without a
+# warning. map/'s own `npm run lint` is what checks that tree; map.yml runs it.
+map

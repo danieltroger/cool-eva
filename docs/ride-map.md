@@ -159,8 +159,43 @@ shadcn-svelte's Tailwind v4 support landed in May 2025 (`docs/content/changelog/
 
 ## Still unverified, and what each would cost
 
-- **`better-sqlite3` inside a SvelteKit server route.** It is a native module, so Vite must externalise it for SSR (`ssr.external`) rather than try to bundle it. ⚠️ This is the one open item that can **invalidate** the data path rather than merely slow it, and the materialised tables that could have sidestepped it are deleted — so it is the first thing phase 1 proves, before anything is built on top of it.
+- ~~**`better-sqlite3` inside a SvelteKit server route.**~~ **Settled 2026-09-19 22:14 by building it, which was the point.** See [Settled by building](#settled-by-building) below.
 - **Speed-banding a split `MultiLineString`**, either as per-feature `line-color` runs or one gradient layer per ride. Benched before it is built.
 - **The 1 000 000-feature ceiling** is an observed hang, not a measured limit.
 - **`map/node_modules` size**, unmeasured because scaffolding was out of scope while this was a plan.
 - **Neither existing gate covers this viewer.** `scripts/check-route-map-sql.ts:117` builds its fixture with `new Database(":memory:")`, so it cannot back a screenshot; a file-backed synthetic fixture is phase-1 work. And `scripts/check-phone-width.ts:7` imports `TABS` from `public/lib/router.js`, so it measures the Pi dashboard's tabs and not `map/` — the viewer needs its own width gate.
+
+## Settled by building
+
+### `better-sqlite3` in a SvelteKit server route needs no configuration
+
+The open item that could have invalidated the whole data path. A route opening `rides.db` read-only and counting two tables, against `@sveltejs/kit` 2.63 / `vite` 8.3.0 / `@sveltejs/vite-plugin-svelte` 7.1.2 under `vite dev`:
+
+```json
+{
+  "readings": 68040175,
+  "trackPoints": 249151,
+  "identity": { "inode": 147212349, "sizeBytes": 4023939072 },
+  "identityUnchanged": true,
+  "openedMs": 11.2,
+  "queriedMs": 32058.9
+}
+```
+
+⚠️ **`vite.config.ts` contains no `ssr.external`, no `optimizeDeps`, nothing** — the scaffold as `sv create` emits it already externalises the native module for SSR, because a bundled one could not have loaded at all. The plan's worry was unfounded and the cheapest way to find that out was to run it. If a future Vite bundles it instead, the symptom will be a load error at first request, not a silent wrong answer.
+
+`openedMs` 11.2 cold and **0.3 ms** warm, against 2–6 ms measured through the CLI — the 4 GB open remains a non-issue.
+
+⚠️ `queriedMs` is 32 059 ms cold and 24 035 ms warm, and that is **`SELECT COUNT(*) FROM reading` over 68 040 175 rows**, not anything the viewer will run: it walks the whole 1.39 GB index. It is quoted only so nobody reads the probe's number as the endpoint's. The real track read is 21–64 ms.
+
+### Vite 8 binds to `[::1]` only
+
+`vite dev` prints `Local: http://localhost:5251/` and listens on **IPv6 loopback alone** — `lsof` shows `TCP [::1]:5251 (LISTEN)` and a request to `127.0.0.1` is refused outright, with the server logging nothing at all. Anything automated that reaches for `127.0.0.1` will see a connection refused against a server that is running and healthy, so the check script and any browser harness must use `localhost` or `[::1]`, or the dev server must be given `--host 127.0.0.1`.
+
+### `map/` costs 103 MB of `node_modules`
+
+Measured after `sv create --template minimal --types ts --add prettier tailwindcss sveltekit-adapter`, plus `better-sqlite3`, whose native build produced `build/Release/better_sqlite3.node` as expected on this machine.
+
+### The root Prettier run really does collide with `map/`
+
+Predicted from the parser-less-`.svelte` measurement, then observed for a different and worse reason: `npx prettier --write map/src/...` from the repo root picks up `map/prettier.config.js`, which names `prettier-plugin-svelte`, and **fails outright** — `Cannot find package 'prettier-plugin-svelte' imported from …/noop.js` — because the plugin lives in `map/node_modules` and the root run resolves from the root. So `map` in the root `.prettierignore` is not a tidiness preference; without it the root `format:check` job is red. `map/` carries its own Prettier and its own `npm run lint`.
