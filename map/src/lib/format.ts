@@ -22,14 +22,6 @@ export function formatDateTime(epochMs: number): string {
 	});
 }
 
-export function formatDate(epochMs: number): string {
-	return new Date(epochMs).toLocaleDateString(undefined, {
-		year: 'numeric',
-		month: 'short',
-		day: '2-digit'
-	});
-}
-
 /**
  * How stale a charge stop's inherited position is, as a class rather than a number.
  *

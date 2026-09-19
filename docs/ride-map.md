@@ -250,3 +250,27 @@ The fix is `boundsOfRange` in `map/src/lib/track.ts` — bounds computed from th
 `buildTrackGeoJson` broke the line where `breakAfter.has(previous.ts)` — an exact match against a point's timestamp. Charge starts come from `mains_a` / `dc_a` / `fast_dc_target_a` rows and track points from per-second GPS, so those two clocks never coincide: **0 of 50** charge starts equalled a `route_track` timestamp, and **48 of 50** fall strictly between two points. The charge break never fired once on real data; the line split on the 30-minute gap rule alone.
 
 ⚠️ **The unit check passed because it handed the builder a break at a point's `ts`** — the one case the broken code could catch. A test written against the shape the code expects, rather than the shape the data has, is not a test. The predicate is now "strictly after the previous point, at or before this one", and the check exercises a break between points, on a point, before the first, after the last, and two in one gap. Mutation-tested: restoring the exact-match version turns it red. On the real archive the feature count went 17 627 → **17 654** once it started working.
+
+## What the diff review found
+
+### Building is not running, and `map.yml` only built
+
+`defaultRideLogPath()` walked four directories up from `import.meta.url`. That is the repo root under `vite dev` — and `map/` in the adapter-node output, because the bundler emits that code to `build/server/chunks/chunks/`, one level deeper. Measured: the built server answered `/api/summary` with **500 `SqliteError: unable to open database file`** while dev was fine and CI was green, because `map.yml` built the thing and never started it.
+
+The path now comes from `process.cwd()`, and a missing file raises a sentence that names the path and `RIDES_DB` rather than better-sqlite3's own message. `map.yml` starts the built server and asserts it looks for the ride log one level above `map/` — no database needed, the error names the path. Mutation-tested: restoring the `import.meta.url` version turns that step red.
+
+### The check armed the track builder and left the SQL undefended
+
+31 clauses mutation-tested by the reviewer; **9 survived, every one in `queries.ts`** — including `IS`→`=` on the session, whose own comment records that `=` marks 0 rows where `IS` marks 57. And `check("in time order")` could not fail at all: `route_track.ts` is the rowid, so dropping `ORDER BY ts` changes nothing observable.
+
+Three sections now cover the clauses that decide something, each with its own planted database: the inherited-fix gate, the drop of fixes logged while plugged in, and the waypoint witness skew. The order assertion is now on the SQL text, with a comment saying why behaviour cannot distinguish it.
+
+⚠️ **The `IS`→`=` assertion survived its first mutation** — the planted corrupt row was not the newest before plug-in, so the gate being off still returned a good value and the assertion agreed with both the working and the broken query. Making an assertion _about_ a clause is not the same as making one that fails without it.
+
+### `TRACK_SQL` had no 2060 guard, and the guard loop skipped it
+
+The 🚨 claim that `ts < 2000000000000` guarded every query was false as written: the track query had no such clause, and the protection lived in `scripts/route-track.ts` asserted by a different check. Harmless today — 0 of 249 151 rows are past the bound — and now true, with the track query in the loop.
+
+### The line still drew what the ride list threw away
+
+`RIDES_SQL` drops fixes logged while plugged in; the track did not. **41 of 50 sessions** contain some, **17 044 points** of stationary scatter across the archive, drawn as if ridden. The builder now takes charge **intervals** rather than instants, drops the points inside them, and breaks there. Measured after: 266 689 → **249 483** vertices, 17 206 points gone.

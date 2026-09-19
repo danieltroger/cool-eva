@@ -178,8 +178,18 @@ SELECT ts, seq, provenance, lat, lon,
        END AS verdict
 FROM witnessed ORDER BY ts`;
 
-/** The whole materialised track, in time order. */
-export const TRACK_SQL = `SELECT ts, lat, lon, speed FROM route_track ORDER BY ts`;
+/**
+ * The whole materialised track, in time order.
+ *
+ * ⚠️ The guard is here too, and it is NOT redundant. `scripts/route-track.ts` already excludes
+ * the 2060 rows when it builds the table, so today this changes nothing (0 of 249 151 rows are
+ * past the bound) — but an earlier draft of this file claimed `ts < 2000000000000` guarded
+ * every query when this one did not have it at all, and the protection sat in a different
+ * script asserted by a different check. Stating it here makes the claim true and costs a
+ * comparison against a rowid range scan.
+ */
+export const TRACK_SQL = `SELECT ts, lat, lon, speed FROM route_track
+WHERE ts < 2000000000000 ORDER BY ts`;
 
 /**
  * The newest row of `key` at or before a session start that nothing within ±2 s contradicts.

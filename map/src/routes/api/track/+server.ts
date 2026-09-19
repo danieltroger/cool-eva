@@ -1,7 +1,7 @@
 import { openRideLog } from '$lib/server/database';
 import { TRACK_SQL } from '$lib/server/queries';
 import { loadSnapshot } from '$lib/server/snapshot';
-import { buildTrackGeoJson, type TrackBreak, type TrackPoint } from '$lib/track';
+import { buildTrackGeoJson, type ChargeInterval, type TrackPoint } from '$lib/track';
 import type { RequestHandler } from './$types';
 
 // The whole track, once, as plain uncompressed GeoJSON.
@@ -11,6 +11,9 @@ import type { RequestHandler } from './$types';
 // answer the day this leaves loopback; it is not the right answer today.
 
 export const GET: RequestHandler = async () => {
+	// One open, not two: `loadSnapshot` opens the database itself, so reading the track first
+	// and asking for the snapshot afterwards used to open the same 4 GB file twice per request.
+	const snapshot = await loadSnapshot();
 	const open = await openRideLog();
 	let points: TrackPoint[];
 	try {
@@ -18,8 +21,7 @@ export const GET: RequestHandler = async () => {
 	} finally {
 		open.database.close();
 	}
-	const snapshot = await loadSnapshot();
-	const geojson = buildTrackGeoJson(points, breaksFromCharges(snapshot.charges));
+	const geojson = buildTrackGeoJson(points, chargeIntervals(snapshot.charges));
 
 	// ⚠️ The page fetches this once and keeps the parsed FeatureCollection, rather than handing
 	// MapLibre the URL. It costs the same request and about the same time (1 053 vs 1 115 ms
@@ -30,7 +32,7 @@ export const GET: RequestHandler = async () => {
 	});
 };
 
-/** A charge session ends a ride, so the line breaks where the session begins. */
-function breaksFromCharges(charges: { startTs: number }[]): TrackBreak[] {
-	return charges.map((charge) => ({ atTs: charge.startTs, reason: 'charge' as const }));
+/** A charge session ends a ride, and the fixes logged inside it are not riding. */
+function chargeIntervals(charges: { startTs: number; endTs: number }[]): ChargeInterval[] {
+	return charges.map((charge) => ({ fromTs: charge.startTs, toTs: charge.endTs }));
 }

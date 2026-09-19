@@ -18,17 +18,19 @@ export interface TrackPoint {
 }
 
 /**
- * A break in the drawn line, and why it is there.
+ * A charge session, as the track sees it: an interval, not an instant.
  *
- * ⚠️ `atTs` is an instant, NOT a point's timestamp, and that difference is the whole bug this
- * replaced. The first version matched against a point's `ts` exactly; charge starts come from
- * `mains_a`/`dc_a`/`fast_dc_target_a` rows and track points from per-second GPS, so on the real
- * archive **0 of 50** charge starts equalled a track timestamp and the charge break never fired
- * once. **48 of 50** fall strictly between two points, which is what is matched now.
+ * ⚠️ Two bugs live here and both were "nothing happens". The first version matched an exact
+ * millisecond against a point's `ts`; charge starts come from `mains_a`/`dc_a`/
+ * `fast_dc_target_a` rows and track points from per-second GPS, so **0 of 50** charge starts
+ * equalled a track timestamp and the break never fired. The second only knew about `startTs`,
+ * so the fixes the bike logs WHILE PLUGGED IN were still drawn — **41 of 50** sessions contain
+ * some, **17 044 points** of stationary scatter across the archive, which `RIDES_SQL` drops
+ * from its ride detection for exactly that reason. An interval fixes both.
  */
-export interface TrackBreak {
-	atTs: number;
-	reason: 'gap' | 'charge';
+export interface ChargeInterval {
+	fromTs: number;
+	toTs: number;
 }
 
 export interface TrackGeoJson {
@@ -52,28 +54,29 @@ export interface TrackFeature {
  * break but the only way to colour a line by speed, since `line-color` is per feature and
  * `line-gradient` is a per-layer ramp over `line-progress` that cannot read the data.
  */
-export function buildTrackGeoJson(points: TrackPoint[], breaks: TrackBreak[]): TrackGeoJson {
+export function buildTrackGeoJson(points: TrackPoint[], charges: ChargeInterval[]): TrackGeoJson {
 	const features: TrackFeature[] = [];
-	if (points.length === 0) {
+	const ordered = [...charges].sort((left, right) => left.fromTs - right.fromTs);
+	// A stationary hour at a charger is not riding. Dropping these points is the same rule
+	// RIDES_SQL applies to ride detection, applied to what gets drawn.
+	const ridden = points.filter((point) => !insideAny(ordered, point.ts));
+	if (ridden.length === 0) {
 		return { type: 'FeatureCollection', features };
 	}
-	const breakTimes = breaks.map((entry) => entry.atTs).sort((left, right) => left - right);
-	let nextBreak = 0;
 
-	let coordinates: [number, number][] = [[points[0].lon, points[0].lat]];
-	let band = bandOf(points[0].speed);
-	let fromTs = points[0].ts;
+	let coordinates: [number, number][] = [[ridden[0].lon, ridden[0].lat]];
+	let band = bandOf(ridden[0].speed);
+	let fromTs = ridden[0].ts;
 
-	for (let index = 1; index < points.length; index += 1) {
-		const point = points[index];
-		const previous = points[index - 1];
-		// A break falls BETWEEN two points: strictly after the previous one, at or before this
-		// one. Both arrays are in time order, so this walks rather than searching.
-		while (nextBreak < breakTimes.length && breakTimes[nextBreak] <= previous.ts) {
-			nextBreak += 1;
-		}
-		const brokenHere = nextBreak < breakTimes.length && breakTimes[nextBreak] <= point.ts;
-		const hardBreak = brokenHere || point.ts - previous.ts > GAP_MS;
+	for (let index = 1; index < ridden.length; index += 1) {
+		const point = ridden[index];
+		const previous = ridden[index - 1];
+		// A session between two surviving points breaks the line even when the hole it left is
+		// shorter than GAP_MS — a 21-minute stop leaves no 30-minute gap for the gap rule.
+		const charged = ordered.some(
+			(charge) => charge.fromTs > previous.ts && charge.fromTs <= point.ts
+		);
+		const hardBreak = charged || point.ts - previous.ts >= GAP_MS;
 		const nextBand = bandOf(point.speed);
 
 		if (hardBreak) {
@@ -94,7 +97,7 @@ export function buildTrackGeoJson(points: TrackPoint[], breaks: TrackBreak[]): T
 			fromTs = point.ts;
 		}
 	}
-	features.push(featureOf(coordinates, band, fromTs, points[points.length - 1].ts));
+	features.push(featureOf(coordinates, band, fromTs, ridden[ridden.length - 1].ts));
 	// A single point cannot be a LineString; MapLibre drops such a feature silently, so it is
 	// dropped here where the count is still observable.
 	return {
@@ -103,12 +106,27 @@ export function buildTrackGeoJson(points: TrackPoint[], breaks: TrackBreak[]): T
 	};
 }
 
+function insideAny(charges: ChargeInterval[], ts: number): boolean {
+	for (const charge of charges) {
+		if (ts >= charge.fromTs && ts <= charge.toTs) {
+			return true;
+		}
+	}
+	return false;
+}
+
 /**
  * Longer than this between two fixes and the line breaks.
  *
- * 30 minutes is the same threshold `grafana/dashboards/route-map.json` splits rides on, kept
- * deliberately equal: two different answers to "is this still the same ride" on one screen is
- * worse than either answer.
+ * 30 minutes is the same threshold the ride and charge-session SQL uses, kept deliberately
+ * equal: two different answers to "is this still the same ride" on one screen is worse than
+ * either answer.
+ *
+ * ⚠️ The comparison matches too. The SQL splits on `ts - LAG(ts) >= 1800000`, so a hole of
+ * EXACTLY 30 minutes is a split there; this used to be `> GAP_MS`, which kept it joined, under
+ * a comment claiming the two agreed. One sample in the whole archive could land on it, and
+ * finding out why the map and the ride list disagreed about a single ride would have cost far
+ * more than the `=` does.
  */
 export const GAP_MS = 30 * 60 * 1000;
 

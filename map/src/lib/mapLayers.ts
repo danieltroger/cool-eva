@@ -1,7 +1,7 @@
-import { BAND_COLOURS, NO_SPEED_COLOUR } from './format';
+import { BAND_COLOURS, fixAgeClass, FIX_AGE_COLOURS, NO_SPEED_COLOUR } from './format';
 import type { FeatureCollection, Point } from 'geojson';
 import type { TrackGeoJson } from './track';
-import type { Map as MapLibreMap, StyleSpecification } from 'maplibre-gl';
+import type { Map as MapLibreMap } from 'maplibre-gl';
 import type { ChargeSession, Waypoint } from './server/snapshot';
 
 // The MapLibre style and the three layers, apart from the component so the component is about
@@ -26,15 +26,6 @@ export function basemapStyleUrl(dark: boolean): string {
 	return dark
 		? 'https://tiles.openfreemap.org/styles/dark'
 		: 'https://tiles.openfreemap.org/styles/positron';
-}
-
-/** A style with no basemap at all, for the offline case and for deterministic screenshots. */
-export function blankStyle(background: string): StyleSpecification {
-	return {
-		version: 8,
-		sources: {},
-		layers: [{ id: 'background', type: 'background', paint: { 'background-color': background } }]
-	};
 }
 
 export function addTrackLayer(map: MapLibreMap, track: TrackGeoJson): void {
@@ -141,15 +132,8 @@ export function waypointGeoJson(waypoints: Waypoint[]): FeatureCollection {
 }
 
 function chargeColour(charge: ChargeSession): string {
-	if (charge.fixTs === null) {
-		return '#8a8f98';
-	}
-	const minutes = (charge.startTs - charge.fixTs) / 60000;
-	if (minutes < 30) {
-		return '#2fae63';
-	}
-	if (minutes < 360) {
-		return '#eab839';
-	}
-	return '#e0523f';
+	// ⚠️ The SAME function the list dots use. This was a second copy of the 30-minute and
+	// 6-hour thresholds, so a map pin and its row could have disagreed about how stale one
+	// position was, silently and in two colours.
+	return FIX_AGE_COLOURS[fixAgeClass(charge.startTs, charge.fixTs)];
 }

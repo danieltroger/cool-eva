@@ -12,8 +12,9 @@
 		waypointGeoJson
 	} from '$lib/mapLayers';
 	import { BAND_EDGES_KMH, boundsOfRange, type TrackGeoJson } from '$lib/track';
-	import { bandLabel, BAND_COLOURS, formatDate, formatDateTime, formatDuration } from '$lib/format';
+	import { bandLabel, BAND_COLOURS, NO_SPEED_COLOUR } from '$lib/format';
 	import type { ChargeSession, Ride, Waypoint } from '$lib/server/snapshot';
+	import type { RideSummary } from '$lib/wire';
 	import RideList from '$lib/RideList.svelte';
 
 	const RANGES = [
@@ -26,6 +27,7 @@
 	let container: HTMLDivElement;
 	let map: MapLibreMap | null = null;
 	const resizeObservers: ResizeObserver[] = [];
+	const teardown: (() => void)[] = [];
 	let loadError = $state<string | null>(null);
 	let loading = $state<string | null>('Loading rides…');
 	let track: TrackGeoJson | null = null;
@@ -56,6 +58,9 @@
 			for (const observer of resizeObservers) {
 				observer.disconnect();
 			}
+			for (const undo of teardown) {
+				undo();
+			}
 			map?.remove();
 		};
 	});
@@ -70,7 +75,7 @@
 			if (!summaryResponse.ok) {
 				throw new Error(`/api/summary returned ${summaryResponse.status}`);
 			}
-			const summary = await summaryResponse.json();
+			const summary = (await summaryResponse.json()) as RideSummary;
 			rides = summary.rides;
 			charges = summary.charges;
 			waypoints = summary.waypoints;
@@ -136,9 +141,11 @@
 			applyRange();
 		});
 		map.once('idle', () => fitToData());
-		darkMode.addEventListener('change', (event) => {
+		const onThemeChange = (event: MediaQueryListEvent) => {
 			map?.setStyle(basemapStyleUrl(event.matches));
-		});
+		};
+		darkMode.addEventListener('change', onThemeChange);
+		teardown.push(() => darkMode.removeEventListener('change', onThemeChange));
 	}
 
 	/**
@@ -213,9 +220,8 @@
 <div class="flex h-screen w-screen flex-col-reverse md:flex-row">
 	<aside
 		class="flex shrink-0 flex-col overflow-hidden border-t md:w-96 md:border-t-0 md:border-r"
-		style="background: var(--surface-raised); border-color: var(--border); {panelOpen
-			? 'height: 62vh;'
-			: ''}"
+		style="background: var(--surface-raised); border-color: var(--border);"
+		class:max-md:h-[62vh]={panelOpen}
 		class:max-md:h-13={!panelOpen}
 	>
 		<header class="flex items-center gap-2 px-3 py-2" style="border-color: var(--border)">
@@ -265,11 +271,13 @@
 					{bandLabel(band, BAND_EDGES_KMH)}
 				</span>
 			{/each}
+			<!-- Band -1 is drawn too, in grey: an out-of-range speed becomes NULL upstream rather
+			     than a clamped value, and a legend that omits it leaves grey track unexplained. -->
+			<span class="flex items-center gap-1">
+				<span class="inline-block h-2 w-4 rounded" style="background: {NO_SPEED_COLOUR}"></span>
+				{bandLabel(-1, BAND_EDGES_KMH)}
+			</span>
 		</div>
-
-		{#if loading !== null}
-			<p class="px-3 py-2 text-xs" style="color: var(--text-dim)">{loading}</p>
-		{/if}
 
 		{#if loadError !== null}
 			<p class="px-3 py-2 text-sm" style="color: #e0523f">
@@ -291,5 +299,17 @@
 	     collapses to height 0. Measured at phone width: the container was 0 px tall inside a
 	     792 px parent and the canvas sat at MapLibre's 400x300 fallback, leaving two thirds of
 	     the map blank. Sizing it as a plain flex child has nothing to override. -->
-	<div bind:this={container} class="min-h-0 flex-1"></div>
+	<div class="relative min-h-0 flex-1">
+		<div bind:this={container} class="h-full w-full"></div>
+		{#if loading !== null}
+			<!-- Over the map, not in the sidebar: on a phone the panel is collapsed to its header
+			     and a message inside it would sit below the fold for the whole 23 s. -->
+			<p
+				class="pointer-events-none absolute top-3 left-1/2 z-10 -translate-x-1/2 rounded px-3 py-1.5 text-xs shadow"
+				style="background: var(--surface-raised); color: var(--text-dim)"
+			>
+				{loading}
+			</p>
+		{/if}
+	</div>
 </div>

@@ -1,7 +1,6 @@
 import Database from 'better-sqlite3';
-import { stat } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { access, stat } from 'node:fs/promises';
+import { resolve } from 'node:path';
 
 // Read-only access to the ride log. Everything this viewer draws comes from here and nothing
 // ever writes to it: the file is opened `readonly`, and `query_only` makes that a property of
@@ -47,6 +46,14 @@ export interface FileIdentity {
  */
 export async function openRideLog(explicitPath?: string): Promise<OpenRideLog> {
 	const path = explicitPath ?? defaultRideLogPath();
+	if (!(await pathExists(path))) {
+		// better-sqlite3's own message is `unable to open database file`, which names neither the
+		// path it tried nor the way to fix it.
+		throw new Error(
+			`no ride log at ${path} — run this from map/ with rides.db at the repo root, ` +
+				`or point RIDES_DB at one (RIDES_DB=/path/to/rides.db npm run dev)`
+		);
+	}
 	const database = new Database(path, { readonly: true, fileMustExist: true });
 	database.pragma('query_only = 1');
 	return { database, path, identity: await identityOf(path) };
@@ -68,14 +75,37 @@ export async function identityOf(path: string): Promise<FileIdentity> {
 }
 
 /**
- * `rides.db` beside the repo root, which is where README.md §Grafana and the Docker datasource
- * both expect it. `RIDES_DB` overrides it, which is how this runs against a copy — or from a
- * git worktree, where the real archive is over in the main checkout.
+ * `rides.db` one level above the working directory — the repo root, since this package is run
+ * from `map/`. `RIDES_DB` overrides it, which is how it runs against a copy, a fixture, or a
+ * git worktree where the real archive lives in the main checkout.
+ *
+ * ⚠️ DERIVED FROM `process.cwd()`, NOT FROM `import.meta.url`, and that is the whole point. The
+ * first version walked four directories up from this module, which is the repo root under
+ * `vite dev` — and `map/` in the adapter-node build, because the bundler emits this code to
+ * `build/server/chunks/chunks/`, one level deeper. Measured: the built server answered
+ * `/api/summary` with 500 and `SqliteError: unable to open database file` while dev was fine.
+ * A path that depends on how the bundler happened to nest its output is not a path.
  */
 export function defaultRideLogPath(): string {
 	const fromEnvironment = process.env.RIDES_DB;
 	if (fromEnvironment !== undefined && fromEnvironment !== '') {
 		return resolve(fromEnvironment);
 	}
-	return resolve(dirname(fileURLToPath(import.meta.url)), '../../../..', 'rides.db');
+	return resolve(process.cwd(), '..', 'rides.db');
+}
+
+async function pathExists(path: string): Promise<boolean> {
+	try {
+		await access(path);
+		return true;
+	} catch (error) {
+		// ENOENT is the expected answer here and says nothing worth logging; anything else —
+		// a permission problem, a broken symlink — is worth saying out loud before we report
+		// the file as simply missing.
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code !== 'ENOENT') {
+			console.warn(`could not stat ${path}: ${(error as Error).message}`);
+		}
+		return false;
+	}
 }
