@@ -5,7 +5,8 @@ import type { RawChannel } from "socketcan";
 import { record, recordArrival } from "../src/can/signals.ts";
 import { monotonicNow } from "../src/monotonic.ts";
 import { performChargeSocLimit, performChargeSocLimitRead } from "../src/vcu/charge-soc-limit.ts";
-import { MAX_SOC_LIMIT_PCT } from "../src/can/charge-soc-command.ts";
+import { MAX_SOC_LIMIT_PCT } from "../src/can/charge-soc-limit.ts";
+import { serviceActionPolicy } from "../src/vcu/write-runner.ts";
 import { MAX_PCT } from "../public/views/charge-soc-limit.js";
 
 // The SOC charge-limit ACTIONS, on a laptop, against a stand-in bike — the half
@@ -54,19 +55,26 @@ if (failures.length > 0) {
 console.log(
   "\n✓ the read-back accepts only a reply that arrived AFTER its own request — the bike's answer to the " +
     "write does not satisfy it — a matching reply reads `written`, a different one `read-back-mismatch`, " +
-    "no reply at all `unverified` rather than a false claim that nothing changed, both actions refuse a " +
-    "bike that is not awake without transmitting, and the dashboard's percentage ceiling equals the Pi's"
+    "no reply at all `unverified` rather than a false claim that nothing changed, both actions are " +
+    "protected by the bike-state gate rather than by a private liveness read, and the dashboard's " +
+    "percentage ceiling equals the Pi's"
 );
 
 async function runSections(): Promise<void> {
-  console.log("\n1. a bike that is not awake");
-  staleEverything();
-  const asleep = makeChannel({ readAnswers: [], writeEcho: null });
-  const refusedWrite = await performChargeSocLimit({ directory }, { percent: 90 }, asleep.channel);
-  const refusedRead = await performChargeSocLimitRead({ directory }, asleep.channel);
-  check("a write is refused when nothing has arrived on the awake signal", !refusedWrite.ok);
-  check("…and a read too", !refusedRead.ok);
-  check("…and NOTHING was transmitted for either", asleep.sent.length === 0);
+  console.log("\n1. ⚠️  this module has NO liveness check of its own, and must not grow one");
+  // It used to: a private read of `fast_dc_limit_max_a` at 5 s. Both actions take the bike-state
+  // gate, which `checkPreconditions` runs first over seven broadcasts fresh within 1 s, fail-closed
+  // — so the private one could only ever refuse something the gate had already refused, or refuse
+  // FALSELY when that one signal went quiet and the gate's did not. It is gone; this is the line
+  // that says why it may stay gone. Flip either policy to `false` and this goes red, which is the
+  // moment a liveness check would be needed again. The per-scenario refusals live where the bytes
+  // are, in scripts/check-service-gate-charging.ts §3.
+  for (const kind of ["charge-soc-limit", "charge-soc-limit-read"] as const) {
+    check(
+      `${kind} is protected by the bike-state gate, not by a private read`,
+      serviceActionPolicy(kind).bikeStateGateApplies
+    );
+  }
 
   console.log("\n2. ⚠️  the mark: the bike's answer to the WRITE must not satisfy the READ-back");
   staleEverything();
@@ -75,8 +83,8 @@ async function runSections(): Promise<void> {
   // behaviour — and then never answers the read that follows. If the mark were taken before the
   // write, that echo would be read as the read-back and this would come back `written`.
   const raced = makeChannel({ readAnswers: [80, null], writeEcho: 90 });
-  const racedResult = await performChargeSocLimit({ directory }, { percent: 90 }, raced.channel);
-  const racedStatus = raced.channel && racedResult.ok ? racedResult.result.status : "(refused)";
+  const racedResult = await performChargeSocLimit({ directory }, 90, raced.channel);
+  const racedStatus = racedResult.ok ? racedResult.result.status : "(refused)";
   check(
     `the write whose only 0x121 was the bike's own echo reads "unverified", not "written" — got "${racedStatus}"`,
     racedResult.ok && racedResult.result.status === "unverified"
@@ -91,7 +99,7 @@ async function runSections(): Promise<void> {
   staleEverything();
   wakeBike();
   const good = makeChannel({ readAnswers: [80, 90], writeEcho: null });
-  const goodResult = await performChargeSocLimit({ directory }, { percent: 90 }, good.channel);
+  const goodResult = await performChargeSocLimit({ directory }, 90, good.channel);
   check('a matching read-back reads "written"', goodResult.ok && goodResult.result.status === "written");
   check("…and succeeded", goodResult.ok && goodResult.result.succeeded === true);
   check("…and it sent exactly three frames: read, write, read", good.sent.length === 3);
@@ -104,7 +112,7 @@ async function runSections(): Promise<void> {
   staleEverything();
   wakeBike();
   const wrong = makeChannel({ readAnswers: [80, 85], writeEcho: null });
-  const wrongResult = await performChargeSocLimit({ directory }, { percent: 90 }, wrong.channel);
+  const wrongResult = await performChargeSocLimit({ directory }, 90, wrong.channel);
   check(
     'a read-back of a different value reads "read-back-mismatch"',
     wrongResult.ok && wrongResult.result.status === "read-back-mismatch"

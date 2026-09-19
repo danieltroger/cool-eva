@@ -241,33 +241,19 @@ const behindTheFold: string[] = IRREVERSIBLE.map(entry => entry.action);
 
 // ⚠️ THE THIRD CATEGORY, added when charge-current arrived: confirm-gated but REVERSIBLE.
 //
-// The fold's promise is "cannot be undone", and until now that was the same set as "needs
-// a confirm=". charge-current breaks the tie. It is gated because `curl` can reach the
-// endpoint and a page showing 6 A must not be able to POST 30 — the number is the owner's
-// to say out loud — but it undoes itself: the setpoint is transient (unplugging the
-// charger clears it), the VCU clamps anything above the cable's ceiling, and the rider
-// overrides it on the bike's own screen. Behind a fold that says "cannot be undone" that
-// row would lie, so the control lives in the charge menu, not the red drawer.
+// The fold's promise is "cannot be undone", and until then that was the same set as "needs a
+// confirm=". These four are gated because `curl` can reach the endpoint and a page showing 6 A must
+// not be able to POST 30 — the number is the owner's to say out loud — but none of them is
+// irreversible, and behind a fold that says otherwise every one of those rows would lie. Each undoes
+// itself differently: charge-current is TRANSIENT (unplugging clears it, the VCU clamps above the
+// cable's ceiling, the rider overrides on the bike); charge-stop is re-plugging or restarting the
+// charge; reset-vcu is a key-cycle restart that erases and reverts nothing. ⚠️ charge-soc-limit rests
+// on a different floor — the setting is STORED, so "the cable comes out and it forgets" is not
+// available; what is, and what no other action here has, is a real read-back
+// (docs/dash-command-0x2c-charge-limit.md).
 //
-// This set is the ONE place that exemption is written down, and adding to it is the same
-// weight of decision as adding to the fold: an action here is one a reviewer has agreed is
-// reversible. An action that is confirm-gated, absent from the fold AND absent here is
-// still the hard failure §3b was built to catch — the exemption is explicit, never a gap.
-// charge-stop joins for the same reason: it is confirm-gated (curl can reach the endpoint, so a
-// deliberate word is required), but ending a charge undoes itself — the rider simply re-plugs or
-// restarts the charge on the bike's own screen. Behind a "cannot be undone" fold that row would lie.
-// reset-vcu joins too: it is confirm-gated (curl can reach it, and it drops the bike off the bus), but
-// a key-cycle restart erases nothing and reverts nothing — the bike reboots and comes back exactly as
-// it was. Behind a "cannot be undone" fold that row would lie, so it lives out in the open like the two above.
-// ⚠️ charge-soc-limit joins for a DIFFERENT reason from the other three, and the difference is
-// the safety floor each one rests on. charge-current's argument is that the setpoint is
-// TRANSIENT — unplugging the charger clears it — so a wrong value undoes itself. The SOC limit
-// is STORED: dash-command writes persist past the sender exiting (docs/dash-command-channel.md),
-// and the 80 % set on 2026-09-19 at 16:56 was still in force hours later. So "the cable comes out
-// and it forgets" is not available here. What IS available, and what no other action on this list
-// has, is a real read-back: the VCU answers a bit-7-clear read with its stored value, so a write
-// that did not take is DETECTED rather than assumed. That is why it is confirmed-and-reversible
-// rather than behind the red fold. docs/dash-command-0x2c-charge-limit.md.
+// This set is the ONE place that exemption is written down; adding to it weighs the same as adding
+// to the fold, and confirm-gated-but-absent-from-both is still the hard failure §3b catches.
 const REVERSIBLE_CONFIRMED = new Set(["charge-current", "charge-stop", "charge-soc-limit", "reset-vcu"]);
 
 const gatedNotHidden = gated.filter(action => !behindTheFold.includes(action) && !REVERSIBLE_CONFIRMED.has(action));

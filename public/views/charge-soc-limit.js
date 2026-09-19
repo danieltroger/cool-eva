@@ -33,8 +33,15 @@ const { button, div, input } = van.tags;
 /** What the owner typed, as text so an empty box is distinct from a zero. */
 const wanted = van.state("");
 const busy = van.state(false);
-/** True only while a command's own POST is in flight, so "Sending…" is not shown for a status refresh. */
-const sending = van.state(false);
+/**
+ * Which POST is in flight, so one button's label never speaks for the other.
+ *
+ * ⚠️ It was a single boolean shared by both, which made the SET button read "⏳ Sending…" while a
+ * READ was in flight — a write claim during a read, in the one control on this tab that is
+ * otherwise careful not to overclaim.
+ * @type {import("../vendor/van-1.6.1.js").State<"" | "write" | "read">}
+ */
+const sending = van.state("");
 const message = van.state("");
 /** Whether the last command was accepted AND read back. Null when nothing has been tried. */
 const lastResult = van.state(/** @type {boolean | null} */ (null));
@@ -61,9 +68,9 @@ export const ARMED_KEY = "charge-soc-limit";
  * own sake: service-mode.js's parameter sweep is read-only and has taken two taps since #130,
  * because read-only or not it puts frames on the bike's bus. A one-tap button beside a two-tap one
  * would also teach the thumb that buttons here act immediately, which is the habit the dwell exists
- * to prevent. A quoted literal rather than a second export — check-arming.ts resolves either.
+ * to prevent. Exported so check-arming.ts counts it as a control rather than re-typing the string.
  */
-const READ_ARMED_KEY = "charge-soc-limit-read";
+export const READ_ARMED_KEY = "charge-soc-limit-read";
 
 /**
  * The highest percentage the command byte carries.
@@ -85,10 +92,21 @@ export function ChargeSocLimitControl() {
   // WebSocket signal, so without this the control could never appear on an unplugged bike.
   void ensureWriteStatus();
   return div(() => {
-    if (!writesEnabled()) {
+    // ⚠️ The VALUE is a read-only signal, arriving over the WebSocket whenever the rider sets the
+    // limit on the bike's own menu, so it shows on any phone. Only the BUTTONS are behind the
+    // writes gate. Gating the whole tile meant an ordinary phone could receive the limit and not
+    // display it — the one read-only thing this feature adds, invisible by default.
+    const known = valueOf("charge_soc_limit_pct") !== null;
+    if (!known && !writesEnabled()) {
       return div();
     }
-    return div({ class: "tile span2" }, div({ class: "label" }, "Charge limit"), CurrentValue(), SetRow(), Outcome());
+    return div(
+      { class: "tile span2" },
+      div({ class: "label" }, "Charge limit"),
+      CurrentValue(),
+      () => (writesEnabled() ? SetRow() : div()),
+      Outcome()
+    );
   });
 }
 
@@ -153,7 +171,7 @@ function SetRow() {
         },
       },
       () => {
-        if (sending.val) {
+        if (sending.val === "write") {
           return "⏳  Sending…";
         }
         if (busy.val) {
@@ -189,6 +207,9 @@ function SetRow() {
         },
       },
       () => {
+        if (sending.val === "read") {
+          return "⏳  Reading…";
+        }
         if (busy.val) {
           return "…";
         }
@@ -251,20 +272,21 @@ async function performSocLimit() {
   // The confirm carries the value, so a page showing one percentage cannot POST another — and 0
   // has its own word, because it removes the battery protection rather than moving it.
   const confirm = value === 0 ? "charge-soc-limit-off" : `charge-soc-limit-${value}`;
-  await post(new URLSearchParams({ list: "0", action: "charge-soc-limit", pct: String(value), confirm }));
+  await post(new URLSearchParams({ list: "0", action: "charge-soc-limit", pct: String(value), confirm }), "write");
 }
 
 async function performSocLimitRead() {
-  await post(new URLSearchParams({ list: "0", action: "charge-soc-limit-read" }));
+  await post(new URLSearchParams({ list: "0", action: "charge-soc-limit-read" }), "read");
 }
 
 /**
  * POSTs one action and records what came back.
  * @param {URLSearchParams} query
+ * @param {"write" | "read"} kind which button is waiting, so only its own label says so
  */
-async function post(query) {
+async function post(query, kind) {
   message.val = "";
-  sending.val = true;
+  sending.val = kind;
   busy.val = true;
   let payload = /** @type {VcuWriteResponse | null} */ (null);
   try {
@@ -284,7 +306,7 @@ async function post(query) {
       "This does NOT guarantee nothing was sent — read the limit before trying again.";
     console.warn("charge-soc-limit: request failed", error);
   } finally {
-    sending.val = false;
+    sending.val = "";
     busy.val = false;
   }
   armed.val = "";

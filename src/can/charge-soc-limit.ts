@@ -9,18 +9,21 @@
 // Captured pairs, the enter-press correlation, and the on-bike read-back that settled the
 // encoding: docs/dash-command-0x2c-charge-limit.md.
 
+import { SEPARATOR_BYTE } from "./charge-command.ts";
 import type { DecodedValue } from "./frame.ts";
-
-export const CHARGE_SOC_LIMIT_CAN_ID = 0x121;
 
 /** b0 of the reply. The request-twin form (`| 0x80`) rides on 0x120 — ./charge-soc-command.ts. */
 export const CHARGE_SOC_LIMIT_OPCODE = 0x2c;
 
-/** b1 on this whole channel, opcode regardless — a separator, not data. */
-const SEPARATOR_BYTE = 0xff;
-
-/** The only range a percentage can occupy. A frame outside it is not this message. */
-const MAX_PERCENT = 100;
+/**
+ * The only range a percentage can occupy — the decoder's gate AND the builder's throw AND the
+ * dashboard's input bound, which is why it lives here rather than three times.
+ *
+ * ⚠️ The browser cannot import a .ts module, so `public/views/charge-soc-limit.js` keeps a copy and
+ * scripts/check-charge-soc-limit-runner.ts §6 asserts the two are equal. Raising it here without
+ * that assertion would leave the decoder dropping every reply the builder had started allowing.
+ */
+export const MAX_SOC_LIMIT_PCT = 100;
 
 /**
  * Decodes one 0x121 frame, emitting only for the charge-limit opcode. Pure.
@@ -47,7 +50,7 @@ export function decodeChargeSocLimitFrame(data: Buffer): DecodedValue[] {
   const percent = data[2];
   // 0 is LEGAL and means "no limit" — the opposite of ./charge-setpoint.ts, where b2 ≥ 1 because a
   // zero current is the stop command rather than a setting. Only the upper bound is a real gate.
-  if (percent > MAX_PERCENT) {
+  if (percent > MAX_SOC_LIMIT_PCT) {
     return [];
   }
   return [{ key: "charge_soc_limit_pct", value: percent }];

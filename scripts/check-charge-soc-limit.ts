@@ -1,6 +1,8 @@
 import { CHARGE_COMMAND_CAN_ID, CHARGE_REQUEST_CAN_ID } from "../src/can/charge-command.ts";
-import { MAX_SOC_LIMIT_PCT, buildChargeSocLimitRead, buildChargeSocLimitWrite } from "../src/can/charge-soc-command.ts";
-import { decodeChargeSocLimitFrame } from "../src/can/charge-soc-limit.ts";
+import { fixtureBytes } from "./charge-command-fixtures.ts";
+import { toHex } from "../src/vcu/param-codec.ts";
+import { buildChargeSocLimitRead, buildChargeSocLimitWrite } from "../src/can/charge-soc-command.ts";
+import { MAX_SOC_LIMIT_PCT, decodeChargeSocLimitFrame } from "../src/can/charge-soc-limit.ts";
 import { decodeChargeSetpointFrame } from "../src/can/charge-setpoint.ts";
 import { decodeFrame } from "../src/can/decode.ts";
 import { parseWriteRequest } from "../src/http/vcu-write.ts";
@@ -63,7 +65,7 @@ const OTHER_OPCODE_FRAMES = [
 
 for (const captured of CAPTURED_DASH_WRITES) {
   const frames = buildChargeSocLimitWrite(captured.percent);
-  const built = hexOf(frames[0].data);
+  const built = toHex(frames[0].data);
   if (built !== captured.requestHex) {
     failures.push(
       `§1 ${captured.at}: built "${built}" for ${captured.percent} %, bus carried "${captured.requestHex}"`
@@ -75,8 +77,8 @@ for (const captured of CAPTURED_DASH_WRITES) {
 }
 // The value actually written on 2026-09-19, which no capture holds because the Pi does not hear
 // its own frames — it is here from the journal of the write that produced the 90 read back below.
-if (hexOf(buildChargeSocLimitWrite(90)[0].data) !== "AC FF 5A 00 00 00 00 00") {
-  failures.push(`§1 the 90 % write is not "AC FF 5A …" — it is "${hexOf(buildChargeSocLimitWrite(90)[0].data)}"`);
+if (toHex(buildChargeSocLimitWrite(90)[0].data) !== "AC FF 5A 00 00 00 00 00") {
+  failures.push(`§1 the 90 % write is not "AC FF 5A …" — it is "${toHex(buildChargeSocLimitWrite(90)[0].data)}"`);
 }
 
 // ── §2 the direction bit, both ways, and the one-frame shape ───────────────
@@ -139,7 +141,7 @@ for (const reply of CAPTURED_REPLIES) {
   if (!reply.hex.endsWith("00 00 00 00 00")) {
     failures.push(`§4 ${reply.at}: the fixture's own b3-b7 tail is not zero ("${reply.hex}")`);
   }
-  const decoded = decodeChargeSocLimitFrame(bytesOf(reply.hex));
+  const decoded = decodeChargeSocLimitFrame(fixtureBytes(reply.hex));
   const value = decoded.find(entry => entry.key === "charge_soc_limit_pct")?.value;
   if (value !== reply.percent) {
     failures.push(`§4 ${reply.at}: "${reply.hex}" decoded to ${value ?? "nothing"}, expected ${reply.percent}`);
@@ -158,11 +160,11 @@ const REJECTED: { what: string; hex: string }[] = [
   { what: "b4 in use", hex: "2C FF 5A 00 4B 00 00 00" },
   { what: "a tail in use", hex: "2C FF 5A 00 00 00 00 01" },
 ];
-if (decodeChargeSocLimitFrame(bytesOf(GOOD)).length !== 1) {
+if (decodeChargeSocLimitFrame(fixtureBytes(GOOD)).length !== 1) {
   failures.push(`§5 the control frame "${GOOD}" does not decode — every rejection below proves nothing`);
 }
 for (const rejected of REJECTED) {
-  if (decodeChargeSocLimitFrame(bytesOf(rejected.hex)).length !== 0) {
+  if (decodeChargeSocLimitFrame(fixtureBytes(rejected.hex)).length !== 0) {
     failures.push(`§5 ${rejected.what} ("${rejected.hex}") decoded as a charge limit`);
   }
 }
@@ -170,12 +172,12 @@ for (const rejected of REJECTED) {
 // ── §6 no cross-talk, in BOTH directions, on the shared id ─────────────────
 
 for (const other of OTHER_OPCODE_FRAMES) {
-  if (decodeChargeSocLimitFrame(bytesOf(other.hex)).length !== 0) {
+  if (decodeChargeSocLimitFrame(fixtureBytes(other.hex)).length !== 0) {
     failures.push(`§6 ${other.what} ("${other.hex}") decoded as a charge limit`);
   }
 }
 for (const reply of CAPTURED_REPLIES) {
-  const keys = decodeChargeSetpointFrame(bytesOf(reply.hex)).map(entry => entry.key);
+  const keys = decodeChargeSetpointFrame(fixtureBytes(reply.hex)).map(entry => entry.key);
   if (keys.length !== 0) {
     failures.push(`§6 ${reply.at}: the charge-current decoder read ${keys.join(", ")} out of a charge-limit frame`);
   }
@@ -183,13 +185,13 @@ for (const reply of CAPTURED_REPLIES) {
 
 // ── §7 through the real dispatch, not the decoder in isolation ─────────────
 
-const dispatched = decodeFrame(CHARGE_COMMAND_CAN_ID, bytesOf("2C FF 5A 00 00 00 00 00"));
+const dispatched = decodeFrame(CHARGE_COMMAND_CAN_ID, fixtureBytes("2C FF 5A 00 00 00 00 00"));
 if (dispatched.find(entry => entry.key === "charge_soc_limit_pct")?.value !== 90) {
   failures.push("§7 decodeFrame does not route 0x121 to the charge-limit decoder — the signal never reaches the log");
 }
 // The setpoint decoder must still be reached for its own opcodes; a concat that dropped it would
 // pass every section above.
-const stillDecoded = decodeFrame(CHARGE_COMMAND_CAN_ID, bytesOf("18 FF 2F 01 4B 00 00 00"));
+const stillDecoded = decodeFrame(CHARGE_COMMAND_CAN_ID, fixtureBytes("18 FF 2F 01 4B 00 00 00"));
 if (stillDecoded.find(entry => entry.key === "dc_charge_limit_selected_a")?.value !== 0x2f) {
   failures.push("§7 decodeFrame stopped decoding the charge-current setpoint when the limit decoder was added");
 }
@@ -259,11 +261,3 @@ console.log(
     `endpoint accepts ${CONFIRMATIONS.filter(entry => entry.accepted).length} of ${CONFIRMATIONS.length} ` +
     `confirmations — the token has to carry the value, and 0 % needs its own word`
 );
-
-function bytesOf(hex: string): Buffer {
-  return Buffer.from(hex.split(" ").map(byte => Number.parseInt(byte, 16)));
-}
-
-function hexOf(data: Uint8Array): string {
-  return Array.from(data, byte => byte.toString(16).padStart(2, "0").toUpperCase()).join(" ");
-}

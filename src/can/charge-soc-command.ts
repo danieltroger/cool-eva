@@ -12,10 +12,7 @@
 // docs/dash-command-0x2c-charge-limit.md.
 
 import { CHARGE_REQUEST_CAN_ID, REQUEST_TWIN_BIT, SEPARATOR_BYTE, type ChargeFrame } from "./charge-command.ts";
-import { CHARGE_SOC_LIMIT_OPCODE } from "./charge-soc-limit.ts";
-
-/** The highest percentage this byte may carry. 0 is legal and means "no limit". */
-export const MAX_SOC_LIMIT_PCT = 100;
+import { CHARGE_SOC_LIMIT_OPCODE, MAX_SOC_LIMIT_PCT } from "./charge-soc-limit.ts";
 
 /**
  * Packs a "stop charging at `percent` %" command into the one frame the bike commits on. Pure.

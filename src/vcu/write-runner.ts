@@ -814,7 +814,7 @@ async function performOnBus(
     case "charge-stop":
       return await performChargeStop(context, channel);
     case "charge-soc-limit":
-      return await performChargeSocLimit(context, { percent: request.percent }, channel);
+      return await performChargeSocLimit(context, request.percent, channel);
     case "charge-soc-limit-read":
       return await performChargeSocLimitRead(context, channel);
     case "reset-vcu":

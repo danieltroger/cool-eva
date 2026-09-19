@@ -5,10 +5,14 @@ import { isStale, valueOf } from "./store.js";
 import { armed } from "./arming.js";
 import { monotonicNow, since } from "./clock.js";
 
-// The session/status machinery the charge-tab write controls share — charge-current.js sets a
-// current, charge-stop.js ends the charge, and both need the SAME answers: is a charge live, is
-// it AC or DC, and is writing switched on for this Pi. Kept in one place so the two controls
-// cannot disagree about when a command may be offered, and so each stays under the file-size line.
+// The session/status machinery the charge-tab controls share — charge-current.js sets a current,
+// charge-stop.js ends the charge, charge-soc-limit.js sets the SOC limit, charge-auto.js switches
+// the automatic controller. Kept in one place so they cannot disagree about when a command may be
+// offered, and so each stays under the file-size line.
+//
+// ⚠️ They do NOT all need the same answers, which is newer than the rest of this file: the first
+// two are session-scoped, while the SOC limit takes the bike-state gate and is offered on a
+// parked, unplugged bike. `ensureWriteStatus` below is the seam for that.
 //
 // ⚠️ Session presence and the AC/DC label ride on charge_manager_state (0x610 b7), NOT charge_type:
 // charge_type flaps 1↔0 within one plug-in as the charger pauses delivery (docs/charge-manager.md),
@@ -237,23 +241,16 @@ export function applyWriteStatus(payload) {
 /**
  * Fetches the gate ONCE when a control mounts that is not tied to a charge session.
  *
- * ⚠️ The derive above fetches only on a charge-session EDGE, which is right for the two controls
- * that need a live charge — but the SOC charge limit does not (the Pi gates it on the bike-state
- * gate, which passes a parked unplugged bike). Without this, that control could only ever appear
- * while charging, which is the one time you are least likely to be setting it.
+ * ⚠️ NOT a poll, and it must not become one: at most one request per Charge-tab mount and per
+ * charge ending, only when no status is held, and never while anything is ARMED — a fetch clears
+ * `armed` and would disarm another control's primed button mid-gesture.
  *
- * ⚠️ NOT a poll, and it must not become one: at most one request per mount of the Charge tab and
- * per charge ending, and only when no status is held. Unlike the derive it has no STATUS_RETRY_MS
- * pacing, so against a Pi that is not answering every Charge-tab visit costs one more request —
- * serialised by `statusInFlight`, never concurrent, and bounded by how often a thumb can switch
- * tabs. ⚠️ It also stands down while anything is ARMED, because fetchChargeWriteStatus() clears
- * `armed` and a fetch landing mid-gesture would silently disarm another control's primed button.
+ * ⚠️ It READS the derive's `statusInFlight` and never writes it, which is why it keeps a flag of
+ * its own: a session ending force-clears that flag, so a mount fetch settling afterwards would
+ * clear it out from under the derive's next live request.
  *
- * ⚠️ It READS the derive's `statusInFlight` and never writes it, which is the whole reason it keeps
- * a flag of its own. A session ending force-clears that flag, so a mount fetch settling afterwards
- * would clear it out from under the derive's next live request — the concurrent-request failure the
- * derive's own `statusAskedAt === mark` guard exists to prevent. The two flags mean the two paths
- * can overlap at most once, in the window where a tab is opened exactly as a charge begins.
+ * Why the SOC limit needs this at all, and the pacing it deliberately lacks:
+ * docs/dashboard-decisions.md.
  */
 export async function ensureWriteStatus() {
   if (writeStatus.rawVal !== null || statusInFlight || mountFetchInFlight || armed.rawVal !== "") {

@@ -4,7 +4,7 @@ import { monotonicNow, since } from "../monotonic.ts";
 import { buildChargeSocLimitRead, buildChargeSocLimitWrite } from "../can/charge-soc-command.ts";
 import { toHex } from "./param-codec.ts";
 import { readPiClock } from "./service-actions.ts";
-import { appendAuditRecord } from "./write-audit.ts";
+import { appendAuditRecord, type AuditRecord } from "./write-audit.ts";
 import type { ServiceWriteAnswer } from "./write-runner.ts";
 
 // The bike's "stop charging at N %" setting, over the 0x120 dash command channel — the one write
@@ -19,10 +19,6 @@ import type { ServiceWriteAnswer } from "./write-runner.ts";
 /** What this needs from the write runner's context. Deliberately the audit directory and nothing else. */
 export interface ChargeSocLimitContext {
   directory: string;
-}
-
-export interface ChargeSocLimitRequest {
-  percent: number;
 }
 
 /**
@@ -49,13 +45,6 @@ const READ_POLL_MS = 10;
 const SOC_LIMIT_SIGNAL = "charge_soc_limit_pct";
 
 /**
- * The bike is awake and CAN is arriving. `0x625` broadcasts at 10 Hz whenever the bike is awake —
- * parked and unplugged included — so a stale one means we would be commanding into silence.
- */
-const AWAKE_SIGNAL = "fast_dc_limit_max_a";
-const AWAKE_MAX_AGE_MS = 5_000;
-
-/**
  * Sets the SOC charge limit and PROVES it took, by reading the VCU's own stored value back.
  *
  * ⚠️ Unlike charge-current, this does not have to settle for "sent". The write is one frame on
@@ -67,18 +56,21 @@ const AWAKE_MAX_AGE_MS = 5_000;
  */
 export async function performChargeSocLimit(
   context: ChargeSocLimitContext,
-  request: ChargeSocLimitRequest,
+  percent: number,
   channel: RawChannel
 ): Promise<ServiceWriteAnswer> {
-  const asleep = describeIfAsleep("set the charge limit on");
-  if (asleep !== null) {
-    return { ok: false, reason: asleep };
-  }
   const before = await readSocLimit(channel);
-  console.warn(`vcu-write: about to set the SOC charge limit to ${request.percent} % (it reads ${describe(before)})`);
-  const sent = sendSocLimit(channel, request.percent);
+  console.warn(`vcu-write: about to set the SOC charge limit to ${percent} % (it reads ${describe(before)})`);
+  const sent = sendSocLimit(channel, percent);
   if (sent.status === "failed") {
-    await recordAttempt(context, "charge-soc-limit", "failed", request.percent, before, null, sent.reason);
+    await recordAttempt(context, {
+      action: "charge-soc-limit",
+      status: "failed",
+      requested: percent,
+      before,
+      after: null,
+      note: sent.reason,
+    });
     return { ok: false, reason: sent.reason };
   }
   await delay(WRITE_SETTLE_MS);
@@ -87,60 +79,22 @@ export async function performChargeSocLimit(
   // out and the READ got no answer — so calling it a mismatch would assert the opposite of what is
   // known, in the one sentence a person standing at the bike acts on. Same distinction this whole
   // feature keeps between "the VCU stores it" and "the bike stops there".
-  const outcome: SocLimitOutcome =
-    after === null ? "unverified" : after === request.percent ? "written" : "read-back-mismatch";
-  await recordAttempt(
-    context,
-    "charge-soc-limit",
-    outcome,
-    request.percent,
+  const outcome: SocLimitOutcome = after === null ? "unverified" : after === percent ? "written" : "read-back-mismatch";
+  const said = describeOutcome(outcome, percent, before, after, sent.hex);
+  await recordAttempt(context, {
+    action: "charge-soc-limit",
+    status: outcome,
+    requested: percent,
     before,
     after,
-    NOTE[outcome](request.percent, before, after, sent.hex)
-  );
+    rawHex: sent.hex,
+    note: said.note,
+  });
   return {
     ok: true,
-    result: {
-      action: "charge-soc-limit",
-      status: outcome,
-      message: MESSAGE[outcome](request.percent, before, after),
-      succeeded: outcome === "written",
-    },
+    result: { action: "charge-soc-limit", status: outcome, message: said.message, succeeded: outcome === "written" },
   };
 }
-
-/**
- * What a write turned out to be. ⚠️ TOTAL over the two tables below, so a fourth outcome is a type
- * error rather than a missing sentence discovered on the bike.
- */
-type SocLimitOutcome = "written" | "read-back-mismatch" | "unverified";
-
-/** The three outcomes, as the audit note each one earns. */
-const NOTE: Record<
-  SocLimitOutcome,
-  (percent: number, before: number | null, after: number | null, hex: string) => string
-> = {
-  written: (percent, _before, after, hex) =>
-    `${percent} % on 0x120 (${hex}); read back from the VCU's store as ${after} %`,
-  "read-back-mismatch": (percent, _before, after) =>
-    `asked for ${percent} %, the VCU's store reads ${describe(after)} afterwards`,
-  unverified: (percent, _before, _after, hex) =>
-    `${percent} % on 0x120 (${hex}); the write went out and the read-back got NO answer within ${READ_TIMEOUT_MS} ms — unknown, not failed`,
-};
-
-/** The same three, phrased for the page. */
-const MESSAGE: Record<SocLimitOutcome, (percent: number, before: number | null, after: number | null) => string> = {
-  written: (percent, before) =>
-    `The bike will now stop charging at ${percent} % (was ${describe(before)}). ` +
-    "Read back from the VCU's own store, not an echo. ⚠️ That it STORES the limit is not proof it " +
-    "stops there — nothing here has watched the limit be reached — so check the dash and the next full charge.",
-  "read-back-mismatch": (percent, _before, after) =>
-    `Asked for ${percent} %, but the VCU's store reads ${describe(after)}. Nothing was changed as asked; ` +
-    "the bike may have clamped or ignored the value. Do not retry blind — read it on the bike's own screen first.",
-  unverified: percent =>
-    `The ${percent} % command went out, but the read-back got no answer. ⚠️ This does NOT mean it failed — ` +
-    "the write and the read are separate frames and only the read went unanswered. Read it again, or check the bike's own screen.",
-};
 
 /**
  * Reads the SOC charge limit without changing it. Bit 7 clear, one frame.
@@ -152,20 +106,13 @@ export async function performChargeSocLimitRead(
   context: ChargeSocLimitContext,
   channel: RawChannel
 ): Promise<ServiceWriteAnswer> {
-  const asleep = describeIfAsleep("read the charge limit off");
-  if (asleep !== null) {
-    return { ok: false, reason: asleep };
-  }
   const value = await readSocLimit(channel);
-  await recordAttempt(
-    context,
-    "charge-soc-limit-read",
-    value === null ? "failed" : "read",
-    null,
-    null,
-    value,
-    value === null ? `no reply within ${READ_TIMEOUT_MS} ms` : `the VCU's store reads ${value} %`
-  );
+  await recordAttempt(context, {
+    action: "charge-soc-limit-read",
+    status: value === null ? "failed" : "read",
+    after: value,
+    note: value === null ? `no reply within ${READ_TIMEOUT_MS} ms` : `the VCU's store reads ${value} %`,
+  });
   if (value === null) {
     return {
       ok: false,
@@ -184,6 +131,46 @@ export async function performChargeSocLimitRead(
       succeeded: true,
     },
   };
+}
+
+/**
+ * What a write turned out to be. ⚠️ Three cases, and `describeOutcome`'s switch has no default, so
+ * a fourth is a compile error rather than a missing sentence discovered on the bike.
+ */
+type SocLimitOutcome = "written" | "read-back-mismatch" | "unverified";
+
+/** The audit note and the rider-facing sentence for one outcome, which belong together. */
+function describeOutcome(
+  outcome: SocLimitOutcome,
+  percent: number,
+  before: number | null,
+  after: number | null,
+  hex: string
+): { note: string; message: string } {
+  switch (outcome) {
+    case "written":
+      return {
+        note: `${percent} % on 0x120 (${hex}); read back from the VCU's store as ${after} %`,
+        message:
+          `The bike will now stop charging at ${percent} % (was ${describe(before)}). ` +
+          "Read back from the VCU's own store, not an echo. ⚠️ That it STORES the limit is not proof it " +
+          "stops there — nothing here has watched the limit be reached — so check the dash and the next full charge.",
+      };
+    case "read-back-mismatch":
+      return {
+        note: `asked for ${percent} %, the VCU's store reads ${describe(after)} afterwards`,
+        message:
+          `Asked for ${percent} %, but the VCU's store reads ${describe(after)}. Nothing was changed as asked; ` +
+          "the bike may have clamped or ignored the value. Do not retry blind — read it on the bike's own screen first.",
+      };
+    case "unverified":
+      return {
+        note: `${percent} % on 0x120 (${hex}); the write went out and the read-back got NO answer within ${READ_TIMEOUT_MS} ms — unknown, not failed`,
+        message:
+          `The ${percent} % command went out, but the read-back got no answer. ⚠️ This does NOT mean it failed — ` +
+          "the write and the read are separate frames and only the read went unanswered. Read it again, or check the bike's own screen.",
+      };
+  }
 }
 
 /** Transmits the one-frame write. Fire-and-forget; the read that follows is the verification. */
@@ -223,7 +210,7 @@ function sendSocLimit(
  * so this waits on the signal rather than adding a second listener to keep in step. `record()`
  * refreshes the arrival mark outside the deadband branch, so an unchanged value still counts.
  */
-export async function readSocLimit(channel: RawChannel): Promise<number | null> {
+async function readSocLimit(channel: RawChannel): Promise<number | null> {
   const frame = buildChargeSocLimitRead()[0];
   const markedAt = monotonicNow();
   try {
@@ -246,18 +233,6 @@ export async function readSocLimit(channel: RawChannel): Promise<number | null> 
   return null;
 }
 
-/** Why the bike cannot be asked right now, or null when it can. */
-function describeIfAsleep(what: string): string | null {
-  const age = ageMs(AWAKE_SIGNAL);
-  if (age === null) {
-    return `nothing has arrived on ${AWAKE_SIGNAL} this session, so there is no evidence the bike is awake to ${what}.`;
-  }
-  if (age > AWAKE_MAX_AGE_MS) {
-    return `${AWAKE_SIGNAL} last arrived ${Math.round(age / 1000)} s ago — the bike is asleep or CAN is not being received, so there is nothing to ${what}.`;
-  }
-  return null;
-}
-
 function describe(percent: number | null): string {
   if (percent === null) {
     return "unknown";
@@ -265,24 +240,19 @@ function describe(percent: number | null): string {
   return percent === 0 ? "no limit" : `${percent} %`;
 }
 
+/**
+ * One audit line. Takes the record rather than seven positional arguments — three of which were
+ * adjacent `number | null` (requested, before, after), where a transposition typechecks and no
+ * check catches it. The two stamped fields are the only thing this adds.
+ */
 async function recordAttempt(
   context: ChargeSocLimitContext,
-  action: "charge-soc-limit" | "charge-soc-limit-read",
-  status: string,
-  requested: number | null,
-  before: number | null,
-  after: number | null,
-  note: string
+  record: Omit<AuditRecord, "at" | "clockTrustworthy">
 ): Promise<void> {
   await appendAuditRecord(context.directory, {
+    ...record,
     at: Date.now(),
     clockTrustworthy: readPiClock().trustworthy,
-    action,
-    status,
-    requested,
-    before,
-    after,
-    note,
   });
 }
 

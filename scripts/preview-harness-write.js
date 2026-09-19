@@ -166,6 +166,8 @@ function serviceWrite(query) {
 
   if (action === "charge-soc-limit") {
     // ⚠️ The preview keeps the value, so the read afterwards agrees with the write before it.
+    // ⚠️ The sentence below is hand-copied from src/vcu/charge-soc-limit.ts's `written` outcome and
+    // nothing ties them: change it there and the screenshot gate keeps shooting the old wording.
     // A stub answering "written" while its own read still said 90 would be a screenshot of a
     // bike contradicting itself.
     const before = SOC_LIMIT.pct;

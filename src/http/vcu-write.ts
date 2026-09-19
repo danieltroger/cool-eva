@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "http";
-import { MAX_SOC_LIMIT_PCT } from "../can/charge-soc-command.ts";
+import { MAX_SOC_LIMIT_PCT } from "../can/charge-soc-limit.ts";
 import type {
   ServiceWriteRequest,
   ServiceWriteResult,
@@ -31,9 +31,10 @@ import type {
 // written before this endpoint existed.
 //
 // ⚠️ Several actions additionally require the caller to say what it thinks it is doing, because
-// `curl` can reach this endpoint and the UI's two taps cannot follow it there: set-service-point,
-// clear-dtcs, charge-stop and reset-vcu each want their own name as `confirm=`, charge-current
-// wants `confirm=charge-current-<amps>`, and sync-clock wants the UTC minute the caller displayed.
+// `curl` can reach this endpoint and the UI's two taps cannot follow it there. ⚠️ WHICH actions,
+// and what each wants, is the `switch` in parseWriteRequest below and is deliberately not restated
+// here — this list was already one action out of date once. check-irreversible-actions.ts holds
+// the switch to its own `default` arm's sentence, which is the copy that is actually checked.
 // That last is not ceremony — it is the server-side half of "Is it <date and time>?", so a page
 // left open since this morning cannot sync this morning's time. Every token is spelled out in
 // parseWriteRequest below, which is the only thing that compares them.

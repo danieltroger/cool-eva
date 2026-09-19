@@ -3,7 +3,10 @@ import { readFile, readdir } from "fs/promises";
 import { blockAt, declarationBody } from "./source-blocks.ts";
 import { ARM_DWELL_MS, arm, armDwellElapsed, armed, refuseKeyRepeat } from "../public/lib/arming.js";
 import { ARMED_KEY as CHARGE_CURRENT_KEY } from "../public/views/charge-current.js";
-import { ARMED_KEY as CHARGE_SOC_LIMIT_KEY } from "../public/views/charge-soc-limit.js";
+import {
+  ARMED_KEY as CHARGE_SOC_LIMIT_KEY,
+  READ_ARMED_KEY as CHARGE_SOC_LIMIT_READ_KEY,
+} from "../public/views/charge-soc-limit.js";
 import { ARMED_KEY as CHARGE_STOP_KEY } from "../public/views/charge-stop.js";
 import { ARMED_KEY as FREEZE_FRAME_READ_KEY } from "../public/views/freeze-frame-read.js";
 import { ARMED_KEY as LIFETIME_READ_KEY } from "../public/views/lifetime-read.js";
@@ -173,10 +176,10 @@ check(
 const ALL_KEYS = [
   CHARGE_CURRENT_KEY,
   CHARGE_SOC_LIMIT_KEY,
-  // ⚠️ The SOC control's READ button is a second control in the same file with a key of its own,
-  // spelled out because it is a module-local const rather than an export — the same reason the
-  // read-service-stamp line below is spelled out. §5 counts CONTROLS, and this file has two.
-  "charge-soc-limit-read",
+  // The SOC control's READ button is a second control in the same file, so §5 counts it. Imported
+  // rather than re-typed: a rename of the view's key would otherwise leave a stale-but-unique
+  // literal here and §5 would stay green.
+  CHARGE_SOC_LIMIT_READ_KEY,
   CHARGE_STOP_KEY,
   ...literalKeys,
   // The read-only action, spelled out because nothing exports it — it is the one ActionButton
