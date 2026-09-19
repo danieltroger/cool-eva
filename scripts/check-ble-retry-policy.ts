@@ -38,7 +38,10 @@ interface Printed {
 }
 
 /** Drive a wedge for `durationMs`, stepping the clock by whatever delay the policy asks for. */
-function driveWedge(durationMs: number, message: string): { printed: Printed[]; failureCount: number; resets: number } {
+function driveWedge(
+  durationMs: number,
+  message: string
+): { printed: Printed[]; tail: Printed[]; failureCount: number; resets: number } {
   const policy = new BleRetryPolicy();
   const printed: Printed[] = [];
   let nowMs = 0;
@@ -55,10 +58,22 @@ function driveWedge(durationMs: number, message: string): { printed: Printed[]; 
     }
     nowMs += plan.delayMs;
   }
-  for (const line of policy.flush(nowMs)) {
-    printed.push({ atMs: nowMs, line });
+  const tail = policy.flush(nowMs).map(line => ({ atMs: nowMs, line }));
+  return { printed, tail, failureCount, resets };
+}
+
+/** Failures at a fixed spacing, for the case where the window always elapses. */
+function driveWedgeAtFixedSpacing(spacingMs: number, count: number): { printed: Printed[] } {
+  const policy = new BleRetryPolicy();
+  const printed: Printed[] = [];
+  for (let i = 0; i < count; i += 1) {
+    for (const line of policy.onFailure(ADAPTER_BUSY_MESSAGE, i * spacingMs).logLines) {
+      if (line.includes("session failed")) {
+        printed.push({ atMs: i * spacingMs, line });
+      }
+    }
   }
-  return { printed, failureCount, resets };
+  return { printed };
 }
 
 /** Every `×N more` the policy printed, so suppressed failures can be conserved. */
@@ -103,11 +118,19 @@ if (!printed2.at(-1)?.includes("×9 more")) {
 // --- §3 the long episode: bounded volume, and nothing lost -------------------------
 const long = driveWedge(LONGEST_EPISODE_MS, ADAPTER_BUSY_MESSAGE);
 const messageLines = long.printed.filter(entry => entry.line.includes("session failed"));
-if (messageLines.length + countedInLines(long.printed) !== long.failureCount) {
+const accountedFor = messageLines.length + countedInLines(long.printed) + countedInLines(long.tail);
+if (accountedFor !== long.failureCount) {
   failures.push(
-    `§3 conservation: ${long.failureCount} failures but ${messageLines.length} printed + ` +
-      `${countedInLines(long.printed)} counted — the difference was swallowed`
+    `§3 conservation: ${long.failureCount} failures, ${accountedFor} accounted for ` +
+      `(${messageLines.length} printed + ${countedInLines(long.printed)} counted + ` +
+      `${countedInLines(long.tail)} in the stop flush) — the difference was swallowed`
   );
+}
+// A window that elapses with nothing suppressed must still print: a session slower to
+// fail than the window is wide would otherwise report nothing at all, silently.
+const slow = driveWedgeAtFixedSpacing(LOG_REPEAT_INTERVAL_MS * 2, 5);
+if (slow.printed.length !== 5) {
+  failures.push(`§3 five failures spaced wider than the window should print 5 lines, got ${slow.printed.length}`);
 }
 // Independent of the implementation: a rate limiter promising one line per window cannot
 // print more than one per window, plus the first.
@@ -141,15 +164,23 @@ if (!switched.logLines.some(line => line.includes("×1 more"))) {
 }
 
 // --- §5 the reset gate: when it fires, and when it must not -----------------------
+// ⚠️ The literal 3 is the point. Looping to ADAPTER_RESET_AFTER_BUSY_FAILURES and
+// asserting the reset lands on it is true for EVERY value of that constant — an
+// assertion that cannot fail, and both mutants (999 and 1) survived a version of §5
+// that did exactly that. Changing the threshold must edit this number too; the
+// argument for 3 is in docs/ble-adapter-wedge.md — no episode has ever self-recovered.
+if (ADAPTER_RESET_AFTER_BUSY_FAILURES !== 3) {
+  failures.push(`§5 the reset threshold is 3 busy replies, found ${ADAPTER_RESET_AFTER_BUSY_FAILURES}`);
+}
 const policy5 = new BleRetryPolicy();
 const resetAt: number[] = [];
-for (let i = 0; i < ADAPTER_RESET_AFTER_BUSY_FAILURES; i += 1) {
+for (let i = 0; i < 8; i += 1) {
   if (policy5.onFailure(ADAPTER_BUSY_MESSAGE, i * 1_000).resetAdapter) {
     resetAt.push(i + 1);
   }
 }
-if (JSON.stringify(resetAt) !== JSON.stringify([ADAPTER_RESET_AFTER_BUSY_FAILURES])) {
-  failures.push(`§5 reset should fire once, on busy failure ${ADAPTER_RESET_AFTER_BUSY_FAILURES}, fired on ${resetAt}`);
+if (JSON.stringify(resetAt) !== JSON.stringify([3])) {
+  failures.push(`§5 over eight busy replies the reset should fire once, on the 3rd; fired on ${resetAt}`);
 }
 const policy5b = new BleRetryPolicy();
 for (let i = 0; i < 20; i += 1) {
@@ -163,7 +194,7 @@ for (let i = 0; i < 20; i += 1) {
 const policy6 = new BleRetryPolicy();
 let sixthResets = 0;
 for (let step = 0; step < 6; step += 1) {
-  for (let i = 0; i < ADAPTER_RESET_AFTER_BUSY_FAILURES; i += 1) {
+  for (let i = 0; i < 3; i += 1) {
     if (policy6.onFailure(ADAPTER_BUSY_MESSAGE, step * 60_000 + i).resetAdapter) {
       sixthResets += 1;
     }
@@ -175,7 +206,7 @@ if (sixthResets !== 1) {
 const policy6b = new BleRetryPolicy();
 let clearedResets = 0;
 for (let step = 0; step < 6; step += 1) {
-  for (let i = 0; i < ADAPTER_RESET_AFTER_BUSY_FAILURES; i += 1) {
+  for (let i = 0; i < 3; i += 1) {
     if (policy6b.onFailure(ADAPTER_BUSY_MESSAGE, step * 60_000 + i).resetAdapter) {
       clearedResets += 1;
     }
@@ -224,7 +255,7 @@ if (probeResults[3].includes("still holds")) {
 // The gate is keyed on the busy message, so a throwing probe must leave it armed.
 const policy7 = new BleRetryPolicy();
 let armedAfterProbeFailure = false;
-for (let i = 0; i < ADAPTER_RESET_AFTER_BUSY_FAILURES; i += 1) {
+for (let i = 0; i < 3; i += 1) {
   const note = await describeKnownHub(thrower, thrower, /energica/i);
   armedAfterProbeFailure = policy7.onFailure(ADAPTER_BUSY_MESSAGE, i * 1_000, note).resetAdapter;
 }

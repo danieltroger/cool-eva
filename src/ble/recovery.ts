@@ -83,9 +83,14 @@ export class BleRetryPolicy {
       this.windowStartedAtMs = nowMs;
       logLines.push(`ble: session failed: ${message}${hubObjectNote ? ` — ${hubObjectNote}` : ""}`);
     } else if (nowMs - this.windowStartedAtMs >= LOG_REPEAT_INTERVAL_MS) {
-      logLines.push(...this.flush(nowMs));
+      // The flush carries the suppressed ones AND stands as this failure's own line. If
+      // nothing was suppressed it returns nothing, and then this failure would be neither
+      // printed nor counted — which is how a session that takes longer to fail than the
+      // window is wide goes completely silent. So fall back to printing it plainly.
+      const flushed = this.flush(nowMs);
       this.repeatingMessage = message;
       this.windowStartedAtMs = nowMs;
+      logLines.push(...(flushed.length > 0 ? flushed : [`ble: session failed: ${message}`]));
     } else {
       this.repeatCount += 1;
     }
@@ -124,7 +129,12 @@ export class BleRetryPolicy {
     if (this.consecutiveBusyFailures < ADAPTER_RESET_AFTER_BUSY_FAILURES) {
       return false;
     }
-    if (this.lastResetAtMs === null || this.resetsSinceConnect === 0) {
+    // Cleared by onSessionConnected(), so the floor only ever spaces out bounces that did
+    // NOT work. A bounce followed by a connect did its job, and the next wedge is a fresh
+    // event rather than a retry of a failed remedy. Testing resetsSinceConnect here as
+    // well used to say the same thing twice, which made deleting either an equivalent
+    // mutant — two mechanisms where the rule needs one.
+    if (this.lastResetAtMs === null) {
       return true;
     }
     return nowMs - this.lastResetAtMs >= ADAPTER_RESET_MIN_INTERVAL_MS;
