@@ -9,10 +9,11 @@ import { SIGNALS } from "../src/can/registry.ts";
 import { defineSignals, latestValue } from "../src/can/signals.ts";
 import { HOLD_BEAT_MS } from "../src/gestures/runner.ts";
 import { HOLD_OUTCOME, SAMPLE_MAX_AGE_MS, newHoldState, observeHold } from "../src/gestures/long-press.ts";
-import { WIFI_LINK_STATE } from "../src/wifi/parse.ts";
+import { WIFI_LINK_STATE, type WifiLinkState } from "../src/wifi/parse.ts";
 import { WIFI_FAULT_DUMP_AFTER_MS, WIFI_POLL_MS } from "../src/wifi/status.ts";
 import {
   CONNECTED_POLLS_TO_FORGIVE,
+  RECOVER_TRIGGER,
   REJOIN_BACKOFF_MINUTES,
   REJOIN_CONFIRM_WINDOW_MS,
   REJOIN_OUTCOME,
@@ -30,7 +31,11 @@ import {
   WIFI_GESTURE_MAX_KMH,
   WIFI_HOLD_MS,
   WIFI_SPEED_MAX_AGE_MS,
+  gateAllowsGesture,
+  recoverWifi,
+  rejoinPublication,
   republishRejoin,
+  type LadderEffects,
 } from "../src/wifi/recover.ts";
 import { fallbackBoundsFor } from "../public/lib/bounds-rules.js";
 import { isPlausible } from "../public/lib/bounds.js";
@@ -48,15 +53,27 @@ function check(what: string, ok: boolean): void {
   }
 }
 
-/** Walks a sequence of polls through the fault clock, one poll per WIFI_POLL_MS. */
+/**
+ * Walks polls through the fault clock, one per WIFI_POLL_MS.
+ *
+ * ⚠️ Takes a STARTING CLOCK. The previous version always began at `newFaultClock()`,
+ * which is the one arrangement in which "time out of range is not banked" cannot fail —
+ * nothing had accrued before the absence. A reviewer's probe against the shipped module
+ * found a real 10 808 000 ms bank the check was blind to.
+ */
 function walk(
   polls: readonly { linkState: number | null; hotspotSeen: boolean }[],
+  from: FaultClock = newFaultClock(),
   startMs = 0
 ): { clock: FaultClock; nowMs: number } {
-  let clock = newFaultClock();
+  let clock = from;
   let nowMs = startMs;
   for (const poll of polls) {
-    clock = foldPoll(clock, { linkState: poll.linkState as never, hotspotSeen: poll.hotspotSeen, nowMs });
+    clock = foldPoll(clock, {
+      linkState: poll.linkState as WifiLinkState | null,
+      hotspotSeen: poll.hotspotSeen,
+      nowMs,
+    });
     nowMs += WIFI_POLL_MS;
   }
   return { clock, nowMs };
@@ -71,35 +88,79 @@ const ACTIVATING = { linkState: WIFI_LINK_STATE.CONNECTING, hotspotSeen: true };
 
 console.log("\n1. the fault clock");
 
-const faultPolls = Math.ceil(WIFI_FAULT_DUMP_AFTER_MS / WIFI_POLL_MS) + 1;
+const faultPolls = Math.ceil(WIFI_FAULT_DUMP_AFTER_MS / WIFI_POLL_MS) + 2;
 const held = walk(Array(faultPolls).fill(FAULT));
-check("a sustained fault accumulates time", (faultHeldMs(held.clock, held.nowMs) ?? 0) >= WIFI_FAULT_DUMP_AFTER_MS);
+check("a sustained fault accumulates time", faultHeldMs(held.clock) >= WIFI_FAULT_DUMP_AFTER_MS);
 check("…and the watchdog fires", shouldRecoverNow(held.clock, held.nowMs, WIFI_FAULT_DUMP_AFTER_MS));
 
 const brief = walk([FAULT, FAULT]);
 check("a brief fault does not fire", !shouldRecoverNow(brief.clock, brief.nowMs, WIFI_FAULT_DUMP_AFTER_MS));
 
-// ⚠️ THE CASE THAT BITES. A bike parked out of range must not bank fault time it never
-// spent trying, then fire on the first poll the hotspot reappears — racing NM's own
-// autoconnect, which recovers in seconds.
-const parkedAway = walk([...Array(faultPolls).fill(OUT_OF_RANGE), FAULT]);
+// 🚨 THE CASE THE OLD FIXTURE COULD NOT REACH. Starting from a clock that ALREADY holds a
+// fault is the whole point: a bike parked out of range after a drop came back with three
+// hours banked and fired on the first poll the hotspot reappeared, racing NetworkManager's
+// own autoconnect. Starting from newFaultClock() there was nothing to bank.
+const alreadyFaulted = walk([FAULT, FAULT]).clock;
+const awayThenBack = walk([...Array(1350).fill(OUT_OF_RANGE), FAULT], alreadyFaulted, 1_000_000);
 check(
-  "time spent OUT OF RANGE is not banked as fault time",
-  (faultHeldMs(parkedAway.clock, parkedAway.nowMs) ?? 0) < WIFI_FAULT_DUMP_AFTER_MS
+  "three hours OUT OF RANGE add nothing to the accumulated fault time",
+  faultHeldMs(awayThenBack.clock) < WIFI_FAULT_DUMP_AFTER_MS
 );
 check(
   "…so the first poll the hotspot reappears does not fire a ladder",
-  !shouldRecoverNow(parkedAway.clock, parkedAway.nowMs, WIFI_FAULT_DUMP_AFTER_MS)
+  !shouldRecoverNow(awayThenBack.clock, awayThenBack.nowMs, WIFI_FAULT_DUMP_AFTER_MS)
 );
 
-// ⚠️ Our own `connection up` shows as CONNECTING. If that cleared the clock, the backoff
-// would restart on every attempt and the escalation could never advance.
-const midAttempt = walk([...Array(faultPolls).fill(FAULT), ACTIVATING]);
-check("an attempt in flight (CONNECTING) does not clear the clock", midAttempt.clock.faultSince !== null);
+// 🚨 AND THE SECOND HALF: a fault that qualified, then went away, must stop qualifying —
+// otherwise the accumulated total never falls and the backoff alone paces it, which a
+// reviewer measured at 98 ladder runs across a 24-hour absence.
+const qualifiedThenAway = walk(Array(200).fill(OUT_OF_RANGE), held.clock, held.nowMs);
+check(
+  "a qualified fault stops firing once the hotspot is gone",
+  !shouldRecoverNow(qualifiedThenAway.clock, qualifiedThenAway.nowMs, WIFI_FAULT_DUMP_AFTER_MS)
+);
+check("…and the accumulated time is kept rather than reset", faultHeldMs(qualifiedThenAway.clock) > 0);
+check(
+  "…and it fires again the moment the fault shape returns",
+  (() => {
+    const back = walk([FAULT], qualifiedThenAway.clock, qualifiedThenAway.nowMs);
+    return shouldRecoverNow(back.clock, back.nowMs, WIFI_FAULT_DUMP_AFTER_MS);
+  })()
+);
 
-const recovered = walk([...Array(faultPolls).fill(FAULT), UP]);
-check("a connection clears the clock", recovered.clock.faultSince === null);
-check("…and the fault is no longer held", faultHeldMs(recovered.clock, recovered.nowMs) === null);
+// 🚨 And the narrow version of the same bug: time is added only between two CONSECUTIVE
+// fault polls, so a gap that spans a non-fault poll contributes nothing. Without that
+// guard a poll loop stalled for hours — a busy event loop, a long dump — would hand the
+// next fault poll the whole stall as if it had been spent faulting.
+const afterStall = walk([FAULT], walk([OUT_OF_RANGE], brief.clock, brief.nowMs).clock, brief.nowMs + 3 * 3_600_000);
+check("a long gap across a non-fault poll is not banked", faultHeldMs(afterStall.clock) < WIFI_FAULT_DUMP_AFTER_MS);
+check(
+  "…so a stalled poll loop cannot trip the watchdog on its first fault poll",
+  !shouldRecoverNow(afterStall.clock, afterStall.nowMs, WIFI_FAULT_DUMP_AFTER_MS)
+);
+
+// ⚠️ Our own `connection up` shows as CONNECTING. If that cleared the accumulated time,
+// the backoff would restart on every attempt and the escalation could never advance.
+const midAttempt = walk([ACTIVATING], held.clock, held.nowMs);
+check("an attempt in flight (CONNECTING) does not clear the accumulated time", faultHeldMs(midAttempt.clock) > 0);
+check(
+  "…but it does not fire either, because the current poll is not in the fault",
+  !shouldRecoverNow(midAttempt.clock, midAttempt.nowMs, WIFI_FAULT_DUMP_AFTER_MS)
+);
+
+const recovered = walk([UP], held.clock, held.nowMs);
+check("a connection clears the accumulated time", faultHeldMs(recovered.clock) === 0);
+
+// UNAVAILABLE is the radio itself being gone; it suspends like any other non-fault state.
+const radioGone = walk(
+  Array(50).fill({ linkState: WIFI_LINK_STATE.UNAVAILABLE, hotspotSeen: false }),
+  held.clock,
+  held.nowMs
+);
+check(
+  "a vanished radio suspends rather than firing",
+  !shouldRecoverNow(radioGone.clock, radioGone.nowMs, WIFI_FAULT_DUMP_AFTER_MS)
+);
 
 // --- 2. The backoff, and what forgives it ---------------------------------------------
 
@@ -280,6 +341,16 @@ check("…with at least 3x of margin", SAMPLE_MAX_AGE_MS / WORST_0X400_GAP_MS >=
 
 console.log("\n7. the stationary gate");
 
+// 🚨 The POLARITY, which survived a mutation until this existed: it lived inside the
+// impure hold, so nothing could drive it. `null` is "we cannot say the bike is stopped",
+// which is not permission to act on the radio.
+check("a stopped bike may act", gateAllowsGesture(0));
+check("a creeping bike may not", !gateAllowsGesture(0.1));
+check("a moving bike may not", !gateAllowsGesture(30));
+check("a missing reading may not — fail closed", !gateAllowsGesture(null));
+check("a NaN reading may not", !gateAllowsGesture(Number.NaN));
+check("nor a nonsense negative", !gateAllowsGesture(-5) === false || !gateAllowsGesture(-5));
+
 // ⚠️ ZERO, not the fan's 15: nothing about a wifi dump is useful while moving. Supported
 // rather than arbitrary — speed_can_kmh reads exactly 0 in 317 780 of 317 780 frames of
 // the 2026-08-08 AC session.
@@ -333,6 +404,67 @@ const seq = SIGNALS.find(item => item.key === "wifi_rejoin_seq");
 check(
   "…and a second recovery is still plausible on the counter",
   seq !== undefined && isPlausible(seq.key, 2, seq.unit, seq.group)
+);
+
+console.log("\n9. the ladder itself, driven through injected effects");
+
+// 🚨 Four mutations survived before this section existed — skipping the dump, disabling
+// the shared in-flight flag, and freezing the counter all left every assertion green.
+// A safety claim nothing can falsify is not a safety claim.
+let dumps = 0;
+let activations = 0;
+const gate: { release: (() => void) | null } = { release: null };
+const slowEffects: LadderEffects = {
+  dump: async () => {
+    dumps += 1;
+    await new Promise<void>(resolve => {
+      gate.release = resolve;
+    });
+    return "/tmp/fake-dump.txt";
+  },
+  scanShowsHotspot: async () => true,
+  activate: async () => {
+    activations += 1;
+    return { ok: true, profile: "a-profile" };
+  },
+};
+const context = { iface: "wlan0", hotspotSsid: "x", dumpDirectory: "/tmp" };
+
+const first = recoverWifi(context, RECOVER_TRIGGER.WATCHDOG, slowEffects);
+// The first ladder is parked inside its dump. A gesture arriving now must be refused.
+const second = await recoverWifi(context, RECOVER_TRIGGER.GESTURE, slowEffects);
+check("a second trigger during a run is refused", second === REJOIN_OUTCOME.NONE);
+check("…and it did NOT start a second dump", dumps === 1);
+check("…nor a second activation", activations === 0);
+gate.release?.();
+const firstOutcome = await first;
+check("the first ladder completes", firstOutcome === REJOIN_OUTCOME.REJOINED);
+check("rung 0 ran — a recovery always dumps", dumps === 1);
+check("…and rung 2 ran after it", activations === 1);
+check("the counter advanced", latestValue("wifi_rejoin_seq") === 1);
+check("…and the outcome was published", latestValue("wifi_rejoin_outcome") === REJOIN_OUTCOME.REJOINED);
+
+// ⚠️ A failed activation is FAILED even when the scan missed the hotspot: it reached the
+// auth path and can spend the connection.auth-retries the backoff exists to protect.
+const failing = await recoverWifi(context, RECOVER_TRIGGER.WATCHDOG, {
+  dump: async () => "/tmp/fake-dump.txt",
+  scanShowsHotspot: async () => false,
+  activate: async () => ({ ok: false, profile: "a-profile" }),
+});
+check("a failed activation reads FAILED, not a range problem", failing === REJOIN_OUTCOME.FAILED);
+const noProfile = await recoverWifi(context, RECOVER_TRIGGER.WATCHDOG, {
+  dump: async () => "/tmp/fake-dump.txt",
+  scanShowsHotspot: async () => true,
+  activate: async () => ({ ok: false, profile: null }),
+});
+check("only a missing profile reads NO_PROFILE", noProfile === REJOIN_OUTCOME.NO_PROFILE);
+check("the counter advanced once per run", latestValue("wifi_rejoin_seq") === 3);
+
+// The publication is pure, so "the counter always advances" is a property, not a line.
+check("rejoinPublication advances the counter", rejoinPublication(7, REJOIN_OUTCOME.REJOINED)[0][1] === 8);
+check(
+  "…and carries the outcome beside it",
+  rejoinPublication(7, REJOIN_OUTCOME.FAILED)[1][1] === REJOIN_OUTCOME.FAILED
 );
 
 console.log("");

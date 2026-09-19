@@ -44,6 +44,45 @@ export const WIFI_GESTURE_MAX_KMH = 0;
 /** How stale a speed reading may be and still say the bike is stopped. */
 export const WIFI_SPEED_MAX_AGE_MS = 500;
 
+/**
+ * Whether the bike is proven stopped.
+ *
+ * ⚠️ PURE and separate, because the polarity is the whole of it and a mutation inverting
+ * the branch survived while it lived inside the impure hold. `null` is "we cannot say",
+ * which is not permission to act on the radio — the same fail-closed shape as ../fan/fun.ts.
+ */
+export function gateAllowsGesture(speedKmh: number | null): boolean {
+  if (speedKmh === null || !Number.isFinite(speedKmh)) {
+    return false;
+  }
+  return speedKmh <= WIFI_GESTURE_MAX_KMH;
+}
+
+/**
+ * What a completed recovery publishes. Pure, so "the counter always advances" is a
+ * property a check can hold rather than a line it can only read.
+ */
+export function rejoinPublication(previousSeq: number, outcome: RejoinOutcome): [string, number][] {
+  return [
+    ["wifi_rejoin_seq", previousSeq + 1],
+    ["wifi_rejoin_outcome", outcome],
+  ];
+}
+
+/**
+ * The three things a ladder actually does to the world, injectable so the ORDER and the
+ * GUARDS are drivable without a radio.
+ *
+ * ⚠️ Added because four mutations survived otherwise — skipping the dump, disabling the
+ * shared in-flight flag, and freezing the counter all left every assertion green. A
+ * safety claim nothing can falsify is not a safety claim.
+ */
+export interface LadderEffects {
+  dump: () => Promise<string | null>;
+  scanShowsHotspot: () => Promise<boolean>;
+  activate: () => Promise<{ ok: boolean; profile: string | null }>;
+}
+
 export interface RecoverContext {
   iface: string;
   hotspotSsid: string;
@@ -67,14 +106,18 @@ export function recoveryInFlight(): boolean {
  * `wifi_rejoin_seq` and `wifi_rejoin_outcome` are what the phone raises a banner from and
  * what the ride log keeps. A recovery nobody can see afterwards is half a feature.
  */
-export async function recoverWifi(context: RecoverContext, trigger: RecoverTrigger): Promise<RejoinOutcome> {
+export async function recoverWifi(
+  context: RecoverContext,
+  trigger: RecoverTrigger,
+  effects: LadderEffects = realEffects(context)
+): Promise<RejoinOutcome> {
   if (running) {
     console.log(`wifi-recover: ${trigger} ignored — a recovery is already running`);
     return REJOIN_OUTCOME.NONE;
   }
   running = true;
   try {
-    return await runLadder(context, trigger);
+    return await runLadder(trigger, effects);
   } catch (error) {
     // runLadder does not throw by design. If it ever does, the flag must still clear or
     // nothing recovers for the rest of the boot.
@@ -85,59 +128,86 @@ export async function recoverWifi(context: RecoverContext, trigger: RecoverTrigg
   }
 }
 
-/** Dump first, then — if asked — refresh the scan and activate. */
-async function runLadder(context: RecoverContext, trigger: RecoverTrigger): Promise<RejoinOutcome> {
-  const written = await writeWifiDump(context.dumpDirectory, context.iface, uptime());
+/** Dump ALWAYS, then refresh the scan and activate. */
+async function runLadder(trigger: RecoverTrigger, effects: LadderEffects): Promise<RejoinOutcome> {
+  // ⚠️ Rung 0 is unconditional. A recovery that rejoins without recording what was wrong
+  // leaves the next occurrence exactly as undiagnosable as this one was.
+  const written = await effects.dump();
   console.log(
     written === null
       ? `wifi-recover: ${trigger} — the dump could not be written, see the warning above`
       : `wifi-recover: ${trigger} — wrote ${written}`
   );
-  const outcome = await rejoin(context, trigger);
-  publish(outcome);
+  const seen = await effects.scanShowsHotspot();
+  if (!seen) {
+    // ⚠️ Attempted anyway. A hidden SSID, or one missed by a single scan, is not proof of
+    // absence, and `ssid-not-found` never reaches the auth path that spends auth-retries.
+    console.log(`wifi-recover: ${trigger} — the hotspot is not in the refreshed scan, trying anyway`);
+  }
+  const attempt = await effects.activate();
+  const outcome = outcomeOf(attempt);
+  console.log(`wifi-recover: ${trigger} — outcome ${outcome}`);
+  lastOutcome = outcome;
+  for (const [key, value] of rejoinPublication(rejoinSeq, outcome)) {
+    record(key, value);
+  }
+  rejoinSeq += 1;
   return outcome;
 }
 
 /**
- * The radio half.
- *
- * ⚠️ `--rescan yes` is the whole of "rescan and settle". nmcli sets the scan cutoff to
- * now and waits until NetworkManager's results are provably newer, bounded internally, so
- * there is no hand-rolled wait loop here and no timeout constant of ours to get wrong.
- * It is also why this must never run on the poll path: that path's contract is
- * 2 × WIFI_POLL_TIMEOUT_MS < WIFI_POLL_MS, which a call this slow would break.
+ * ⚠️ A FAILED ACTIVATION IS `FAILED`, whether or not the scan saw the hotspot. It was
+ * `seen ? FAILED : NOT_IN_RANGE`, which sold a real auth-path failure — the kind that
+ * spends the `connection.auth-retries` the backoff exists to protect — as "not in range".
+ * NO_PROFILE is now the only non-attempt, and it says what it means.
  */
-async function rejoin(context: RecoverContext, trigger: RecoverTrigger): Promise<RejoinOutcome> {
-  const list = await runCommand(
-    NMCLI,
-    ["-t", "-f", "ACTIVE,SSID,SIGNAL", "device", "wifi", "list", "--rescan", "yes"],
-    RESCAN_TIMEOUT_MS
-  );
-  if (list.exitCode !== 0) {
-    console.warn(`wifi-recover: ${list.command} exited ${list.exitCode}: ${list.stderr.trim()}`);
+function outcomeOf(attempt: { ok: boolean; profile: string | null }): RejoinOutcome {
+  if (attempt.profile === null) {
+    return REJOIN_OUTCOME.NO_PROFILE;
   }
-  const seen = list.exitCode === 0 && parseWifiList(list.stdout, context.hotspotSsid).hotspotSeen;
-  if (!seen) {
-    // ⚠️ Attempted anyway. A hidden SSID, or one missed by a single scan, is not proof of
-    // absence — and the attempt is cheap in the resource that matters, because
-    // `ssid-not-found` never reaches the auth path that spends connection.auth-retries.
-    console.log(`wifi-recover: ${trigger} — the hotspot is not in the refreshed scan, trying anyway`);
-  }
-  const profile = await hotspotProfileName(context.hotspotSsid);
-  if (profile === null) {
-    console.warn(`wifi-recover: no saved profile carries the configured SSID — nothing to activate`);
-    return REJOIN_OUTCOME.NOT_IN_RANGE;
-  }
-  // ⚠️ BY NAME. NetworkManager's nmc_find_connection() matches uuid, id, path and
-  // filename and has no SSID arm, so `connection up <ssid>` can only answer "unknown
-  // connection" whenever the two differ — which they do on this Pi. docs/wifi.md §3.
-  const up = await runCommand(NMCLI, ["connection", "up", profile], ACTIVATE_TIMEOUT_MS);
-  if (up.exitCode === 0) {
-    console.log(`wifi-recover: ${trigger} — activated "${profile}"`);
-    return REJOIN_OUTCOME.REJOINED;
-  }
-  console.warn(`wifi-recover: ${trigger} — activating "${profile}" failed: ${up.stderr.trim() || up.stdout.trim()}`);
-  return seen ? REJOIN_OUTCOME.FAILED : REJOIN_OUTCOME.NOT_IN_RANGE;
+  return attempt.ok ? REJOIN_OUTCOME.REJOINED : REJOIN_OUTCOME.FAILED;
+}
+
+/**
+ * The real commands, behind the seam.
+ *
+ * ⚠️ `--rescan yes` is the whole of "rescan and settle": nmcli sets the scan cutoff to now
+ * and waits until NetworkManager's results are provably newer, bounded internally, so
+ * there is no wait loop here and no timeout constant of ours to get wrong. It is also why
+ * this must never run on the poll path, whose contract is 2 × WIFI_POLL_TIMEOUT_MS <
+ * WIFI_POLL_MS.
+ */
+function realEffects(context: RecoverContext): LadderEffects {
+  return {
+    dump: () => writeWifiDump(context.dumpDirectory, context.iface, uptime()),
+    scanShowsHotspot: async () => {
+      const list = await runCommand(
+        NMCLI,
+        ["-t", "-f", "ACTIVE,SSID,SIGNAL", "device", "wifi", "list", "--rescan", "yes"],
+        RESCAN_TIMEOUT_MS
+      );
+      if (list.exitCode !== 0) {
+        console.warn(`wifi-recover: ${list.command} exited ${list.exitCode}: ${list.stderr.trim()}`);
+        return false;
+      }
+      return parseWifiList(list.stdout, context.hotspotSsid).hotspotSeen;
+    },
+    activate: async () => {
+      const profile = await hotspotProfileName(context.hotspotSsid);
+      if (profile === null) {
+        console.warn("wifi-recover: no saved profile carries the configured SSID — nothing to activate");
+        return { ok: false, profile: null };
+      }
+      // ⚠️ BY NAME. NetworkManager's nmc_find_connection() matches uuid, id, path and
+      // filename and has no SSID arm, so `connection up <ssid>` can only answer "unknown
+      // connection" whenever the two differ — which they do on this Pi. docs/wifi.md §3.
+      const up = await runCommand(NMCLI, ["connection", "up", profile], ACTIVATE_TIMEOUT_MS);
+      if (up.exitCode !== 0) {
+        console.warn(`wifi-recover: activating "${profile}" failed: ${up.stderr.trim() || up.stdout.trim()}`);
+      }
+      return { ok: up.exitCode === 0, profile };
+    },
+  };
 }
 
 /** ⚠️ Generous, because `--rescan yes` waits on real scan results. */
@@ -158,20 +228,6 @@ async function hotspotProfileName(hotspotSsid: string): Promise<string | null> {
     }
   }
   return null;
-}
-
-/**
- * Publishes what happened.
- *
- * ⚠️ A COUNTER beside the code, for the reason docs/can-decode-findings.md gives about
- * re-selecting a value you already had: `record()` seals a row only when the value moves,
- * so two identical outcomes in a row would write one row, raise one change and put up one
- * banner — and the second hold at the same charger would look like it had worked.
- */
-function publish(outcome: RejoinOutcome): void {
-  rejoinSeq += 1;
-  record("wifi_rejoin_seq", rejoinSeq);
-  record("wifi_rejoin_outcome", outcome);
 }
 
 /** Re-records both on every poll, so the group never reads part-dark. ./status.ts calls it. */
@@ -203,17 +259,34 @@ async function performWifiHold(context: RecoverContext): Promise<string> {
   }
   const decision = decideGesture(currentLinkState(), armedAt === null ? null : since(armedAt));
   if (!decision.rejoin) {
+    // ⚠️ The dump takes the SHARED flag too. It runs a dozen children against the same
+    // radio a watchdog ladder may already be using, and "it only dumps" is not a reason
+    // to let two of them overlap.
+    if (running) {
+      return "a recovery is already running, so this hold was ignored";
+    }
+    running = true;
     armedAt = decision.arm ? monotonicNow() : armedAt;
-    const written = await writeWifiDump(context.dumpDirectory, context.iface, uptime());
-    lastOutcome = REJOIN_OUTCOME.DUMP_ONLY;
-    publish(lastOutcome);
+    let written: string | null = null;
+    try {
+      written = await writeWifiDump(context.dumpDirectory, context.iface, uptime());
+      lastOutcome = REJOIN_OUTCOME.DUMP_ONLY;
+      for (const [key, value] of rejoinPublication(rejoinSeq, lastOutcome)) {
+        record(key, value);
+      }
+      rejoinSeq += 1;
+    } finally {
+      running = false;
+    }
     return written === null
       ? "the link is up, so it was left alone — but the dump could not be written"
       : `the link is up, so it was left alone; dumped to ${written}. Hold again within 60 s to force a rejoin.`;
   }
   armedAt = null;
-  lastOutcome = await recoverWifi(context, RECOVER_TRIGGER.GESTURE);
-  return describeOutcome(lastOutcome);
+  // ⚠️ NOT assigned to lastOutcome: an ignored trigger answers NONE, and writing that
+  // over the real outcome of the run still in flight would make the signal disagree with
+  // the counter beside it. runLadder owns lastOutcome; this only words a sentence.
+  return describeOutcome(await recoverWifi(context, RECOVER_TRIGGER.GESTURE));
 }
 
 /**
@@ -247,7 +320,7 @@ function describeOutcome(outcome: RejoinOutcome): string {
   if (outcome === REJOIN_OUTCOME.REJOINED) {
     return "rejoined";
   }
-  if (outcome === REJOIN_OUTCOME.NOT_IN_RANGE) {
+  if (outcome === REJOIN_OUTCOME.NO_PROFILE) {
     return "the hotspot was not in range; the dump is on the Pi";
   }
   if (outcome === REJOIN_OUTCOME.NONE) {

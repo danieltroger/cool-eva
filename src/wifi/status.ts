@@ -97,7 +97,7 @@ export function startWifiMonitor(
       const now = monotonicNow();
       clock = foldPoll(clock, { ...reading, nowMs: now });
       if (shouldRecoverNow(clock, now, WIFI_FAULT_DUMP_AFTER_MS)) {
-        const held = faultHeldMs(clock, now) ?? 0;
+        const held = faultHeldMs(clock);
         console.log(`wifi: disconnected ${(held / 1000).toFixed(0)} s with the hotspot in range — recovering`);
         clock = afterAttempt(clock, now);
         // ⚠️ NOT awaited, and the reason is the same one ./recover.ts's in-flight flag
@@ -222,7 +222,12 @@ export function describeState(
     if (where === null) {
       return "connected, but the scan list did not say to what";
     }
-    return `on "${where}"${strength === null ? "" : ` at ${strength} %`}`;
+    // ⚠️ NO SIGNAL PERCENT. This sentence is the dedupe key for the journal line, and the
+    // percent wanders by a few points while nothing is happening — which printed it 422
+    // times in one boot, 9.3 % of every line the service logged, against a doc that
+    // promises "once, when it changes". The strength lives in `iw dev wlan0 link` in the
+    // dump, in dBm, which is the better number anyway.
+    return `on "${where}"`;
   }
   if (linkState === WIFI_LINK_STATE.CONNECTING) {
     return "connecting";

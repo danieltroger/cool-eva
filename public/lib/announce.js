@@ -172,13 +172,6 @@ function announceFanState() {
 }
 
 /**
- * Waypoints saved and waypoints refused, off their two counters.
- *
- * ⚠️ Counters and not values, because `record()` seals a row only when the value MOVES:
- * two identical refusals in a row would otherwise be one banner, and the second hold at
- * the same spot with the same stale fix would look like it had worked.
- */
-/**
  * What the rider is told when the wifi recovers itself, or when a hold asks it to.
  *
  * ⚠️ Keyed off `wifi_rejoin_seq`, a COUNTER, and not off the outcome code: two identical
@@ -215,6 +208,13 @@ function announceWifiRejoin() {
   });
 }
 
+/**
+ * Waypoints saved and waypoints refused, off their two counters.
+ *
+ * ⚠️ Counters and not values, because `record()` seals a row only when the value MOVES:
+ * two identical refusals in a row would otherwise be one banner, and the second hold at
+ * the same spot with the same stale fix would look like it had worked.
+ */
 function announceWaypoints() {
   let saved = /** @type {{ value: number | null, baselined: boolean }} */ (blank());
   let refused = /** @type {{ value: number | null, baselined: boolean }} */ (blank());

@@ -27,13 +27,13 @@ export const REJOIN_OUTCOME = {
   /** Activation was attempted and did not take. */
   FAILED: 3,
   /**
-   * The hotspot was not in the refreshed scan, so nothing was attempted.
+   * No saved profile carries the configured SSID, so nothing was attempted.
    *
-   * ⚠️ Its own code rather than FAILED, because the two spend different resources:
-   * `ssid-not-found` never reaches NetworkManager's auth path, so it cannot consume the
-   * `connection.auth-retries` budget whose exhaustion is what creates the latch.
+   * ⚠️ This is the ONLY non-attempt. It used to also cover "the refreshed scan did not
+   * show the hotspot", which quietly relabelled a real failed activation — one that DID
+   * reach the auth path and DID spend `connection.auth-retries` — as a range problem.
    */
-  NOT_IN_RANGE: 4,
+  NO_PROFILE: 4,
 } as const;
 
 export type RejoinOutcome = (typeof REJOIN_OUTCOME)[keyof typeof REJOIN_OUTCOME];
@@ -60,8 +60,20 @@ export const REJOIN_BACKOFF_MINUTES = [2, 4, 8, 15] as const;
 export const CONNECTED_POLLS_TO_FORGIVE = 2;
 
 export interface FaultClock {
-  /** Monotonic instant the current fault began, or null when there is no fault. */
-  faultSince: number | null;
+  /**
+   * Fault time ACCUMULATED, not wall time since it began.
+   *
+   * 🚨 It was `faultSince` and a subtraction, and that silently banked every second the
+   * clock was supposed to be suspending: a bike parked three hours out of range came back
+   * holding 10 808 000 ms and fired a ladder on the first poll the hotspot reappeared —
+   * racing NetworkManager's own autoconnect, which is precisely what the suspend arm
+   * exists to prevent. Time can only be added between two CONSECUTIVE fault polls.
+   */
+  heldMs: number;
+  /** Whether the most recent poll was in the fault shape. */
+  inFault: boolean;
+  /** Monotonic instant of the last fold, so a delta can be taken. */
+  lastPollAt: number | null;
   /** How many consecutive polls have read CONNECTED. */
   connectedPolls: number;
   /**
@@ -77,7 +89,7 @@ export interface FaultClock {
 }
 
 export function newFaultClock(): FaultClock {
-  return { faultSince: null, connectedPolls: 0, attempts: 0, lastAttemptAt: null };
+  return { heldMs: 0, inFault: false, lastPollAt: null, connectedPolls: 0, attempts: 0, lastAttemptAt: null };
 }
 
 export interface PollReading {
@@ -89,40 +101,39 @@ export interface PollReading {
 /**
  * Folds one poll into the fault clock.
  *
- * ⚠️ THE CLOCK AND THE BACKOFF ARE CLEARED BY DIFFERENT THINGS, and an earlier draft
- * used one rule for both. Three states have to be told apart:
- *
- *   • CONNECTED — the fault is over, so the clock clears immediately;
- *   • the fault shape (disconnected AND the hotspot in range) — the clock runs;
- *   • anything else (out of range, radio unavailable, mid-activation) — the clock is
- *     SUSPENDED, neither running nor cleared.
- *
- * That third case is the one that bites. A bike parked out of range would otherwise bank
- * fault time it never spent trying, and fire a ladder on the first poll the hotspot
- * reappeared — racing NetworkManager's own autoconnect, which recovers in seconds.
- * Our own `connection up` also lands here, as CONNECTING, so an attempt cannot reset the
- * clock that paces attempts.
+ * Three states, told apart: CONNECTED ends the fault, the fault shape accrues time, and
+ * everything else — out of range, radio unavailable, an activation of ours in flight —
+ * SUSPENDS it: the total is kept, none is added. docs/wifi.md §4 has why each arm exists.
  */
 export function foldPoll(clock: FaultClock, reading: PollReading): FaultClock {
+  const base = { ...clock, lastPollAt: reading.nowMs };
   if (reading.linkState === WIFI_LINK_STATE.CONNECTED) {
     const connectedPolls = clock.connectedPolls + 1;
+    const forgiven = connectedPolls >= CONNECTED_POLLS_TO_FORGIVE;
     return {
-      faultSince: null,
+      ...base,
+      heldMs: 0,
+      inFault: false,
       connectedPolls,
       // Forgiven only once the link has held. See CONNECTED_POLLS_TO_FORGIVE.
-      attempts: connectedPolls >= CONNECTED_POLLS_TO_FORGIVE ? 0 : clock.attempts,
-      lastAttemptAt: connectedPolls >= CONNECTED_POLLS_TO_FORGIVE ? null : clock.lastAttemptAt,
+      attempts: forgiven ? 0 : clock.attempts,
+      lastAttemptAt: forgiven ? null : clock.lastAttemptAt,
     };
   }
   if (reading.linkState === WIFI_LINK_STATE.DISCONNECTED && reading.hotspotSeen) {
-    return { ...clock, connectedPolls: 0, faultSince: clock.faultSince ?? reading.nowMs };
+    // ⚠️ Only between two CONSECUTIVE fault polls. Adding the gap from a poll that was
+    // NOT in fault would bank the suspension it is meant to skip.
+    const elapsed = clock.inFault && clock.lastPollAt !== null ? reading.nowMs - clock.lastPollAt : 0;
+    return { ...base, heldMs: clock.heldMs + elapsed, inFault: true, connectedPolls: 0 };
   }
-  return { ...clock, connectedPolls: 0 };
+  // Suspended: out of range, radio unavailable, or an activation of ours in flight. The
+  // accumulated time is KEPT — the fault has not ended — but none is added.
+  return { ...base, inFault: false, connectedPolls: 0 };
 }
 
-/** How long the fault has held, or null if there is no fault running. */
-export function faultHeldMs(clock: FaultClock, nowMs: number): number | null {
-  return clock.faultSince === null ? null : nowMs - clock.faultSince;
+/** How long the fault has held, counting only polls that were actually in it. */
+export function faultHeldMs(clock: FaultClock): number {
+  return clock.heldMs;
 }
 
 /**
@@ -132,8 +143,11 @@ export function faultHeldMs(clock: FaultClock, nowMs: number): number | null {
  * backoff since the last attempt must have elapsed.
  */
 export function shouldRecoverNow(clock: FaultClock, nowMs: number, faultAfterMs: number): boolean {
-  const held = faultHeldMs(clock, nowMs);
-  if (held === null || held < faultAfterMs) {
+  // 🚨 THE CURRENT POLL MUST BE IN THE FAULT, not merely some earlier one. Without this a
+  // bike that went out of range after a fault kept qualifying for ever: the accumulated
+  // time never falls, so the backoff alone paced it and a 24-hour absence produced 98
+  // ladder runs against a radio that had nothing to join.
+  if (!clock.inFault || clock.heldMs < faultAfterMs) {
     return false;
   }
   if (clock.lastAttemptAt === null) {
