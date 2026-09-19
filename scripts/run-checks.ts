@@ -237,6 +237,19 @@ const CHECKS: SelfCheck[] = [
       "dash's own measured 4.2-10.1 ms",
   },
   {
+    script: "scripts/check-charge-soc-limit.ts",
+    covers:
+      "the SOC charge-limit command and decoder against frames the BIKE put on the bus: that the builder " +
+      "reproduces all three of the dash's own menu confirms byte for byte (40 % on 2026-08-02, 0 and 80 % on " +
+      "2026-09-19) and the 90 % written on-bike that evening; that it emits ONE frame on 0x120 and never the " +
+      "0x121 half, which is the bike's own answer and spoofing it moves the dash display without committing " +
+      "anything; that the write carries bit 7 SET and the read bit 7 CLEAR with b2 = 0, the direction bit being " +
+      "the difference between a read-back and silently writing 'no limit'; that the decoder reads five captured " +
+      "and live replies back, 0 included since 0 is a legal value here; that neither it nor the charge-current " +
+      "decoder reads the other's opcodes on the shared id; and that the endpoint's confirmation carries the " +
+      "percentage, with 0 needing a word of its own",
+  },
+  {
     script: "scripts/check-freeze-frame-values.ts",
     covers:
       "the whole-bike freeze-frame read and what is shown from it: that a 0x18 list carrying padding, a component " +

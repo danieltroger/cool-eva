@@ -38,6 +38,9 @@ function stepSweep() {
   }
 }
 
+/** What the preview's bike holds, so a write and the read after it cannot disagree. */
+const SOC_LIMIT = { pct: 90 };
+
 function serviceWrite(query) {
   const action = query.get("action");
   const record = extra => {
@@ -148,6 +151,37 @@ function serviceWrite(query) {
       succeeded: true,
     };
   }
+  if (action === "charge-soc-limit-read") {
+    record({ action: "charge-soc-limit-read", status: "read", after: SOC_LIMIT.pct });
+    return {
+      action: "charge-soc-limit-read",
+      status: "read",
+      message:
+        SOC_LIMIT.pct === 0
+          ? "No charge limit is set — the bike will charge to full."
+          : `The bike is set to stop charging at ${SOC_LIMIT.pct} %.`,
+      succeeded: true,
+    };
+  }
+
+  if (action === "charge-soc-limit") {
+    // ⚠️ The preview keeps the value, so the read afterwards agrees with the write before it.
+    // A stub answering "written" while its own read still said 90 would be a screenshot of a
+    // bike contradicting itself.
+    const before = SOC_LIMIT.pct;
+    SOC_LIMIT.pct = Number(query.get("pct"));
+    record({ action: "charge-soc-limit", status: "written", requested: SOC_LIMIT.pct, before, after: SOC_LIMIT.pct });
+    return {
+      action: "charge-soc-limit",
+      status: "written",
+      message:
+        `The bike will now stop charging at ${SOC_LIMIT.pct} % (was ${before === 0 ? "no limit" : `${before} %`}). ` +
+        "Read back from the VCU's own store, not an echo. ⚠️ That it STORES the limit is not proof it stops " +
+        "there — nothing here has watched the limit be reached — so check the dash and the next full charge.",
+      succeeded: true,
+    };
+  }
+
   if (action === "parameter" || action === "bit") {
     const name = query.get("name");
     const target = TARGETS.find(candidate => candidate.name === name);

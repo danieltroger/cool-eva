@@ -39,6 +39,14 @@ export type AuditAction =
   | "charge-current"
   /** A stop-charging command — the 0x120 Mode-stop request-twin. Fire-and-forget, recorded like charge-current. */
   | "charge-stop"
+  /**
+   * The SOC charge limit on dash command 0x2C. ⚠️ The one command action with a real read-back:
+   * `before` and `after` are the VCU's OWN stored value, read with bit 7 clear, not an echo — so
+   * unlike charge-current this records what the bike holds rather than what left the Pi.
+   */
+  | "charge-soc-limit"
+  /** Reading that limit and changing nothing. Recorded because it still puts a frame on the bus. */
+  | "charge-soc-limit-read"
   /** ECUReset (11 02) on both VCU micros — a key-cycle restart. Recorded because it drops the bike off the bus. */
   | "reset-vcu"
   /** Reading the last-service block. Read-only, but recorded because it is the before-picture of the routine. */

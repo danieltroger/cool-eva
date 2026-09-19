@@ -196,6 +196,12 @@ const UNCONFIRMED: Record<string, URLSearchParams> = {
   // Complete on its own — stop takes no fields. Missing only the confirm, so it too is
   // refused FOR the confirmation.
   "charge-stop": new URLSearchParams({ action: "charge-stop" }),
+  // Complete: it carries the percentage. Missing only the confirm, which for this action carries
+  // the value the way charge-current's carries the amps.
+  "charge-soc-limit": new URLSearchParams({ action: "charge-soc-limit", pct: "90" }),
+  // Complete on its own and NEVER confirmed: bit 7 is clear, so it is a read. It parses straight
+  // through, so it never enters the gated set below — the same shape as read-service-stamp.
+  "charge-soc-limit-read": new URLSearchParams({ action: "charge-soc-limit-read" }),
   // Complete on its own — reset takes no fields either. Refused only for the confirmation.
   "reset-vcu": new URLSearchParams({ action: "reset-vcu" }),
 };
@@ -253,7 +259,16 @@ const behindTheFold: string[] = IRREVERSIBLE.map(entry => entry.action);
 // reset-vcu joins too: it is confirm-gated (curl can reach it, and it drops the bike off the bus), but
 // a key-cycle restart erases nothing and reverts nothing — the bike reboots and comes back exactly as
 // it was. Behind a "cannot be undone" fold that row would lie, so it lives out in the open like the two above.
-const REVERSIBLE_CONFIRMED = new Set(["charge-current", "charge-stop", "reset-vcu"]);
+// ⚠️ charge-soc-limit joins for a DIFFERENT reason from the other three, and the difference is
+// the safety floor each one rests on. charge-current's argument is that the setpoint is
+// TRANSIENT — unplugging the charger clears it — so a wrong value undoes itself. The SOC limit
+// is STORED: dash-command writes persist past the sender exiting (docs/dash-command-channel.md),
+// and the 80 % set on 2026-09-19 at 16:56 was still in force hours later. So "the cable comes out
+// and it forgets" is not available here. What IS available, and what no other action on this list
+// has, is a real read-back: the VCU answers a bit-7-clear read with its stored value, so a write
+// that did not take is DETECTED rather than assumed. That is why it is confirmed-and-reversible
+// rather than behind the red fold. docs/dash-command-0x2c-charge-limit.md.
+const REVERSIBLE_CONFIRMED = new Set(["charge-current", "charge-stop", "charge-soc-limit", "reset-vcu"]);
 
 const gatedNotHidden = gated.filter(action => !behindTheFold.includes(action) && !REVERSIBLE_CONFIRMED.has(action));
 check(

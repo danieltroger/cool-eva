@@ -252,6 +252,32 @@ export function parseWriteRequest(
       }
       return { ok: true, request: { kind: "charge-current", amps, origin: "manual" } };
     }
+    case "charge-soc-limit": {
+      const percent = parseNumber(params.get("pct"));
+      if (percent === null) {
+        return { ok: false, reason: `pct must be a whole number, not ${params.get("pct") ?? "(nothing)"}` };
+      }
+      // ⚠️ 0 is "no limit" and REMOVES the bike's battery protection rather than moving it, so it
+      // gets its own word instead of being one keystroke away on the numeric path. Every other
+      // value confirms itself, as charge-current's confirm carries its amps.
+      const expected = percent === 0 ? "charge-soc-limit-off" : `charge-soc-limit-${percent}`;
+      if (params.get("confirm") !== expected) {
+        return {
+          ok: false,
+          reason:
+            percent === 0
+              ? "pct=0 removes the charge limit entirely — the bike would charge to full. Pass confirm=charge-soc-limit-off."
+              : `Setting the charge limit changes what the bike does at the end of every charge. Pass confirm=${expected} to confirm ${percent} %.`,
+        };
+      }
+      return { ok: true, request: { kind: "charge-soc-limit", percent } };
+    }
+    case "charge-soc-limit-read":
+      // No confirm token: bit 7 is clear, which is a read. Still a POST behind the write header,
+      // because it puts a frame on the bike's bus and "touches nothing" must keep meaning that
+      // for GET. Non-mutating is measured on this id, not assumed: two reads a second apart on
+      // 2026-09-19 both returned 80. docs/dash-command-0x2c-charge-limit.md.
+      return { ok: true, request: { kind: "charge-soc-limit-read" } };
     case "charge-stop":
       // Stopping actuates the bike's charging (the benign direction — it ends a charge), so it
       // carries the same one-word confirm the two-tap UI sends but curl must state deliberately.
@@ -276,7 +302,7 @@ export function parseWriteRequest(
     default:
       return {
         ok: false,
-        reason: `action must be one of parameter, parameters, bit, read-service-stamp, set-service-point, sync-clock, clear-dtcs, charge-current, charge-stop, reset-vcu — not ${action ?? "(nothing)"}`,
+        reason: `action must be one of parameter, parameters, bit, read-service-stamp, set-service-point, sync-clock, clear-dtcs, charge-current, charge-stop, charge-soc-limit, charge-soc-limit-read, reset-vcu — not ${action ?? "(nothing)"}`,
       };
   }
 }

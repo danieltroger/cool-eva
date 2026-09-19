@@ -233,6 +233,31 @@ export function applyWriteStatus(payload) {
 }
 
 /**
+ * Fetches the gate ONCE when a control mounts that is not tied to a charge session.
+ *
+ * ⚠️ The derive above fetches only on a charge-session EDGE, which is right for the two controls
+ * that need a live charge — but the SOC charge limit does not (the Pi gates it on the bike-state
+ * gate, which passes a parked unplugged bike). Without this, that control could only ever appear
+ * while charging, which is the one time you are least likely to be setting it.
+ *
+ * ⚠️ NOT a poll, and it must not become one: at most one request per mount of the Charge tab, and
+ * only when no status is held. ⚠️ It also stands down while anything is ARMED, because
+ * fetchChargeWriteStatus() clears `armed` — a fetch landing mid-gesture would silently disarm
+ * another control's primed button. The next mount tries again.
+ */
+export async function ensureWriteStatus() {
+  if (writeStatus.rawVal !== null || statusInFlight || armed.rawVal !== "") {
+    return;
+  }
+  statusInFlight = true;
+  try {
+    await fetchChargeWriteStatus();
+  } finally {
+    statusInFlight = false;
+  }
+}
+
+/**
  * GETs the enabled flag (and the rest of the status). Read-only; touches nothing on the bike.
  *
  * ⚠️ `list=0`. This tab has no parameter picker, so the 269-name listing is 14 397 bytes of

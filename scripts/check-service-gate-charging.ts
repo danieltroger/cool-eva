@@ -497,6 +497,12 @@ const EXPECTED: Record<ServiceWriteRequest["kind"], [boolean, boolean, boolean]>
   "clear-dtcs": [true, false, false],
   "charge-current": [false, false, false],
   "charge-stop": [false, false, false],
+  // ⚠️ TAKE the bike-state gate, unlike the two charge commands above. The exemption there is for
+  // an automatic controller whose loop a flapping refusal would break; these two are one-off human
+  // presses, and the gate is exactly the coverage they want — the rows below show it passing both
+  // stationary-unplugged and stationary-AC-charging while refusing a moving bike.
+  "charge-soc-limit": [true, false, false],
+  "charge-soc-limit-read": [true, false, false],
   "reset-vcu": [true, true, false],
 };
 const KINDS = Object.keys(EXPECTED) as ServiceWriteRequest["kind"][];

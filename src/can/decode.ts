@@ -22,6 +22,7 @@
 import { ABS_CAN_ID, decodeAbsFrame } from "./abs.ts";
 import { decodeAttitudeFrame } from "./attitude.ts";
 import { CHARGE_SETPOINT_CAN_ID, decodeChargeSetpointFrame } from "./charge-setpoint.ts";
+import { decodeChargeSocLimitFrame } from "./charge-soc-limit.ts";
 import { CHARGE_MANAGER_CAN_IDS, decodeChargeManagerFrame } from "./charge-manager.ts";
 import { CONSUMPTION_CAN_ID, decodeConsumptionFrame } from "./consumption.ts";
 import { BMS_STREAM_IDS, decodeBmsFrame } from "./decode-bms.ts";
@@ -106,10 +107,12 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     case PSU_CAN_ID:
       return decodePsuFrame(data);
 
-    // The rider's own charge-current limit off the dash. An EVENT, not a stream — see
-    // charge-setpoint.ts, which is mostly about what that costs.
+    // The rider's own charge-current limit off the dash, and the SOC charge limit beside it. Both
+    // are EVENTS, not streams — see charge-setpoint.ts, which is mostly about what that costs.
+    // Two decoders because they are two opcodes with different layouts on one command id; 0x121
+    // is 269 frames in the whole capture archive, so the second call costs nothing measurable.
     case CHARGE_SETPOINT_CAN_ID:
-      return decodeChargeSetpointFrame(data);
+      return [...decodeChargeSetpointFrame(data), ...decodeChargeSocLimitFrame(data)];
 
     case VCU_FLAGS_CAN_ID:
       return decodeVcuFlagsFrame(data);

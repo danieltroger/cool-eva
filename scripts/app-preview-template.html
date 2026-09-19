@@ -117,6 +117,11 @@ __CSS__
             "coolant_out": [38.2, "°C", "coolant"],
             "charge_manager_state": [0x23, "", "charge"],
             "fast_dc_contactor": [1, "", "charge"],
+            // ⚠️ Present in THIS scene only. It is an event with no broadcast, so the parked
+            // scene leaving it out is the honest default state of the charge-limit control —
+            // "not read this session" — and the two scenes together are what the dashboard
+            // gate looks at. 90 is the value written on-bike 2026-09-19.
+            "charge_soc_limit_pct": [90, "%", "charge"],
             // ⚠️ 0x101 too, or this scene inherits PARKED_SIGNALS' 60/62 and the ALL tab renders
             // the word "parked" over a charging bike. The five below are one real frame,
             // `68 64 04 14 4B 00 00 00` at 2026-08-09 18:10:59, capture-20260809-181059-551bae3b.log

@@ -19,6 +19,7 @@ import { packResistance } from "../lib/pack-resistance-live.js";
 import { chargeMode } from "../lib/charge-mode.js";
 import { ChargeCurrentControl } from "./charge-current.js";
 import { ChargeStopControl } from "./charge-stop.js";
+import { ChargeSocLimitControl } from "./charge-soc-limit.js";
 import { ChargeAutoControl } from "./charge-auto.js";
 import {
   CELL_COUNT,
@@ -74,6 +75,7 @@ export function ChargeView() {
     // ./charge-stop.js; both share the session/status machinery in ../lib/charge-write.js.
     ChargeAutoControl(),
     ChargeCurrentControl(),
+    ChargeSocLimitControl(),
     ChargeStopControl(),
     SectionLabel("Pack"),
     DerateTile(),
