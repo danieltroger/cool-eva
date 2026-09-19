@@ -170,7 +170,10 @@ Measured on this Pi Zero 2 W (quad-core): ten sequential cycles of the two `nmcl
 
 ## 4. What is not built yet
 
-- **The handlebar gesture** — a long hold that takes a dump and forces a rejoin. Designed and reviewed on #290; **blocked on which physical button "speedo-set" names.** A 5 s hold cannot go on `btn_cruise_set`: it has 26 presses at or over 5 s across the two archives, and 16 of the 21 in the ride log were made at ≤ 2.5 km/h, so a stationary gate does not separate them either. `docs/handlebar-gestures.md` has the table.
+- **The handlebar gesture** — a 5 s hold that takes a dump and forces a rejoin. Designed and reviewed on #290, and lands in its own PR. **The button is `btn_set_back`**, the left-pod SET/BACK below the flash-to-pass (`0x400` b2 bit 0), chosen by the owner 2026-09-19 with the Traction Control screen it opens under a hold accepted as a known cost.
+
+  ⚠️ **`btn_cruise_set` — "speedo-set", the name the request used — was measured and ruled out.** It has **26 presses at or over 5 s** across the two archives, and the obvious rescue fails: 16 of the 21 in the ride log were made at **≤ 2.5 km/h**, so a stationary gate does not separate them. The owner adds that those long presses were him playing with the button rather than ordinary riding, which is consistent with the data and does not change the conclusion — a gesture cannot tell one thumb from another. `docs/handlebar-gestures.md` §"The `0x400` buttons" has the table.
+
 - ⚠️ **A rejoin will rescue the link but will not cure the latch.** `nmcli connection up` is an explicit `ActivateConnection`, and `autoconnect_is_blocked` is consulted only on the autoconnect path — so it works while blocked, but the block survives it. After one `no-secrets` event, every later drop in that boot needs another hold. The cure is a secret agent, or an unattended watchdog; both are follow-ups.
 - **A watchdog** that rejoins on its own after N minutes of "disconnected with the hotspot in range". Deliberately not in the first change: the ask was diagnosis, logging and a button.
 
