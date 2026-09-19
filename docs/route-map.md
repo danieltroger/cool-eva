@@ -321,6 +321,7 @@ An earlier version built the tiles by wrapping the _map_ query, which inherited 
 ## Known limitations
 
 - **Rides are runs of GPS fixes**, not of motion, so a stretch with no reception splits one ride in two. `km` comes from the odometer rather than from the fixes, so the distance stays right even where the track does not.
+- **Why those stretches exist, and what could fill them, is `docs/gps-gaps.md`.** Short version: 330 hours of apparent holes carry 0.0 km, position has been on CAN `0x410` since #22 so a BLE drop-out costs none of it, and only ~10 % of the genuinely dark distance had a fix on the bus that never reached the log.
 - Sessions shorter than 5 minutes, and charging under 0.5 A, are not counted as stops — and a ride that straddles one of those is not split by it.
 - **`Type` is three-valued.** `fast_dc_target_a` does not exist before 2026-08-26, so a session older than that cannot be shown to be DC. It reads `AC` only where mains current positively says so and `?` otherwise; it is never inferred from the absence of the DC signal.
 - **The Charging dashboard is built on the AC charger's frames**, which a DC session does not send, so most of its panels come back empty for a DC stop. The `Started` cell therefore offers two links — Charging for AC, Charge manager for DC — rather than guessing.

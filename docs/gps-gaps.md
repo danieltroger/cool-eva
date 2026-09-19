@@ -4,6 +4,8 @@ Why the ride map has holes, how much riding is in them, and which of it the raw 
 
 Measured against `rides.db` at **mtime 2026-09-19 18:15:07 CEST** (shared mutable — other tracks re-import it, so every figure here carries that vintage), the 79 captures in `~/Documents/cool-eva-route/data/ride-captures/`, and the journal export in `~/Documents/cool-eva-route/data/pi-journals/`. No coordinates appear in this file, deliberately — same rule as `docs/route-map.md`.
 
+⚠️ **Every query here is bounded to 2026-08-02 → 2026-09-20**, which silently excludes the 49 772 readings stamped 2060 (a corrupt GPS frame stepped the Pi's clock; `docs/route-map.md` and `README.md`). 254 of them are `gps_lat`. That filter is load-bearing for every count below: without it those rows open a 34-year window and the gap enumeration is meaningless.
+
 ## The short answer
 
 **No — and the premise was wrong twice over.**
@@ -27,7 +29,7 @@ So a backfill importer is possible but small, and it is not the fix.
 
 ## What the dark windows actually are
 
-316 windows, classified from `rides.db` alone before any capture is opened:
+316 windows, classified from `rides.db` alone before any capture is opened. ⚠️ **The classes overlap, so the table depends on a precedence** — restart before fixless, applied in that order. Read the other way (fixless first) the same windows give 44 / 143.3 km to (e) and nothing to (f), because a restart window usually also has a fixless stream in it. The split is a labelling choice, not a measurement; the 145.9 km total is the measurement.
 
 | class                                                                      | windows | km        | hours |
 | -------------------------------------------------------------------------- | ------- | --------- | ----- |
@@ -44,36 +46,42 @@ So a backfill importer is possible but small, and it is not the fix.
 
 Every dark window on 2026-08-02/03/04 and 09-18/19 was tested against the raw bus: a per-minute census over the window **interior** (never the boundary minute, or the minute in which the signal returns votes for recovery — review finding S7), then the **real** `GpsMessageDecoder` over the candidates, requiring **two mutually consistent anchored fixes** before calling anything recoverable.
 
-| verdict                                                          | windows | km      |
-| ---------------------------------------------------------------- | ------- | ------- |
-| **recoverable — a fix was on the bus and never reached the log** | 7       | **5.8** |
-| no fix on the bus — nothing to recover                           | 6       | 46.5    |
-| no local capture covers the interior                             | 1       | 0.9     |
+| verdict                                                          | windows | km       |
+| ---------------------------------------------------------------- | ------- | -------- |
+| **recoverable — a fix was on the bus and never reached the log** | 7       | **5.8**  |
+| no fix on the bus — nothing to recover                           | 7       | 50.2     |
+| **total**                                                        | **14**  | **56.0** |
 
-**5.8 km of 56.0 — 10.4 %.** ⚠️ **Do not extrapolate this to the archive.** One window (42.1 km) is 75 % of the sample and recovered nothing; a rate estimated from that is a rate estimated from one event.
+**5.8 km of 56.0 — 10.4 %.** 🚨 An earlier draft split the second row as `6 / 46.5` plus `1 / 0.9`, summing to 53.2 against its own 56.0 denominator — it was mixing the minute-census verdicts with the decoder's. One of those windows has no local capture over its interior; the decoder still ran over it and found nothing, so it belongs in the second row. ⚠️ **Do not extrapolate this to the archive.** One window (42.1 km) is 75 % of the sample and recovered nothing; a rate estimated from that is a rate estimated from one event.
 
 ### The worked example — 2026-09-18, 42.1 km, and why none of it comes back
 
-The archive's single largest dark window, 12:08:12Z → 13:36:48Z, decomposed from the capture and the journal together:
+The archive's single largest dark window, 12:08:12Z → 13:36:48Z. ⚠️ **It spans two boots and two clock corrections**, so the table below is in _true_ CEST, reconciled against the journal — the raw capture stamps are not comparable across it:
 
-| true CEST     | event                                                                     | source              |
-| ------------- | ------------------------------------------------------------------------- | ------------------- |
-| 14:08:12      | last GPS row — window starts                                              | rides.db            |
-| 14:08 → 15:34 | bus at **~80 000 frames/min**, `0x410` **entirely absent** for 87 minutes | capture, per-minute |
-| 15:34         | `0x410` returns — GPS sub-frames present, **fix count 0**                 | capture             |
-| 15:35         | `0x410` **seed only** (81 × `00 FF`, 0 × `1A`)                            | capture             |
-| 15:36         | first usable fix — 21 frames with fix ≠ 0 and ≥ 4 satellites              | capture             |
-| 15:36:48      | first GPS row — window ends                                               | rides.db            |
+| true CEST | event | source |
+| --- | --- | --- |
+| 14:08:12 | last GPS row — window starts | rides.db |
+| 14:08:12 → 15:10:14 | **62 min: no `0x410` at all**, on a bus running ~80 000 frames/min | capture, per-minute |
+| 15:10:14.831999 | `0x410` returns — and it is `00 FF`, the **seed** | capture |
+| 15:10:14 → 15:35:44 | **25 min: seed only.** 2 779 × `00 FF`, **zero `1A`**, in the whole file | capture |
+| 15:36:44.722877 | `systemd-timesyncd` steps the next boot's clock **+124.836 s** | journal |
+| 15:36:44.722977 | first frame after that file's stamp jump — **100 µs** from the step target | capture |
+| 15:36:48.726320 | first `1A FE` with fix ≠ 0 and ≥ 4 satellites — the first usable fix | capture |
+| 15:36:48.728 | first GPS row — window ends | rides.db |
 
-The log resumed in the same minute the bus had something to give it. **A capture cannot fill what was never transmitted**, and for 87 minutes nothing was.
+**The log recorded the fix 2 ms after the bus carried it.** A capture cannot fill what was never transmitted, and for 87 minutes no `1A` sub-frame was.
 
-⚠️ **`rides.db` alone called this window (f) restart**, because `session_id` changes inside it. The capture shows the restart was not the cause — the hub had no GPS either side of it. **A restart and a hub outage coincide often enough that `session_id` must not be read as the cause.**
+🚨 **An earlier draft of this file said "`0x410` entirely absent for 87 minutes".** That is wrong and the correction matters: `0x410` was absent for 62 minutes and then **seed-present, GPS-absent** for 25 more — which is the distinct state this file names below, not an emitter outage. What is absent for the full 87 minutes is the `1A` multiplex.
+
+🚨 **An earlier draft also read that file's `15:34` minute as preceding `15:35`.** It does not: those rows come from two different boots, and the later boot started on a restored stale clock that NTP corrected by 124.836 s. Reading capture stamps across boots as a timeline is exactly the trap [Aligning a capture to the log](#aligning-a-capture-to-the-log) warns about, and this file fell into it on its own reference example.
+
+⚠️ **`rides.db` alone called this window (f) restart**, because `session_id` changes inside it. The capture shows the restart was not the cause — the hub had no GPS either side of it. **A restart and a GPS outage coincide often enough that `session_id` must not be read as the cause.**
 
 ### Independent transports, common source
 
 For the whole of a separate 843 s window the same day, the BLE side cycled `connected` → `no frames for 30 s` → `reconnecting`, and `session confirmed — telemetry streaming` landed at **17:08:13** — the same second `1A` returned on CAN, and the same second the `gps_epoch_s` gap ended. The two transports are independent paths; **the hub that feeds both is not**. That is the mechanical reason CAN cannot cover for BLE: when the source stops producing, both go quiet together.
 
-🔎 The `00 FF` seed heartbeat is the sharper outage detector than "no `1A`": `src/can/gps.ts` documents it at ~0.9 Hz independent of any BLE session, so its absence says the emitter was silent rather than fixless. Seed returned at 17:08:05.142284 and the first `1A 00` at 17:08:13.630791 — 8.5 s of _hub alive, GPS subsystem not reporting_, which is its own state.
+✅ The `00 FF` seed heartbeat is the sharper outage detector than "no `1A`", because it does not depend on a fix. **The instrument cluster generates it, not the hub** — `docs/can-0x410.md` carries a 🚨 on exactly that point. Measured here at **109 frames/min ≈ 1.8 Hz**; ⚠️ `docs/can-0x410.md:31` records 0.9 Hz over a different and much longer capture, so the rate is not constant and neither figure should be quoted as _the_ rate. Seed returned at 17:08:05.142284 and the first `1A 00` at 17:08:13.630791 — 8.5 s of _cluster alive, GPS subsystem not reporting_, which is its own state and is the same state as the 25 seed-only minutes above.
 
 ## 90 % of the evidence is still on the Pi
 
@@ -102,7 +110,7 @@ Four measures were tried. All four are wrong, each in a direction now named — 
 | per-increment with a `Δ ≤ 1 km` filter | **under** — deletes ~93 km of restart-boundary distance, which is exactly the subject |
 | session-partitioned | **over** — 17 session pairs overlap in odometer range by −548.8 km |
 
-Why the filter fails: `odometer_can_km` has **no deadband** (`src/can/registry.ts:550`), so it logs every 0.1 km. A Δ > 1 km therefore means ten-plus counts were never written — the logger was down — which is _dark by construction_. 44 of the 49 such increments sit at a `session_id` boundary (93.3 km) and 41 have dt < 10 s (89.8 km); 2 km in 3 s is not a bike, so the **timestamps** are wrong across a restart, not the odometer. The remaining 5 increments (10.4 km) are not at a boundary and are unexplained.
+Why the filter fails: `odometer_can_km` has **no deadband** (`src/can/registry.ts:557`), so it logs every 0.1 km. A Δ > 1 km therefore means ten-plus counts were never written — the logger was down — which is _dark by construction_. 44 of the 49 such increments sit at a `session_id` boundary (93.3 km) and 41 have dt < 10 s (89.8 km); 2 km in 3 s is not a bike, so the **timestamps** are wrong across a restart, not the odometer. The remaining 5 increments (10.4 km) are not at a boundary and are unexplained.
 
 ❌ **A "does the jump persist N rows later?" test does not discriminate** and must not be used: it is monotone in the horizon and saturates, because the odometer is a monotonic counter and the bike keeps riding — 17 of 49 "persist" at a 5-row horizon, 34 at 20, **49 of 49 at 100 and at 500**. It measures the horizon, not the jump.
 
@@ -113,4 +121,4 @@ Why the filter fails: `odometer_can_km` has **no deadband** (`src/can/registry.t
 1. **Finish the card pull** (#288, #289). 62 % of the unmapped distance is unmeasurable until it lands, and no other number here can move without it.
 2. **Draw the gaps on the map.** `scripts/route-track.ts` carries lat and lon forward onto each other with no time limit, and `gps_speed_kmh`/`gps_course_deg` are emitted on the `1A 00` sub-frame _regardless of fix_ — so a no-fix stretch draws a **stale-position stack plus a long join**, not a hole. A window with real odometer advance and no fix should read as "no fix here, N km, M min", never as track. `docs/route-map.md` already splits rides on a 30-minute GPS hole and already records under "Known limitations" that km comes from the odometer so distance stays right where the track does not.
 3. **A backfill importer is worth ~10 % of the dark distance** on present evidence, which is real but small, and the estimate rests on one event. Re-measure after the pull before building it.
-4. **Fix the restart-boundary timestamps.** That defect is what makes the headline a range instead of a number.
+4. **Fix the restart-boundary timestamps — #310.** That defect is what makes the headline a range instead of a number, and it is not specific to GPS: any per-window quantity computed from `reading` by `ts` inherits it.
