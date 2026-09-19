@@ -1,5 +1,6 @@
 import { createBluetooth, type Adapter, type GattCharacteristic } from "node-ble";
-import { ensureBluetoothAdapterUp } from "./adapter.ts";
+import { ensureBluetoothAdapterUp, resetBluetoothAdapter } from "./adapter.ts";
+import { BleRetryPolicy, RECONNECT_DELAY_MS, describeKnownHub, isAdapterBusy } from "./recovery.ts";
 import { monotonicNow, since } from "../monotonic.ts";
 import { syncSystemClockFromGps } from "../gps/clock.ts";
 import { DiagnosticListAssembler, isDiagnosticsInfoMessage, isDiagnosticsMessage } from "../diagnostics/decode.ts";
@@ -21,9 +22,11 @@ import {
 // torque/power — message type 3 is on that id too (src/can/hub-output.ts).
 //
 // 🚨 "torque/power … appears on no CAN frame we know of, which is why the link stays"
-// stood here until #224 and is no longer a reason to keep it. What the Bluetooth link
-// still carries alone is the odometer, the trip figures, and the type-25 active-fault
-// list — which cannot be REQUESTED over CAN at all (docs/can-0x7c4.md, #58).
+// stood here until #224 and is no longer a reason to keep it. Nor is the odometer:
+// `odometer_can_km` exists (3.4 % long, src/can/registry.ts). Enumerated mechanically
+// in #299, exactly three BLE signals have no CAN twin — `trip_km`,
+// `avg_consumption_wh_km`, and the type-25 active-fault list, which cannot be
+// REQUESTED over CAN at all (docs/can-0x7c4.md, #58).
 
 const SERVICE_UUID = "14839ac5-7d7f-415d-9a43-167340cf233a";
 const NOTIFY_CHARACTERISTIC_UUID = "0734594b-a8e8-4b1b-a6b2-cd5243059a58";
@@ -49,7 +52,6 @@ const TELEMETRY_REQUEST_INTERVAL_MS = 10_000;
 // 39 PID 0x01 reports would be ~20 frames — the cost this cadence exists to
 // avoid.
 const DIAGNOSTICS_EVERY_NTH_ROUND = 6;
-const RECONNECT_DELAY_MS = 5_000;
 const SILENCE_TIMEOUT_MS = 30_000;
 const UNAUTHORISED_HINT_AFTER_MS = 20_000;
 
@@ -57,6 +59,9 @@ const UNAUTHORISED_HINT_AFTER_MS = 20_000;
 // find its own bike rather than needing a hard-coded address.
 const HUB_NAME_PATTERN = /energica/i;
 const DISCOVERY_TIMEOUT_MS = 40_000;
+
+/** Ceiling on the journal probe. dbus-next has no call timeout of its own (lib/bus.js). */
+const HUB_PROBE_TIMEOUT_MS = 5_000;
 
 // How many unanswered handshakes before we also try the hub's own address (see
 // nextEnrolmentAddress — that write is destructive to an existing pairing).
@@ -108,9 +113,17 @@ async function discoverHubAddress(adapter: Adapter): Promise<string> {
   throw new Error("no Energica hub found while scanning — is the bike awake and in range?");
 }
 
+function logAll(lines: string[]): void {
+  for (const line of lines) {
+    console.warn(line);
+  }
+}
+
 export function startBleClient(options: BleClientOptions): BleClient {
   let stopped = false;
   let disconnectCurrent: (() => Promise<void>) | null = null;
+  const retryPolicy = new BleRetryPolicy();
+  let hubObjectNote: string | null = null;
 
   async function runSession(): Promise<void> {
     await ensureBluetoothAdapterUp();
@@ -120,13 +133,40 @@ export function startBleClient(options: BleClientOptions): BleClient {
 
     try {
       const adapter = await bluetooth.defaultAdapter();
-      if (!(await adapter.isDiscovering())) {
-        await adapter.startDiscovery();
+      try {
+        if (!(await adapter.isDiscovering())) {
+          await adapter.startDiscovery();
+        }
+      } catch (error) {
+        // Observation only, for the journal: when the adapter is wedged, does BlueZ still
+        // hold the hub's object? Rethrown unchanged, so what reaches the retry policy stays
+        // the busy reply it gates on. docs/ble-adapter-wedge.md.
+        //
+        // ⚠️ ONCE per wedge, and bounded. The note is printed only on the first failure of a
+        // run, so probing every failure cost ~1 400 D-Bus walks an episode for one line; and
+        // dbus-next installs no call timeout at all, so an unbounded walk here would hang the
+        // reconnect loop against the very daemon we have just decided is misbehaving.
+        if (isAdapterBusy(error) && hubObjectNote === null) {
+          hubObjectNote = await Promise.race([
+            describeKnownHub(
+              () => adapter.devices(),
+              async address => (await adapter.getDevice(address)).getName(),
+              HUB_NAME_PATTERN
+            ),
+            delay(HUB_PROBE_TIMEOUT_MS).then(() => "BlueZ did not answer in time when asked what it still holds"),
+          ]);
+        }
+        throw error;
       }
 
       const hubAddress = options.macAddress || (await discoverHubAddress(adapter));
       device = await adapter.waitDevice(hubAddress);
       await device.connect();
+      // Here, not four awaits later at the log line: connect() returning IS the proof the
+      // adapter works, and that is what clears the power-cycle cooldown. stopDiscovery()
+      // and the GATT reads below can fail for reasons a power-cycle would not fix.
+      logAll(retryPolicy.onSessionConnected(monotonicNow()));
+      hubObjectNote = null;
       // Scanning for the whole session burns power and can degrade the very link
       // we just established. Each reconnect builds a fresh createBluetooth(), so
       // the isDiscovering() check above would otherwise just observe a scan that
@@ -309,13 +349,21 @@ export function startBleClient(options: BleClientOptions): BleClient {
 
   void (async () => {
     while (!stopped) {
+      // A clean end — the 30 s silence timeout — is not a failure: it is how every normal
+      // ride reconnects, so it keeps the flat delay and earns no backoff.
+      let delayMs = RECONNECT_DELAY_MS;
       try {
         await runSession();
       } catch (error) {
-        console.warn("ble: session failed:", (error as Error).message);
+        const plan = retryPolicy.onFailure((error as Error).message, monotonicNow(), hubObjectNote);
+        logAll(plan.logLines);
+        if (plan.resetAdapter) {
+          await resetBluetoothAdapter();
+        }
+        delayMs = plan.delayMs;
       }
       if (!stopped) {
-        await delay(RECONNECT_DELAY_MS);
+        await delay(delayMs);
       }
     }
   })();
@@ -323,6 +371,7 @@ export function startBleClient(options: BleClientOptions): BleClient {
   return {
     stop: async () => {
       stopped = true;
+      logAll(retryPolicy.flush(monotonicNow()));
       await disconnectCurrent?.();
     },
   };

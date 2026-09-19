@@ -111,6 +111,20 @@ const CHECKS: SelfCheck[] = [
       "sweep makes both warnings print on every run — it was never ASSERTED, which is the gap this closes",
   },
   {
+    script: "scripts/check-ble-retry-policy.ts",
+    covers:
+      "what the service does while the Pi's Bluetooth adapter is wedged (#299), which on 2026-09-15..19 was 27 % " +
+      "of the wall clock and 14.9 % of every journal line: that the backoff still climbs 5 \u2192 10 \u2192 20 " +
+      "\u2192 30 s, that an 11 h 42 min episode prints at most one line a minute AND that the suppressed failures " +
+      "survive as counts summing back to the total, that a changed message flushes the old count and prints at " +
+      "once, that the power-cycle fires only on the busy reply and never on the three other failures that reach " +
+      "the same catch, that its cooldown governs FAILED remedies only \u2014 a connect clears it, since a " +
+      "bounce a connect followed did not need retrying, which is what that floor is for \u2014 " +
+      "that stop() emits the final partial window, and that the journal probe never throws, since its error would " +
+      "replace the busy reply the whole gate is keyed on. Plus the one thing a synthetic clock cannot see: that " +
+      "client.ts passes monotonicNow() and not Date.now()",
+  },
+  {
     script: "scripts/check-can-decoders.ts",
     covers:
       "the broadcast frame decoders against frames captured 2026-08-02, plus three properties of the decoder set as a whole: that every id which decodes is in the kernel RX filter, that every emitted key is declared in the registry, and that no 1/0 flag carries a deadband big enough to swallow its own transitions",
