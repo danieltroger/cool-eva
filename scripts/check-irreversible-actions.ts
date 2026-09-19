@@ -196,6 +196,12 @@ const UNCONFIRMED: Record<string, URLSearchParams> = {
   // Complete on its own — stop takes no fields. Missing only the confirm, so it too is
   // refused FOR the confirmation.
   "charge-stop": new URLSearchParams({ action: "charge-stop" }),
+  // Complete: it carries the percentage. Missing only the confirm, which for this action carries
+  // the value the way charge-current's carries the amps.
+  "charge-soc-limit": new URLSearchParams({ action: "charge-soc-limit", pct: "90" }),
+  // Complete on its own and NEVER confirmed: bit 7 is clear, so it is a read. It parses straight
+  // through, so it never enters the gated set below — the same shape as read-service-stamp.
+  "charge-soc-limit-read": new URLSearchParams({ action: "charge-soc-limit-read" }),
   // Complete on its own — reset takes no fields either. Refused only for the confirmation.
   "reset-vcu": new URLSearchParams({ action: "reset-vcu" }),
 };
@@ -235,25 +241,20 @@ const behindTheFold: string[] = IRREVERSIBLE.map(entry => entry.action);
 
 // ⚠️ THE THIRD CATEGORY, added when charge-current arrived: confirm-gated but REVERSIBLE.
 //
-// The fold's promise is "cannot be undone", and until now that was the same set as "needs
-// a confirm=". charge-current breaks the tie. It is gated because `curl` can reach the
-// endpoint and a page showing 6 A must not be able to POST 30 — the number is the owner's
-// to say out loud — but it undoes itself: the setpoint is transient (unplugging the
-// charger clears it), the VCU clamps anything above the cable's ceiling, and the rider
-// overrides it on the bike's own screen. Behind a fold that says "cannot be undone" that
-// row would lie, so the control lives in the charge menu, not the red drawer.
+// The fold's promise is "cannot be undone", and until then that was the same set as "needs a
+// confirm=". These four are gated because `curl` can reach the endpoint and a page showing 6 A must
+// not be able to POST 30 — the number is the owner's to say out loud — but none of them is
+// irreversible, and behind a fold that says otherwise every one of those rows would lie. Each undoes
+// itself differently: charge-current is TRANSIENT (unplugging clears it, the VCU clamps above the
+// cable's ceiling, the rider overrides on the bike); charge-stop is re-plugging or restarting the
+// charge; reset-vcu is a key-cycle restart that erases and reverts nothing. ⚠️ charge-soc-limit rests
+// on a different floor — the setting is STORED, so "the cable comes out and it forgets" is not
+// available; what is, and what no other action here has, is a real read-back
+// (docs/dash-command-0x2c-charge-limit.md).
 //
-// This set is the ONE place that exemption is written down, and adding to it is the same
-// weight of decision as adding to the fold: an action here is one a reviewer has agreed is
-// reversible. An action that is confirm-gated, absent from the fold AND absent here is
-// still the hard failure §3b was built to catch — the exemption is explicit, never a gap.
-// charge-stop joins for the same reason: it is confirm-gated (curl can reach the endpoint, so a
-// deliberate word is required), but ending a charge undoes itself — the rider simply re-plugs or
-// restarts the charge on the bike's own screen. Behind a "cannot be undone" fold that row would lie.
-// reset-vcu joins too: it is confirm-gated (curl can reach it, and it drops the bike off the bus), but
-// a key-cycle restart erases nothing and reverts nothing — the bike reboots and comes back exactly as
-// it was. Behind a "cannot be undone" fold that row would lie, so it lives out in the open like the two above.
-const REVERSIBLE_CONFIRMED = new Set(["charge-current", "charge-stop", "reset-vcu"]);
+// This set is the ONE place that exemption is written down; adding to it weighs the same as adding
+// to the fold, and confirm-gated-but-absent-from-both is still the hard failure §3b catches.
+const REVERSIBLE_CONFIRMED = new Set(["charge-current", "charge-stop", "charge-soc-limit", "reset-vcu"]);
 
 const gatedNotHidden = gated.filter(action => !behindTheFold.includes(action) && !REVERSIBLE_CONFIRMED.has(action));
 check(

@@ -4,8 +4,10 @@
 //
 // A write is b0 = (id | 0x80) — the "request-twin" high bit — b1 = 0xFF, b2 = value, sent on 0x120
 // ALONE. That is exactly the frame the shipping charge-stop builds (charge-command.ts: 0x16 → the
-// 0x120 `96 ff 01`), and the RTC write (service-actions.ts: 0x14 → `94 ff …`). Writes on this
-// channel are fire-and-forget — the VCU emits no 0x121 ack for an injected 0x120 write — so we
+// 0x120 `96 ff 01`), and the RTC write (service-actions.ts: 0x14 → `94 ff …`). ⚠️ This used to say
+// the VCU emits no 0x121 ack for an injected 0x120 write. IT DOES: on 2026-09-19 a lone
+// `0x120 AC FF 5A` was answered by `0x121 2C FF 5A` 7.66 ms later, caught in the bike's own
+// capture (docs/dash-command-0x2c-charge-limit.md). The write is still fire-and-forget here, so we
 // confirm the change by a follow-up READ, not by a reply.
 //
 // This crosses no diagnostic ban: 0x120 writes are the same class the app already ships, NOT the

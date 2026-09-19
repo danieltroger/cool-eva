@@ -296,6 +296,16 @@ for (const row of TABLE) {
     serviceActionPolicy("charge-stop").bikeStateGateApplies ===
       serviceActionPolicy("charge-current").bikeStateGateApplies
   );
+  // ⚠️ The SOC charge limit tracks `row.gate` exactly — the opposite of charge-current on the two
+  // rows where they differ, which a policy-triple restatement cannot show. Why it takes the gate:
+  // serviceActionPolicy in src/vcu/write-runner.ts.
+  for (const kind of ["charge-soc-limit", "charge-soc-limit-read"] as const) {
+    const allowed = serviceActionRefusal(serviceActionPolicy(kind), verdict, read, kind) === null;
+    check(
+      `${row.state} · ${kind} ${row.gate ? "allowed" : "refused"} — follows the gate, not the session`,
+      allowed === row.gate
+    );
+  }
 }
 
 check(
@@ -497,6 +507,10 @@ const EXPECTED: Record<ServiceWriteRequest["kind"], [boolean, boolean, boolean]>
   "clear-dtcs": [true, false, false],
   "charge-current": [false, false, false],
   "charge-stop": [false, false, false],
+  // ⚠️ TAKE the bike-state gate, unlike the two charge commands above — argued at the decision
+  // site, serviceActionPolicy in src/vcu/write-runner.ts. §3's rows are where it is exercised.
+  "charge-soc-limit": [true, false, false],
+  "charge-soc-limit-read": [true, false, false],
   "reset-vcu": [true, true, false],
 };
 const KINDS = Object.keys(EXPECTED) as ServiceWriteRequest["kind"][];

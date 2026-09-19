@@ -36,7 +36,7 @@ const DC_CURRENT_LIMIT_OPCODE = 0x18;
 const AC_CURRENT_LIMIT_OPCODE = 0x1a;
 
 /** b1 in all 596 captured frames of both ids, opcode regardless — a separator, not data. */
-const SEPARATOR_BYTE = 0xff;
+export const SEPARATOR_BYTE = 0xff;
 
 /** b3 = 1 means "a limit is in force"; only the two current-limit opcodes ever set it. */
 const LIMIT_IN_FORCE = 1;
@@ -46,7 +46,7 @@ const LIMIT_IN_FORCE = 1;
  * COMMITS the action on this channel. Both the current-limit pair and the stop pair use it:
  * `0x1A → 0x9A`, `0x16 → 0x96`. docs/can-0x121-charge-command.md.
  */
-const REQUEST_TWIN_BIT = 0x80;
+export const REQUEST_TWIN_BIT = 0x80;
 
 /**
  * The stop-charging opcode (b0) as it rides on the 0x120 request-twin: the base `0x16` ORed with

@@ -116,11 +116,31 @@ const viewsDirectory = join(dirname(fileURLToPath(import.meta.url)), "..", "publ
 /** Each view read once; §3, §4 and §5 all index this rather than re-reading it five times. */
 const viewSources = new Map(
   await Promise.all(
-    ["charge-current.js", "charge-stop.js"].map(
+    // ⚠️ THE THIRD CONTROL BELONGS HERE. charge-soc-limit.js rides the same charge-write.js
+    // machinery on the same tab; left out, §3, §4 and §5 went green on it by absence. It passes
+    // all three today, which is exactly why adding it is free — and why a later edit that broke
+    // one of them would have shipped silently.
+    ["charge-current.js", "charge-soc-limit.js", "charge-stop.js"].map(
       async view => [view, await readFile(join(viewsDirectory, view), "utf-8")] as const
     )
   )
 );
+// ⚠️ The SOC limit's VALUE is a read-only signal and must not sit behind the writes gate: a Pi with
+// SERVICE_WRITE_ENABLED unset still receives `charge_soc_limit_pct` whenever the rider sets the
+// limit on the bike's own menu, and gating the whole tile made the one read-only thing that feature
+// adds invisible on every ordinary phone. Asserted on the SOURCE because the preview harness pins
+// `enabled: true` (scripts/preview-harness-bike.js), so no screenshot can reach that state.
+const socLimitSource = viewSources.get("charge-soc-limit.js") ?? "";
+if (!socLimitSource.includes("if (!known && !writesEnabled())")) {
+  failures.push(
+    "§3 charge-soc-limit.js no longer hides its tile only when BOTH the value is unknown AND writes " +
+      "are off — a writes-disabled phone would stop showing a limit it is still receiving"
+  );
+}
+if (!socLimitSource.includes("writesEnabled() ? SetRow() : div()")) {
+  failures.push("§3 charge-soc-limit.js no longer gates only its BUTTONS on writesEnabled()");
+}
+
 for (const [view, source] of viewSources) {
   if (source.includes("liveChargeType")) {
     failures.push(

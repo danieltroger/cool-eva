@@ -237,6 +237,33 @@ const CHECKS: SelfCheck[] = [
       "dash's own measured 4.2-10.1 ms",
   },
   {
+    script: "scripts/check-charge-soc-limit.ts",
+    covers:
+      "the SOC charge-limit command and decoder against frames the BIKE put on the bus: that the builder " +
+      "reproduces all three of the dash's own menu confirms byte for byte (40 % on 2026-08-02, 0 and 80 % on " +
+      "2026-09-19) and the 90 % written on-bike that evening; that it emits ONE frame on 0x120 and never the " +
+      "0x121 half, which is the bike's own answer and spoofing it moves the dash display without committing " +
+      "anything; that the write carries bit 7 SET and the read bit 7 CLEAR with b2 = 0, the direction bit being " +
+      "the difference between a read-back and silently writing 'no limit'; that the decoder reads every captured " +
+      "and live replies back, 0 included since 0 is a legal value here; that neither it nor the charge-current " +
+      "decoder reads the other's opcodes on the shared id; and that the endpoint's confirmation carries the " +
+      "percentage, with 0 needing a word of its own",
+  },
+  {
+    script: "scripts/check-charge-soc-limit-runner.ts",
+    covers:
+      "the SOC charge-limit ACTIONS against a stand-in bike — the round trip the pure check cannot reach. " +
+      "⚠️ Its §2 is the one that matters: the read-back's monotonic mark is taken immediately before the READ " +
+      "transmit, never before the write, because the bike answers a write with a 0x121 of its own a few " +
+      "milliseconds later and a mark taken earlier is satisfied by that answer — a read-back that cannot " +
+      "fail. The stand-in answers the write synchronously inside send(), earlier than any real bus could, so " +
+      "a mark in the wrong place fails with certainty rather than under load. Also: a matching reply reads " +
+      "`written`, a different one `read-back-mismatch`, and NO reply reads `unverified` rather than claiming " +
+      "nothing changed — the write went out and only the read went unanswered; both actions are protected by the bike-state " +
+      "gate rather than by a private liveness read this module used to carry; and the dashboard's own percentage ceiling equals " +
+      "the Pi's, which no build step can enforce across a .js/.ts boundary",
+  },
+  {
     script: "scripts/check-freeze-frame-values.ts",
     covers:
       "the whole-bike freeze-frame read and what is shown from it: that a 0x18 list carrying padding, a component " +

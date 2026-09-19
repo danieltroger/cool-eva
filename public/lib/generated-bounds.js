@@ -59,6 +59,7 @@ export const SIGNAL_BOUNDS = Object.assign(Object.create(null), {
   "residual_energy_wh": [0, 30000],
   "dc_charge_limit_selected_a": [0, 127],
   "ac_charge_ceiling_a": [0, 80],
+  "charge_soc_limit_pct": [0, 100],
   "charge_type": [0, 2],
   "bms_leak_detect_inhibit": [0, 1],
   "charge_manager_status": [0, 255],

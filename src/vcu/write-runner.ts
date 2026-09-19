@@ -13,6 +13,7 @@ import {
 } from "./service-actions.ts";
 import type { ServiceGateSample, ServiceGateVerdict } from "./service-gate.ts";
 import { chargeManagerIsLive, chargePathIsActive, chargeSessionFrom } from "./charge-session.ts";
+import { performChargeSocLimit, performChargeSocLimitRead } from "./charge-soc-limit.ts";
 import type { LatestSweep } from "./snapshot-store.ts";
 import type { TableTypeReport, VcuParameterSnapshot } from "./snapshot.ts";
 import { evaluateTableGate, type TableGateVerdict } from "./table-gate.ts";
@@ -123,6 +124,15 @@ export type ServiceWriteRequest =
    * off charge_manager_state like charge-current.
    */
   | { kind: "charge-stop" }
+  /**
+   * Set the bike's SOC charge limit ("stop charging at N %") on dash command 0x2C. One frame on
+   * 0x120, then a read with bit 7 clear that proves what the VCU stored — the only command action
+   * here with a real read-back. ⚠️ `percent: 0` means NO LIMIT and removes the battery protection;
+   * the endpoint makes the caller confirm that separately. src/vcu/charge-soc-limit.ts.
+   */
+  | { kind: "charge-soc-limit"; percent: number }
+  /** Read that limit and change nothing. Still a transmit, so it is gated and audited like a write. */
+  | { kind: "charge-soc-limit-read" }
   /**
    * Restart both VCU micros with ECUReset (`11 02`) — a key-cycle restart, nothing erased.
    * Carries no fields: both nodes always reset together. Refused if a charge session is live
@@ -607,6 +617,18 @@ export function serviceActionPolicy(kind: ServiceWriteRequest["kind"]): ServiceA
     case "charge-stop":
       return { bikeStateGateApplies: false, refusedWhileCharging: false, tableGateApplies: false };
 
+    // ⚠️ THE GATE APPLIES, unlike the two charge commands above, and the difference is argued
+    // rather than inherited. The exemption above exists because an AUTOMATIC controller issues
+    // charge-current mid-charge and a flapping refusal breaks its loop; the SOC limit is a one-off
+    // human press, where a transient refusal costs a second press. And the gate is exactly the
+    // coverage this needs: scripts/check-service-gate-charging.ts has it passing
+    // stationary-DRIVE-DOWN-unplugged and stationary-AC-charging, and refusing while the bike moves
+    // — and refusing a stationary ENERGIZED bike with the drive up, which "unplugged" overstates —
+    // `bikeStateGateApplies: false` would not. It is the read-service-stamp row for that reason.
+    case "charge-soc-limit":
+    case "charge-soc-limit-read":
+      return { bikeStateGateApplies: true, refusedWhileCharging: false, tableGateApplies: false };
+
     // ⚠️ Reversible, so not on the irreversible tier — but `11 02` is also the charge manager's
     // bootloader-entry service and a live charge is managed by these very controllers.
     case "reset-vcu":
@@ -791,6 +813,10 @@ async function performOnBus(
       return await performChargeCurrent(context, request, channel);
     case "charge-stop":
       return await performChargeStop(context, channel);
+    case "charge-soc-limit":
+      return await performChargeSocLimit(context, request.percent, channel);
+    case "charge-soc-limit-read":
+      return await performChargeSocLimitRead(context, channel);
     case "reset-vcu":
       return await performResetVcu(context, channel);
   }

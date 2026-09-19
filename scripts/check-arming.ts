@@ -3,6 +3,10 @@ import { readFile, readdir } from "fs/promises";
 import { blockAt, declarationBody } from "./source-blocks.ts";
 import { ARM_DWELL_MS, arm, armDwellElapsed, armed, refuseKeyRepeat } from "../public/lib/arming.js";
 import { ARMED_KEY as CHARGE_CURRENT_KEY } from "../public/views/charge-current.js";
+import {
+  ARMED_KEY as CHARGE_SOC_LIMIT_KEY,
+  READ_ARMED_KEY as CHARGE_SOC_LIMIT_READ_KEY,
+} from "../public/views/charge-soc-limit.js";
 import { ARMED_KEY as CHARGE_STOP_KEY } from "../public/views/charge-stop.js";
 import { ARMED_KEY as FREEZE_FRAME_READ_KEY } from "../public/views/freeze-frame-read.js";
 import { ARMED_KEY as LIFETIME_READ_KEY } from "../public/views/lifetime-read.js";
@@ -51,6 +55,7 @@ const STAMP = 1_000_000;
 /** The key names a view's ARMED_KEY export holds, for resolving a site's `armed.val !== ARMED_KEY`. */
 const EXPORTED_KEYS = new Map([
   ["public/views/charge-current.js", CHARGE_CURRENT_KEY],
+  ["public/views/charge-soc-limit.js", CHARGE_SOC_LIMIT_KEY],
   ["public/views/charge-stop.js", CHARGE_STOP_KEY],
   ["public/views/lifetime-read.js", LIFETIME_READ_KEY],
   ["public/views/freeze-frame-read.js", FREEZE_FRAME_READ_KEY],
@@ -170,6 +175,11 @@ check(
 // in `literalKeys` above, and taking it from both lists would be one control counted twice.
 const ALL_KEYS = [
   CHARGE_CURRENT_KEY,
+  CHARGE_SOC_LIMIT_KEY,
+  // The SOC control's READ button is a second control in the same file, so §5 counts it. Imported
+  // rather than re-typed: a rename of the view's key would otherwise leave a stale-but-unique
+  // literal here and §5 would stay green.
+  CHARGE_SOC_LIMIT_READ_KEY,
   CHARGE_STOP_KEY,
   ...literalKeys,
   // The read-only action, spelled out because nothing exports it — it is the one ActionButton
@@ -276,6 +286,10 @@ console.log(`   found: ${SITES.map(site => shortName(site)).join(", ")}`);
 // four keyed controls, which is why this is a list of firing sites and §5's is a list of keys.
 const EXPECTED_SITES = [
   "charge-current.js → performChargeCurrent",
+  // The SOC charge limit's two buttons. The READ takes two taps as well — read-only or not it
+  // puts a frame on the bike's bus, which is the same argument service-mode.js's sweep settled.
+  "charge-soc-limit.js → performSocLimit",
+  "charge-soc-limit.js → performSocLimitRead",
   "charge-stop.js → performChargeStop",
   // Both arrived with the in-service lifetime read. `performSweep` is the OLDER control:
   // it had two taps of its own with no dwell and no key-repeat refusal, and §3's scan

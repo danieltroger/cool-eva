@@ -19,6 +19,7 @@ import { packResistance } from "../lib/pack-resistance-live.js";
 import { chargeMode } from "../lib/charge-mode.js";
 import { ChargeCurrentControl } from "./charge-current.js";
 import { ChargeStopControl } from "./charge-stop.js";
+import { ChargeSocLimitControl } from "./charge-soc-limit.js";
 import { ChargeAutoControl } from "./charge-auto.js";
 import {
   CELL_COUNT,
@@ -69,11 +70,13 @@ export function ChargeView() {
           return NotCharging();
       }
     },
-    // Renders nothing unless this Pi has writes enabled and a charge is live — on an ordinary
-    // phone both are invisible and Charge stays read-only. See ./charge-current.js and
-    // ./charge-stop.js; both share the session/status machinery in ../lib/charge-write.js.
+    // Render nothing unless this Pi has writes enabled — on an ordinary phone these are invisible
+    // and Charge stays read-only. The first three also need a LIVE charge; the SOC limit does not
+    // (a stored setting, gated on the bike-state gate) and shows its value on any phone.
+    // All four share the session/status machinery in ../lib/charge-write.js.
     ChargeAutoControl(),
     ChargeCurrentControl(),
+    ChargeSocLimitControl(),
     ChargeStopControl(),
     SectionLabel("Pack"),
     DerateTile(),

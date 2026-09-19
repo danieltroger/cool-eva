@@ -313,6 +313,13 @@ export const SIGNALS: SignalDef[] = [
   // command must echo; an event like its DC sibling, so it too greys out and can be absent.
   // docs/can-0x121-charge-command.md.
   { key: "ac_charge_ceiling_a", unit: "A", group: "charge", source: "stream", bounds: [0, 80] },
+  // 0x121 opcode 0x2C b2 — the bike's own "stop charging at N %", 0 meaning no limit
+  // (src/can/charge-soc-limit.ts). An EVENT like the two above, and from THREE sources, which is
+  // the distinction that bit src/charge/auto.ts once: the rider confirming the menu item, this Pi
+  // reading it, and the bike ANSWERING this Pi's own write ~6 ms later. Nothing broadcasts it, so
+  // an absent value means "not asked and not touched", never "no limit".
+  // docs/dash-command-0x2c-charge-limit.md.
+  { key: "charge_soc_limit_pct", unit: "%", group: "charge", source: "stream", bounds: [0, 100] },
   // 0x605 / 0x610 / 0x615 / 0x620 / 0x625 — the charge manager (src/can/charge-manager.ts),
   // added 2026-08-19 from 29 charge sessions and reconciled against Energica's factory DBC on
   // 2026-08-20. Present only while a cable is live, EXCEPT the four off 0x625 — that frame

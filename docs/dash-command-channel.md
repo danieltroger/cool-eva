@@ -8,27 +8,27 @@ This channel matters to the headlight hunt because it is **injectable without a 
 
 Read-only sweep of all 128 ids (`scripts/dash-command-sweep.ts`, bit 7 always clear — documented non-mutating), key on, headlight on, not charging, service stopped. **19 live, 109 unsupported, 0 silent** — the same live count the service-tool analysis found on an SS9.
 
-| id     | reply bytes         | meaning                                     |
-| ------ | ------------------- | ------------------------------------------- |
-| `0x01` | `01 ff 9d 02 03 00` | Ride map                                    |
-| `0x02` | `03 ff 9d 02 03 00` | Regen map                                   |
-| `0x04` | `02 03 00 …`        | unlabelled                                  |
-| `0x05` | `00 …`              | unlabelled                                  |
-| `0x06` | `00 …`              | unlabelled                                  |
-| `0x15` | `00 …`              | **LPR mode (0=off/1=on)** — reads 0         |
-| `0x17` | `64 …`              | unlabelled (`0x64` = 100 — looks like a %)  |
-| `0x18` | `3c 01 4b …`        | DC charge current (value 60, min 1, max 75) |
-| `0x1A` | `01 01 0f …`        | AC charge current (value 1, min 1, max 15)  |
-| `0x1B` | `55 …`              | unlabelled (`0x55` = 85)                    |
-| `0x1C` | `55 …`              | unlabelled (`0x55` = 85)                    |
-| `0x1F` | `62 02 0f …`        | unlabelled                                  |
-| `0x20` | `ff 9d …`           | unlabelled                                  |
-| `0x2A` | `00 …`              | **Light in charge (0=off/1=on)** — reads 0  |
-| `0x2B` | `00 …`              | Fan limit % (30-100)                        |
-| `0x2C` | `00 …`              | Charge limit % (0 = no limit)               |
-| `0x2D` | `00 …`              | unlabelled                                  |
-| `0x2E` | `00 …`              | unlabelled                                  |
-| `0x7E` | `0f 2c …`           | unlabelled                                  |
+| id | reply bytes | meaning |
+| --- | --- | --- |
+| `0x01` | `01 ff 9d 02 03 00` | Ride map |
+| `0x02` | `03 ff 9d 02 03 00` | Regen map |
+| `0x04` | `02 03 00 …` | unlabelled |
+| `0x05` | `00 …` | unlabelled |
+| `0x06` | `00 …` | unlabelled |
+| `0x15` | `00 …` | **LPR mode (0=off/1=on)** — reads 0 |
+| `0x17` | `64 …` | unlabelled (`0x64` = 100 — looks like a %) |
+| `0x18` | `3c 01 4b …` | DC charge current (value 60, min 1, max 75) |
+| `0x1A` | `01 01 0f …` | AC charge current (value 1, min 1, max 15) |
+| `0x1B` | `55 …` | unlabelled (`0x55` = 85) |
+| `0x1C` | `55 …` | unlabelled (`0x55` = 85) |
+| `0x1F` | `62 02 0f …` | unlabelled |
+| `0x20` | `ff 9d …` | unlabelled |
+| `0x2A` | `00 …` | **Light in charge (0=off/1=on)** — reads 0 |
+| `0x2B` | `00 …` | Fan limit % (30-100) |
+| `0x2C` | `00 …` | **Charge limit %** (0 = no limit) — read and written on-bike 2026-09-19, [dash-command-0x2c-charge-limit.md](dash-command-0x2c-charge-limit.md) |
+| `0x2D` | `00 …` | unlabelled |
+| `0x2E` | `00 …` | unlabelled |
+| `0x7E` | `0f 2c …` | unlabelled |
 
 ## Verdict for the headlight hunt
 

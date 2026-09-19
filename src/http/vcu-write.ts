@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "http";
+import { MAX_SOC_LIMIT_PCT } from "../can/charge-soc-limit.ts";
 import type {
   ServiceWriteRequest,
   ServiceWriteResult,
@@ -30,9 +31,10 @@ import type {
 // written before this endpoint existed.
 //
 // ⚠️ Several actions additionally require the caller to say what it thinks it is doing, because
-// `curl` can reach this endpoint and the UI's two taps cannot follow it there: set-service-point,
-// clear-dtcs, charge-stop and reset-vcu each want their own name as `confirm=`, charge-current
-// wants `confirm=charge-current-<amps>`, and sync-clock wants the UTC minute the caller displayed.
+// `curl` can reach this endpoint and the UI's two taps cannot follow it there. ⚠️ WHICH actions,
+// and what each wants, is the `switch` in parseWriteRequest below and is deliberately not restated
+// here — this list was already one action out of date once. check-irreversible-actions.ts holds
+// the switch to its own `default` arm's sentence, which is the copy that is actually checked.
 // That last is not ceremony — it is the server-side half of "Is it <date and time>?", so a page
 // left open since this morning cannot sync this morning's time. Every token is spelled out in
 // parseWriteRequest below, which is the only thing that compares them.
@@ -252,6 +254,40 @@ export function parseWriteRequest(
       }
       return { ok: true, request: { kind: "charge-current", amps, origin: "manual" } };
     }
+    case "charge-soc-limit": {
+      const percent = parseNumber(params.get("pct"));
+      if (percent === null) {
+        return { ok: false, reason: `pct must be a whole number, not ${params.get("pct") ?? "(nothing)"}` };
+      }
+      // ⚠️ Range-checked HERE, unlike charge-current, and the difference is that this action reads
+      // the bike BEFORE it writes: without this, `pct=200` parses, the runner puts a read frame on
+      // the bus and waits half a second, and only then does the pure builder throw. A request that
+      // can never succeed must not cost a frame. And it is a 400 by this file's own rule above —
+      // the request itself is wrong and re-sending it unchanged will always be wrong.
+      if (percent < 0 || percent > MAX_SOC_LIMIT_PCT) {
+        return { ok: false, reason: `pct must be between 0 and ${MAX_SOC_LIMIT_PCT}, not ${percent}` };
+      }
+      // ⚠️ 0 is "no limit" and REMOVES the bike's battery protection rather than moving it, so it
+      // gets its own word instead of being one keystroke away on the numeric path. Every other
+      // value confirms itself, as charge-current's confirm carries its amps.
+      const expected = percent === 0 ? "charge-soc-limit-off" : `charge-soc-limit-${percent}`;
+      if (params.get("confirm") !== expected) {
+        return {
+          ok: false,
+          reason:
+            percent === 0
+              ? "pct=0 removes the charge limit entirely — the bike would charge to full. Pass confirm=charge-soc-limit-off."
+              : `Setting the charge limit changes what the bike does at the end of every charge. Pass confirm=${expected} to confirm ${percent} %.`,
+        };
+      }
+      return { ok: true, request: { kind: "charge-soc-limit", percent } };
+    }
+    case "charge-soc-limit-read":
+      // No confirm token: bit 7 is clear, which is a read. Still a POST behind the write header,
+      // because it puts a frame on the bike's bus and "touches nothing" must keep meaning that
+      // for GET. Non-mutating is measured on this id, not assumed: two reads a second apart on
+      // 2026-09-19 both returned 80. docs/dash-command-0x2c-charge-limit.md.
+      return { ok: true, request: { kind: "charge-soc-limit-read" } };
     case "charge-stop":
       // Stopping actuates the bike's charging (the benign direction — it ends a charge), so it
       // carries the same one-word confirm the two-tap UI sends but curl must state deliberately.
@@ -276,7 +312,7 @@ export function parseWriteRequest(
     default:
       return {
         ok: false,
-        reason: `action must be one of parameter, parameters, bit, read-service-stamp, set-service-point, sync-clock, clear-dtcs, charge-current, charge-stop, reset-vcu — not ${action ?? "(nothing)"}`,
+        reason: `action must be one of parameter, parameters, bit, read-service-stamp, set-service-point, sync-clock, clear-dtcs, charge-current, charge-stop, charge-soc-limit, charge-soc-limit-read, reset-vcu — not ${action ?? "(nothing)"}`,
       };
   }
 }
