@@ -53,16 +53,24 @@ function check(what: string, ok: boolean): void {
 
 console.log("\n1. `nmcli -t` escaping");
 
-// Captured verbatim from the Pi on 2026-09-19. `-t` escapes the separator INSIDE a value.
-const REAL_WIFI_LIST = [
-  "yes:Martin Router King:54:2472 MHz:CC\\:BA\\:BD\\:34\\:31\\:92",
-  "no:Martin Router King:49:2472 MHz:AA\\:29\\:48\\:2D\\:74\\:3A",
+// The SHAPE is captured verbatim from the Pi on 2026-09-19 — `-t` escapes the separator
+// INSIDE a value, which is the trap under test. The identifiers are NOT: every SSID and
+// BSSID here is synthetic.
+//
+// ⚠️ A real BSSID is a coordinate by another name. Wifi-positioning databases key a street
+// address off an access point's MAC, so committing the one on Daniel's wall to a public
+// repo geolocates his home as surely as a latitude would — the rule docs/route-map.md
+// states for coordinates, in a form that does not look like one. These are locally
+// administered (`02:` prefix), so they can never collide with a real AP either.
+const WIFI_LIST_SHAPE = [
+  "yes:home-wifi:54:2472 MHz:02\\:00\\:5E\\:00\\:53\\:01",
+  "no:home-wifi:49:2472 MHz:02\\:00\\:5E\\:00\\:53\\:02",
 ].join("\n");
 
-check("a BSSID's escaped colons stay inside one field", splitTerseFields(REAL_WIFI_LIST.split("\n")[0]).length === 5);
+check("a BSSID's escaped colons stay inside one field", splitTerseFields(WIFI_LIST_SHAPE.split("\n")[0]).length === 5);
 check(
   "…and the BSSID comes back with its colons",
-  splitTerseFields(REAL_WIFI_LIST.split("\n")[0])[4] === "CC:BA:BD:34:31:92"
+  splitTerseFields(WIFI_LIST_SHAPE.split("\n")[0])[4] === "02:00:5E:00:53:01"
 );
 // ⚠️ An SSID may contain a colon, and a hotspot can be renamed at any time. A naive
 // split reads this row as six fields and puts "juice" where the signal belongs.
@@ -107,8 +115,8 @@ check("unparseable does not claim a link", parseDeviceState("GENERAL.STATE:banan
 
 console.log("\n3. the scan list");
 
-const onHome = parseWifiList(REAL_WIFI_LIST, "orange-juice");
-check("the active row's SSID is read", onHome.activeSsid === "Martin Router King");
+const onHome = parseWifiList(WIFI_LIST_SHAPE, "phone-hotspot");
+check("the active row's SSID is read", onHome.activeSsid === "home-wifi");
 check("…and its signal", onHome.signalPercent === 54);
 check("the hotspot is correctly absent from the home list", onHome.hotspotSeen === false);
 check("on another network, wifi_network is OTHER", onHome.network === WIFI_NETWORK.OTHER);
@@ -116,18 +124,18 @@ check("on another network, wifi_network is OTHER", onHome.network === WIFI_NETWO
 // The pathological reading: the hotspot IS in range and we are NOT on it. This is the
 // shape of the 2026-09-19 failure and the reason `wifi_hotspot_seen` exists at all.
 const strandedList = [
-  "no:orange-juice:71:2437 MHz:8E\\:A4\\:6A\\:E1\\:35\\:97",
-  "no:Martin Router King:31:2472 MHz:CC\\:BA\\:BD\\:34\\:31\\:92",
+  "no:phone-hotspot:71:2437 MHz:02\\:00\\:5E\\:00\\:53\\:11",
+  "no:home-wifi:31:2472 MHz:02\\:00\\:5E\\:00\\:53\\:01",
 ].join("\n");
-const stranded = parseWifiList(strandedList, "orange-juice");
+const stranded = parseWifiList(strandedList, "phone-hotspot");
 check("stranded: the hotspot is seen", stranded.hotspotSeen === true);
 check("stranded: nothing is active", stranded.activeSsid === null);
 check("stranded: wifi_network is NONE", stranded.network === WIFI_NETWORK.NONE);
 
-const onHotspot = parseWifiList("yes:orange-juice:88:2437 MHz", "orange-juice");
+const onHotspot = parseWifiList("yes:phone-hotspot:88:2437 MHz", "phone-hotspot");
 check("on the hotspot, wifi_network is HOTSPOT", onHotspot.network === WIFI_NETWORK.HOTSPOT);
 check("…and hotspot_seen is set by the active row too", onHotspot.hotspotSeen === true);
-check("an empty list says nothing rather than something", parseWifiList("", "orange-juice").hotspotSeen === false);
+check("an empty list says nothing rather than something", parseWifiList("", "phone-hotspot").hotspotSeen === false);
 
 // --- 4. The dump: failures reported, secrets not -------------------------------------
 
@@ -139,12 +147,12 @@ const dump = buildWifiDump({
   uptimeSeconds: 318,
   results: [
     {
-      command: "/usr/bin/nmcli -f ALL connection show orange-juice",
+      command: "/usr/bin/nmcli -f ALL connection show phone-hotspot",
       exitCode: 0,
       // ⚠️ The fixture CARRIES a secret. A redaction test whose input has nothing to
       // redact passes with the redactor deleted, which is the assertion-that-cannot-fail
       // this repo has been bitten by before.
-      stdout: `802-11-wireless-security.psk:                 ${FAKE_PSK}\n802-11-wireless.ssid:                    orange-juice`,
+      stdout: `802-11-wireless-security.psk:                 ${FAKE_PSK}\n802-11-wireless.ssid:                    phone-hotspot`,
       stderr: "",
       elapsedMs: 61,
       timedOut: false,
@@ -176,7 +184,7 @@ check(
   "…and the setting it was on is still visible",
   dump.includes("802-11-wireless-security.psk") && dump.includes(REDACTED)
 );
-check("a non-secret value on the same block survives", dump.includes("orange-juice"));
+check("a non-secret value on the same block survives", dump.includes("phone-hotspot"));
 // Never swallow errors: a failed command's exit code AND its stderr reach the file.
 check("a failed command's exit code is in the dump", dump.includes("exit 237"));
 check("…and its stderr", dump.includes("No such device (-19)"));
@@ -207,7 +215,7 @@ check(
 
 console.log("\n5. every collected command is a read");
 
-const commands = readOnlyCommands("wlan0", ["Wi-Fi connection 2", "Martin Router King"]);
+const commands = readOnlyCommands("wlan0", ["Wi-Fi connection 2", "home-wifi"]);
 const flat = commands.map(([file, args]) => [file, ...args].join(" "));
 // ⚠️ The rail. A dump must be safe to take at any moment, including mid-charge on a
 // healthy link. The forced rejoin is a separate, deliberate act.
@@ -236,13 +244,13 @@ check(
 // The one control that actually keeps the PSK out of the file.
 check("the connection dump never asks for secrets", !flat.some(line => line.includes("--show-secrets")));
 // ⚠️ A profile is addressed by NAME. NetworkManager 1.52.1's nmc_find_connection() matches
-// uuid/id/path/filename and has no SSID arm, so `connection show orange-juice` can only
+// uuid/id/path/filename and has no SSID arm, so `connection show phone-hotspot` can only
 // answer "unknown connection" — this Pi's profile is called "Wi-Fi connection 2".
 check(
   "per-profile detail is asked for by PROFILE NAME",
   flat.some(line => line.includes("connection show Wi-Fi connection 2"))
 );
-check("…and never by SSID", !flat.some(line => line.includes("connection show orange-juice")));
+check("…and never by SSID", !flat.some(line => line.includes("connection show phone-hotspot")));
 check(
   "a Pi with no saved wifi profiles still produces the rest of the dump",
   readOnlyCommands("wlan0", []).length === commands.length - 2
@@ -252,7 +260,7 @@ console.log("\n5b. resolving the profile names");
 
 // Captured shape of `nmcli -t -f NAME,TYPE connection show` on this Pi.
 const PROFILE_LISTING = [
-  "Martin Router King:802-11-wireless",
+  "home-wifi:802-11-wireless",
   "lo:loopback",
   "airbnb-chimp:802-11-wireless",
   "Wi-Fi connection 2:802-11-wireless",
@@ -440,7 +448,39 @@ check(
   )
 );
 
-console.log("\n11. the journal sentence never reports our own failure as the bike's");
+console.log("\n11. no real network identifier reaches this repo");
+
+// ⚠️ A real BSSID geolocates a building through wifi-positioning databases, which makes it
+// the same thing docs/route-map.md forbids as a coordinate, in a form that does not look
+// like one. Locally-administered addresses (bit 1 of the first octet set — second nibble
+// 2, 6, A or E) are reserved for exactly this and can never collide with a real AP.
+const fixtureBssids = [...WIFI_LIST_SHAPE.matchAll(/([0-9A-F]{2})(?:\\?:[0-9A-F]{2}){5}/g)].map(match => match[0]);
+check("the fixture actually contains BSSIDs to check", fixtureBssids.length >= 2);
+check(
+  "every BSSID in the fixtures is locally administered, so none is a real access point",
+  fixtureBssids.every(bssid => "26AE".includes(bssid[1].toUpperCase()))
+);
+
+console.log("\n11b. an unset WIFI_HOTSPOT_SSID fails loudly, not silently");
+
+// ⚠️ The code carries no default SSID — a public repo is no place for somebody's network
+// name — so "not configured" is a state that reaches a running Pi, and it must not look
+// like "the hotspot is not in range".
+check(
+  "with no SSID configured, the sentence says so rather than inventing a hotspot",
+  describeState(WIFI_LINK_STATE.DISCONNECTED, null, false).includes("WIFI_HOTSPOT_SSID") &&
+    !describeState(WIFI_LINK_STATE.DISCONNECTED, null, false).includes("hotspot not in range")
+);
+check(
+  "…and a connected bike still reads as connected",
+  describeState(WIFI_LINK_STATE.CONNECTED, null, false).includes("connected")
+);
+check(
+  "…while a configured one keeps the sentence that matters",
+  describeState(WIFI_LINK_STATE.DISCONNECTED, goodRead, true) === "NOT connected, and the hotspot IS in range"
+);
+
+console.log("\n11c. the journal sentence never reports our own failure as the bike's");
 
 // ⚠️ A failed nmcli is not a state of the radio. An earlier version said "radio
 // unavailable" whenever the LIST call failed on a perfectly connected bike.

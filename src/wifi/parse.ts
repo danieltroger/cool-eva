@@ -110,8 +110,8 @@ export function parseWifiList(terse: string, hotspotSsid: string): WifiListReadi
  *
  * ⚠️ A profile is addressed by NAME, UUID, path or filename — never by SSID. NetworkManager
  * 1.52.1's `nmc_find_connection()` has no SSID arm, and on this Pi the hotspot's profile is
- * called `Wi-Fi connection 2` while its SSID is `orange-juice`, so `nmcli connection show
- * orange-juice` can only ever answer "unknown connection". The names have to be looked up
+ * called `Wi-Fi connection 2` while its SSID is something else entirely — so asking for the
+ * profile by SSID can only ever answer "unknown connection". The names have to be looked up
  * before the per-profile detail can be asked for. docs/wifi.md §3.
  */
 export function parseWifiProfileNames(terse: string): string[] {

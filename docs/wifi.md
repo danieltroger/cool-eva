@@ -1,6 +1,8 @@
 # Wifi on the Pi: why it stopped trying on 2026-09-19, and what now records it
 
-The Pi joins Daniel's iPhone hotspot `orange-juice` and, at home, `Martin Router King`. It carries no screen and no second radio, so **the only way to ask it anything is over the very wifi that is failing.** That is the whole shape of the problem this document is about.
+The Pi joins the owner's iPhone hotspot and, at home, a house network. It carries no screen and no second radio, so **the only way to ask it anything is over the very wifi that is failing.** That is the whole shape of the problem this document is about.
+
+⚠️ **Every SSID and BSSID in this document is redacted or synthetic, and that is a rule rather than tidiness.** A BSSID is a _coordinate by another name_: wifi-positioning databases key a street address off an access point's MAC, so publishing the one on the wall geolocates the house as surely as a latitude would. `docs/route-map.md` forbids coordinates in committed files; this is the same rule wearing a disguise. The real values live in the dumps on the Pi, which is why `wifi-diag/` is in `.gitignore`. Placeholders here are `‹hotspot›` / `‹home-wifi›` for names and locally-administered `02:…` addresses for BSSIDs, which can never collide with a real AP.
 
 ## 1. The 2026-09-19 failure — NetworkManager latched the profile out of autoconnect
 
@@ -10,10 +12,10 @@ Boot `a984e8091e1145739e006ed17e86f15d`, 10:43:29 → 11:09:00 CEST, with a DC c
 
 | when (CEST) | journal |
 | --- | --- |
-| `10:43:44.011` | `Associated with fe:d2:fa:8f:39:bf`, DHCP `172.20.10.4`, `Activation: successful` |
-| `10:47:03.632` | `CTRL-EVENT-DISCONNECTED bssid=fe:d2:fa:8f:39:bf reason=0 locally_generated=1` |
+| `10:43:44.011` | `Associated with ‹bssid-A›`, DHCP `172.20.10.4`, `Activation: successful` |
+| `10:47:03.632` | `CTRL-EVENT-DISCONNECTED bssid=‹bssid-A› reason=0 locally_generated=1` |
 | `10:47:19.276` | `link timed out` → `activated -> failed (reason 'ssid-not-found')` |
-| `10:47:36`–`10:48:50` | six association attempts, all at the **stale** BSSID `fe:d2:fa:8f:39:bf`, all answered `CTRL-EVENT-ASSOC-REJECT bssid=00:00:00:00:00:00 status_code=16`, with `CTRL-EVENT-SSID-TEMP-DISABLED … auth_failures=1,2 … reason=CONN_FAILED` |
+| `10:47:36`–`10:48:50` | six association attempts, all at the same **stale** BSSID `‹bssid-A›`, all answered `CTRL-EVENT-ASSOC-REJECT bssid=00:00:00:00:00:00 status_code=16`, with `CTRL-EVENT-SSID-TEMP-DISABLED … auth_failures=1,2 … reason=CONN_FAILED` |
 | `10:48:02.196`, `10:48:27.196` | `Activation: (wifi) asking for new secrets` |
 | **`10:48:52.193`** | **`config -> failed (reason 'no-secrets')`** |
 | `10:49:00.731` | `supplicant interface state: disconnected -> inactive` |
@@ -99,7 +101,7 @@ Every activation failure logged on 2026-09-19, and whether NetworkManager retrie
 
 | hypothesis | verdict |
 | --- | --- |
-| 5 GHz hotspot vs a 2.4-only radio | **No.** All 125 `orange-juice` association attempts in the window are `freq=2437 MHz` (ch 6); `Martin Router King` is 2472. `nmcli device show wlan0` → `5GHZ: no`, `2GHZ: yes`. Both networks are 2.4 GHz |
+| 5 GHz hotspot vs a 2.4-only radio | **No.** All 125 hotspot association attempts in the window are `freq=2437 MHz` (ch 6); the house network is 2472. `nmcli device show wlan0` → `5GHZ: no`, `2GHZ: yes`. Both networks are 2.4 GHz |
 | rfkill | **No.** `phy0: Wireless LAN — Soft blocked: no, Hard blocked: no` |
 | a BSSID pinned in the profile | **No.** `802-11-wireless.bssid: --`. The 30 `seen-bssids` are a history, not a lock |
 | regulatory domain | **No.** `cfg80211.ieee80211_regdom=SE` on the kernel command line, `country DE` from the AP's country IE. Channel 6 is legal in both |
@@ -125,6 +127,15 @@ Every activation failure logged on 2026-09-19, and whether NetworkManager retrie
 ⚠️ **There is deliberately no `wifi_signal_pct`.** A percent has no honest value while the radio is disconnected, and an unwritten signal goes stale — so it would drag this group's `/status` liveness fraction down during exactly the fault the group exists for. The real strength, in dBm rather than nmcli's percent, is in the dump's `iw dev wlan0 link`. All three signals above are written on **every** successful poll, so the group is either fully live or genuinely unknown, never permanently part-dark.
 
 ⚠️ **Nothing is recorded when the read itself fails.** Writing `wifi_hotspot_seen = 0` because `nmcli` did not answer would assert "the hotspot is not in range" — the opposite of what a failed read means, and the one claim this whole diagnosis turns on.
+
+⚠️ **`WIFI_HOTSPOT_SSID` has no default and must be set on the Pi.** It names the network `wifi_hotspot_seen` and `wifi_network` are measured against, and it is left out of the code because a public repo is no place for somebody's network name. Put it in `/etc/default/cool-eva` and restart:
+
+```bash
+echo 'WIFI_HOTSPOT_SSID=your-hotspot-name' | sudo tee -a /etc/default/cool-eva
+sudo systemctl restart cool-eva
+```
+
+⚠️ **Unset, the hotspot half is OFF and says so** — one `console.warn` at startup naming the variable and the file, `wifi_link_state` still recorded, the second `nmcli` call skipped, and no fault dump ever written. That is deliberate: a feature whose whole purpose is catching something that quietly stopped trying must not itself quietly stop trying.
 
 ⚠️ **`wifi_hotspot_seen` is the one that answers this failure**, and only together with `wifi_link_state`: _"the hotspot is in range **and** we are not on it"_ is the shape of the fault, and neither half says it alone. The journal gets the same sentence, once, when it changes: `wifi: NOT connected, and the hotspot IS in range`.
 
@@ -152,7 +163,7 @@ Measured on this Pi Zero 2 W (quad-core): ten sequential cycles of the two `nmcl
 
 - ⚠️ **Not `/tmp`, and not a plain `writeFile`.** `/tmp` is tmpfs here and the bike cuts 12 V at key-off, so a dump taken at a charger would be gone before anyone could read it. The same cut is why the write goes through `replaceFileDurably`: ext4's `delalloc` leaves up to 30 s in which `i_size` says the bytes are there and the blocks read NUL (`docs/power-cuts.md`), so a plain write would have made the one failure this location was chosen to survive the one its write path does not. The rename leaves a `<name>.txt.tmp` if a cut lands between write and rename, and the prune reaps those first — they do not end in `.txt`, so nothing else ever would.
 - ⚠️ **`wifi-diag/` is in `.gitignore`.** A dump carries SSIDs and BSSIDs — the networks this bike and its owner have been near — which is the same class of thing as the coordinate rule in `docs/route-map.md`, in a form that looks innocuous.
-- ⚠️ **A profile is addressed by NAME, never by SSID.** NetworkManager 1.52.1's `nmc_find_connection()` matches uuid, id, path and filename and has no SSID arm — and on this Pi the hotspot's profile is called **`Wi-Fi connection 2`** while its SSID is `orange-juice`. So `nmcli connection show orange-juice` can only ever answer "unknown connection", and the per-profile detail carrying `autoconnect-priority`, `seen-bssids` and any pinned `bssid` — which is where the 2026-09-19 answer lives — would have been missing from every dump. The names are looked up first, with one extra read whose own result stays in the dump.
+- ⚠️ **A profile is addressed by NAME, never by SSID.** NetworkManager 1.52.1's `nmc_find_connection()` matches uuid, id, path and filename and has no SSID arm — and on this Pi the hotspot's profile is called **`Wi-Fi connection 2`** while its SSID is something else entirely. So asking for the profile by SSID can only ever answer "unknown connection", and the per-profile detail carrying `autoconnect-priority`, `seen-bssids` and any pinned `bssid` — which is where the 2026-09-19 answer lives — would have been missing from every dump. The names are looked up first, with one extra read whose own result stays in the dump.
 - **Every collected command is a read.** No `connection up`, no `device disconnect`, no forced rescan (`--rescan no` on the list, `scan dump` rather than `scan`, because a forced scan costs airtime and can disturb an association). A dump must be safe to take mid-charge on a healthy link.
 - **Secrets**: `nmcli connection show` prints the PSK as `<hidden>` unless `--show-secrets` is passed, and it is never passed — that is the control that matters. `buildWifiDump()` redacts secret-looking settings as a second line of defence, and the check feeds it a fixture _carrying_ a real-looking PSK, because a redaction test whose input has nothing to redact passes with the redactor deleted.
 - **Failures are reported, never dropped**: a non-zero exit, its stderr, a timeout and a truncation all reach the file. ⚠️ Node's `execFile` default buffer is 1 MB and it **kills** the child on overflow, so the command that overflows is the one whose output is lost — and the likeliest to overflow is the journal, whose size grows with exactly the trouble worth capturing. The buffer is 8 MB, the journal call is bounded by `--lines` as well as `--since`, and a truncated capture says `TRUNCATED` rather than looking complete.

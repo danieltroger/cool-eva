@@ -77,6 +77,17 @@ export function startWifiMonitor(
   // defeating WIFI_POLL_MS's contract by a path no check can see.
   let dumping = false;
 
+  if (hotspotSsid === "") {
+    // ⚠️ LOUD, because the alternative is the failure this whole feature exists to catch:
+    // something that quietly stops trying and tells nobody. With no SSID configured,
+    // `wifi_hotspot_seen` has no meaning and the fault dump can never fire — the radio's
+    // own state is still recorded. docs/wifi.md §2.
+    console.warn(
+      "wifi: WIFI_HOTSPOT_SSID is not set, so the hotspot half is OFF — no wifi_hotspot_seen, " +
+        "no wifi_network and no fault dumps. Set it in /etc/default/cool-eva and restart."
+    );
+  }
+
   const poll = async (): Promise<void> => {
     if (polling) {
       // The previous cycle is still out. Skipping is right: two nmcli pairs in flight on
@@ -170,14 +181,24 @@ export function shouldDumpNow(faultHeldMs: number, msSinceLastDump: number | nul
  * hotspot is sitting in the scan list.
  */
 async function pollOnce(iface: string, hotspotSsid: string, report: (line: string) => void): Promise<boolean> {
-  const device = await runCommand(NMCLI, ["-t", "-f", "GENERAL.STATE", "device", "show", iface], WIFI_POLL_TIMEOUT_MS);
-  const list = await runCommand(
-    NMCLI,
-    ["-t", "-f", "ACTIVE,SSID,SIGNAL", "device", "wifi", "list", "--rescan", "no"],
-    WIFI_POLL_TIMEOUT_MS
-  );
+  const results = [
+    await runCommand(NMCLI, ["-t", "-f", "GENERAL.STATE", "device", "show", iface], WIFI_POLL_TIMEOUT_MS),
+  ];
+  // ⚠️ The second call is SKIPPED when no hotspot SSID is configured. Without one there is
+  // nothing to compare the scan list against, so asking costs a fork and buys a number
+  // that would have to be thrown away — and the startup warning has already said so.
+  if (hotspotSsid !== "") {
+    results.push(
+      await runCommand(
+        NMCLI,
+        ["-t", "-f", "ACTIVE,SSID,SIGNAL", "device", "wifi", "list", "--rescan", "no"],
+        WIFI_POLL_TIMEOUT_MS
+      )
+    );
+  }
+  const [device, list] = results;
 
-  for (const result of [device, list]) {
+  for (const result of results) {
     if (result.exitCode !== 0) {
       // Not fatal and not silent. A missing nmcli, a stopped NetworkManager and an
       // interface that does not exist all land here, and all three mean the same to a
@@ -187,12 +208,12 @@ async function pollOnce(iface: string, hotspotSsid: string, report: (line: strin
   }
 
   const linkState = device.exitCode === 0 ? parseDeviceState(device.stdout) : null;
-  const reading = list.exitCode === 0 ? parseWifiList(list.stdout, hotspotSsid) : null;
+  const reading = list !== undefined && list.exitCode === 0 ? parseWifiList(list.stdout, hotspotSsid) : null;
   for (const [key, value] of signalsToRecord(linkState, reading)) {
     record(key, value);
   }
 
-  report(describeState(linkState, reading));
+  report(describeState(linkState, reading, hotspotSsid !== ""));
   return linkState === WIFI_LINK_STATE.DISCONNECTED && reading !== null && reading.hotspotSeen;
 }
 
@@ -205,9 +226,20 @@ async function pollOnce(iface: string, hotspotSsid: string, report: (line: strin
  * call failed on a perfectly connected bike — reports a fault that is ours, as if it were
  * the bike's.
  */
-export function describeState(linkState: WifiLinkState | null, reading: WifiListReading | null): string {
+export function describeState(
+  linkState: WifiLinkState | null,
+  reading: WifiListReading | null,
+  hotspotConfigured = true
+): string {
   if (linkState === null) {
     return "cannot say — nmcli did not answer";
+  }
+  if (!hotspotConfigured) {
+    // No SSID to compare against, so every sentence below that mentions the hotspot
+    // would be inventing one. Say only what the device state actually proves.
+    return linkState === WIFI_LINK_STATE.CONNECTED
+      ? "connected (no WIFI_HOTSPOT_SSID set)"
+      : `not connected (no WIFI_HOTSPOT_SSID set)`;
   }
   if (linkState === WIFI_LINK_STATE.CONNECTED) {
     const where = reading?.activeSsid ?? null;
