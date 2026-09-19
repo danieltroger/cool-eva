@@ -28,6 +28,11 @@ export interface StubRunOptions {
   candumpExitCode?: number;
   /** Real binaries to leave OFF the stub PATH, e.g. `["gzip"]`. */
   omitFromPath?: string[];
+  /**
+   * Make the status file read back as something that is not a number, which is the one
+   * way capture.sh can lose candump's exit code without any command having failed.
+   */
+  corruptStatus?: boolean;
   /** Replaces the script text, for mutation runs. Rewrites still apply. */
   scriptText?: string;
 }
@@ -72,8 +77,14 @@ interface StubContext {
   splitLog: string;
 }
 
-/** Everything the script reaches for that is not a shell builtin. */
-const REAL_TOOLS = ["cut", "date", "awk", "mkdir", "gzip"];
+/**
+ * Everything the script reaches for that is not a shell builtin.
+ *
+ * ⚠️ A tool missing here makes the run exit 127, which looks exactly like the script
+ * failing for the reason under test. Every assertion that reads an exit code would then
+ * be "passing" on a run that never happened — so a stub PATH is only as good as this list.
+ */
+const REAL_TOOLS = ["cut", "date", "awk", "mkdir", "gzip", "mktemp", "cat", "rm"];
 
 async function buildStubEnvironment(root: string, scriptPath: string, options: StubRunOptions): Promise<StubContext> {
   const binDirectory = join(root, "bin");
@@ -87,8 +98,22 @@ async function buildStubEnvironment(root: string, scriptPath: string, options: S
   await writeFile(uptimeFile, "1234.56 9876.54\n");
 
   const omit = new Set(options.omitFromPath ?? []);
+  const stubs = stubScripts(options, splitLog);
+
+  // ⚠️ Stubs are written FIRST and a real tool is never symlinked over one. writeFile
+  // through an existing symlink writes to the real binary's own path — /bin/cat — and
+  // fails with EACCES, which reads as the script being broken rather than the harness.
+  for (const [name, body] of Object.entries(stubs)) {
+    if (omit.has(name)) {
+      continue;
+    }
+    const path = join(binDirectory, name);
+    await writeFile(path, body);
+    await chmod(path, 0o755);
+  }
+
   for (const tool of REAL_TOOLS) {
-    if (omit.has(tool)) {
+    if (omit.has(tool) || tool in stubs) {
       continue;
     }
     const resolved = await which(tool);
@@ -96,15 +121,6 @@ async function buildStubEnvironment(root: string, scriptPath: string, options: S
       throw new Error(`stub-run: ${tool} is not on PATH, so the stub environment cannot be built`);
     }
     await symlink(resolved, join(binDirectory, tool));
-  }
-
-  for (const [name, body] of Object.entries(stubScripts(options, splitLog))) {
-    if (omit.has(name)) {
-      continue;
-    }
-    const path = join(binDirectory, name);
-    await writeFile(path, body);
-    await chmod(path, 0o755);
   }
 
   const original = options.scriptText ?? (await readFile(scriptPath, "utf-8"));
@@ -132,7 +148,7 @@ function stubScripts(options: StubRunOptions, splitLog: string): Record<string, 
 echo "Filesystem     1024-blocks      Used Available Capacity Mounted on"
 echo "/dev/mmcblk0p2   122519444 100443596  ${options.availableKb ?? "17061320"}      86% /"
 `;
-  return {
+  const stubs: Record<string, string> = {
     ip: `#!/bin/sh\nexit 0\n`,
     df: dfBody,
     // Two real frames and a stderr line, so the run proves 2>&1 reaches the pipe.
@@ -162,6 +178,10 @@ fi
 exec /bin/sh -c "$filter"
 `,
   };
+  if (options.corruptStatus) {
+    stubs.cat = `#!/bin/sh\necho "not-a-number"\n`;
+  }
+  return stubs;
 }
 
 async function spawnScript(context: StubContext): Promise<{ exitCode: number | null; output: string }> {

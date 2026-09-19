@@ -17,17 +17,6 @@
 # §"Why the capture is compressed, and what a power cut now costs".
 set -eu
 
-# ⚠️ Without pipefail the pipeline's status is the LAST command's, so a candump
-# that dies — SIOCGIFINDEX on a missing adapter, ENODEV on an unplugged one —
-# would exit 0, systemd would call the unit cleanly finished, and the capture
-# would stop until the next boot. dash (this Pi's /bin/sh) and bash both have
-# it; the guard is so a shell without it still runs, and says what it lost.
-if (set -o pipefail) 2>/dev/null; then
-  set -o pipefail
-else
-  echo "warning: this shell has no pipefail — a candump failure will exit 0 and the unit will NOT restart" >&2
-fi
-
 DIRECTORY=/home/pi/ride-captures
 mkdir -p "$DIRECTORY"
 
@@ -124,7 +113,33 @@ echo "capturing to $OUTPUT"
 # `-c` and `>>` are both load-bearing: without -c gzip writes nowhere, and `>` in place of `>>`
 # makes every member truncate the file, leaving a valid, readable gzip holding the last 64 kB
 # of an eight-hour ride with nothing anywhere saying so.
+#
+# ⚠️ candump's status travels in a FILE, not out of the pipeline. A pipeline's status is
+# its LAST command's — split's — so a candump that dies (SIOCGIFINDEX on a missing
+# adapter, ENODEV on an unplugged one) would exit 0, systemd would call the unit cleanly
+# finished, and the capture would stop until the next boot. `set -o pipefail` fixes that
+# and is NOT portable enough to rely on for it: it reached dash only in 0.5.12, and CI
+# caught this script exiting 0 on a runner whose /bin/sh has no such option. The `if`
+# is what keeps `set -e` from killing the group before the status is recorded.
+# `mktemp` lands in /tmp, which IS tmpfs — deliberately, and not the hazard docs/pi-agent-brief.md
+# bans: this holds two bytes of runtime state read by this same shell, never capture data, and a
+# power cut that loses it kills the reader too.
+STATUS_FILE=$(mktemp)
 {
   echo "# boot $BOOT_ID uptime $UPTIME"
-  stdbuf -oL timeout 28800 candump -D -tA can0
+  if stdbuf -oL timeout 28800 candump -D -tA can0; then
+    echo 0 > "$STATUS_FILE"
+  else
+    echo $? > "$STATUS_FILE"
+  fi
 } 2>&1 | split -C 65536 --filter='gzip -1 -c >> "$OUTPUT"'
+
+CANDUMP_STATUS=$(cat "$STATUS_FILE")
+rm -f "$STATUS_FILE"
+case "$CANDUMP_STATUS" in
+  '' | *[!0-9]*)
+    echo "candump left no usable exit status ($CANDUMP_STATUS) — failing loudly rather than reporting success" >&2
+    exit 1
+    ;;
+esac
+exit "$CANDUMP_STATUS"

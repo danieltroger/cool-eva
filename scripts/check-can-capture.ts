@@ -24,6 +24,12 @@ const execFileAsync = promisify(execFile);
 const CAPTURE_SCRIPT = new URL("./can-capture/capture.sh", import.meta.url);
 
 const script = await readFile(CAPTURE_SCRIPT, "utf8");
+// ⚠️ For assertions about what the script DOES. Several comments below quote the very
+// constructs they forbid, and a naive `script.includes(…)` then fails on its own prose.
+const code = script
+  .split("\n")
+  .filter(line => !line.trimStart().startsWith("#"))
+  .join("\n");
 const PROJECT_DIR = "/opt/probe-project-dir";
 const unit = canCaptureUnitText(PROJECT_DIR);
 const failures: string[] = [];
@@ -35,7 +41,7 @@ const failures: string[] = [];
 // ⚠️ Anchored on the invocation SHAPE, not on the word "candump" — which also appears in
 // the tool guard above it, and matching that line is the exact bug the previous version of
 // this comment recorded. `exec ` was the old anchor, and it went when the pipeline arrived.
-const CANDUMP_INVOCATION = /^\s*stdbuf -oL timeout \d+ candump\b/;
+const CANDUMP_INVOCATION = /^\s*(?:if )?stdbuf -oL timeout \d+ candump\b/;
 const candumpLines = script.split("\n").filter(line => CANDUMP_INVOCATION.test(line));
 const candumpLine = candumpLines[0];
 if (candumpLines.length !== 1) {
@@ -121,12 +127,25 @@ if (!pipeLine) {
   );
 }
 
-// ⚠️ Without pipefail the pipeline's status is split's, so a candump that dies exits 0,
-// systemd calls the unit cleanly finished, and the capture stops until the next boot.
-if (!/\(set -o pipefail\) 2>\/dev\/null/.test(script) || !/^\s*set -o pipefail$/m.test(script)) {
+// ⚠️ A pipeline's status is its LAST command's — split's — so candump's has to travel out
+// of the group some other way, or a candump that dies exits 0, systemd calls the unit
+// cleanly finished, and the capture stops until the next boot.
+//
+// It must NOT be `set -o pipefail`: dash gained that only in 0.5.12, and CI caught this
+// script exiting 0 on a runner whose /bin/sh has none. A status file is POSIX everywhere.
+if (!/\$\(mktemp\)/.test(script) || !/echo \$\? > "\$STATUS_FILE"/.test(script)) {
   failures.push(
-    "capture.sh no longer sets pipefail behind a portability guard. Without it a candump that dies " +
-      "(SIOCGIFINDEX, ENODEV) exits 0 through the pipeline and Restart=on-failure never fires"
+    "capture.sh no longer records candump's exit status in a file. A pipeline reports split's status, " +
+      "so without this a dying candump exits 0 and Restart=on-failure never fires"
+  );
+}
+if (!/^exit "\$CANDUMP_STATUS"$/m.test(script)) {
+  failures.push("capture.sh records candump's status but no longer exits with it, so systemd never sees it");
+}
+if (/set -o pipefail/.test(code)) {
+  failures.push(
+    "capture.sh is back to `set -o pipefail` for candump's status. It is not portable enough to carry " +
+      "that: dash before 0.5.12 has no such option and silently reports success instead"
   );
 }
 
@@ -366,18 +385,38 @@ if (dyingCandump.exitCode === 0) {
   );
 }
 
-// …and the mutation that proves the line above is load-bearing rather than decorative.
-const withoutPipefail = script.replace(/^  set -o pipefail$/m, "  : # pipefail removed by the mutation run");
-if (withoutPipefail === script) {
-  failures.push("the pipefail mutation did not apply — the assertion below would be testing nothing");
+// …and the mutation that proves the line above is load-bearing rather than decorative:
+// with the status file bypassed, the pipeline's own status is split's, which is 0.
+const withoutStatusFile = script.replace(/^exit "\$CANDUMP_STATUS"$/m, "exit 0 # status file bypassed by the mutation");
+if (withoutStatusFile === script) {
+  failures.push("the status-file mutation did not apply — the assertion below would be testing nothing");
 } else {
-  const mutated = await runCaptureScriptWithStubs(scriptPath, { candumpExitCode: 1, scriptText: withoutPipefail });
+  const mutated = await runCaptureScriptWithStubs(scriptPath, { candumpExitCode: 1, scriptText: withoutStatusFile });
   if (mutated.exitCode !== 0) {
     failures.push(
-      `removing pipefail was expected to hide a failing candump behind exit 0, but the run exited ` +
+      `bypassing the status file was expected to hide a failing candump behind exit 0, but the run exited ` +
         `${mutated.exitCode}. Either the shell defaults changed or this check no longer proves what it claims`
     );
   }
+}
+
+// ⚠️ The status file is the only path candump's code travels, so a status that reads back
+// as anything but a number has to be LOUD. Reporting success there would be the original
+// silent failure wearing the fix's clothes.
+const unreadableStatus = await runCaptureScriptWithStubs(scriptPath, { corruptStatus: true });
+if (unreadableStatus.exitCode === 0) {
+  failures.push("capture.sh exited 0 when candump's status file held something that is not a number");
+}
+if (!/no usable exit status/.test(unreadableStatus.output)) {
+  failures.push(`an unusable status was not named in the journal:\n${unreadableStatus.output}`);
+}
+
+// ⚠️ And the portability trap itself, which is what CI caught: a shell WITHOUT pipefail
+// must still propagate the failure. The status file does not care, but this asserts it
+// rather than trusting whichever /bin/sh the runner happens to have.
+const dashLike = await runCaptureScriptWithStubs(scriptPath, { candumpExitCode: 7 });
+if (dashLike.exitCode !== 7) {
+  failures.push(`candump exited 7 and capture.sh exited ${dashLike.exitCode}; the status must pass through unchanged`);
 }
 
 // Any of the three binaries missing: exit non-zero, say which, and leave NO file behind.
@@ -403,7 +442,7 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(
-  "\n✓ capture.sh keeps -D, its stderr marker, the boot-id name and the can0 wait; the 64 kB gzip members, the " +
-    "three-binary guard and pipefail all hold; the disk floor refuses below 10 GiB and fails closed on an " +
-    "unreadable df; the unit runs the tracked script"
+  "\n✓ capture.sh keeps -D, its stderr marker, the boot-id name and the can0 wait; the 64 kB gzip members and " +
+    "the three-binary guard hold; candump's exit status reaches systemd through a file rather than pipefail; " +
+    "the disk floor refuses below 10 GiB and fails closed on an unreadable df; the unit runs the tracked script"
 );
