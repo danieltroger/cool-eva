@@ -33,7 +33,13 @@ export interface PlanInput {
   /** `storedFile` → its size here, or null when it is missing. */
   storedCopies: Map<string, number | null>;
   nowEpochSeconds: number;
-  /** First 8 hex of the Pi's `/proc/sys/kernel/random/boot_id`, or null if unread. */
+  /**
+   * First 8 hex of the Pi's `/proc/sys/kernel/random/boot_id`.
+   *
+   * ⚠️ Null or empty REFUSES EVERYTHING. This is the only guard that does not depend on
+   * the Pi's clock, and the clock is the one this repo documents as untrustworthy — so
+   * losing it is losing the only reliable answer to "is something still writing this".
+   */
   currentBootId: string | null;
   strict: boolean;
   /** False only when the proof source's blobs live somewhere this machine cannot see. */
@@ -101,6 +107,12 @@ function refuse(row: ManifestRow, remote: RemoteFile | undefined, input: PlanInp
   if (!parsed) {
     return "not a capture name — only capture-<date>-<time>-<bootid>[-<uptime>].log[.gz] is ever deletable";
   }
+  // ⚠️ Fail closed, and before anything else that could pass. Without the boot id the
+  // only test left for "still being written" is a clock that has been years wrong on this
+  // hardware; a capture the running boot is appending to would then be deletable.
+  if (!input.currentBootId) {
+    return "the Pi's boot id could not be read, and it is the only guard here that does not trust the clock";
+  }
   if (row.sourceState !== "complete") {
     // ⚠️ Fail closed on anything unrecognised, not just on the one known bad value.
     // `prefix-of-live-file` means the copy is an honest prefix of a file the service was
@@ -118,7 +130,7 @@ function refuse(row: ManifestRow, remote: RemoteFile | undefined, input: PlanInp
   // `capture.sh` says so itself: it has no RTC and steps its own time from GPS, and the
   // archive holds a capture stamped 2060. The boot-id test is the only CLOCK-FREE one, and
   // it is the one that actually answers "is something still writing this".
-  if (input.currentBootId && parsed[7] === input.currentBootId) {
+  if (parsed[7] === input.currentBootId) {
     return `written by the boot that is running now (${parsed[7]}) — it may still be open`;
   }
   const mtimeAge = input.nowEpochSeconds - remote.mtimeEpochSeconds;

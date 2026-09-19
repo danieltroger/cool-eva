@@ -30,10 +30,12 @@ if ! command -v candump >/dev/null 2>&1; then
   echo "candump not found — install it with: sudo apt install can-utils" >&2
   exit 1
 fi
-if ! command -v gzip >/dev/null 2>&1 || ! command -v split >/dev/null 2>&1; then
-  echo "gzip and split are both required to write a compressed capture — install coreutils/gzip" >&2
-  exit 1
-fi
+for tool in gzip split mktemp cat rm; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "$tool is required to write a compressed capture and record candump's exit status" >&2
+    exit 1
+  fi
+done
 
 # can0 is brought up by the cool-eva service; wait rather than race it.
 # Still needed alongside -D: this waits for the DEVICE to appear (USB
@@ -88,43 +90,27 @@ UPTIME=$(printf %08d "$(cut -d. -f1 /proc/uptime)")
 # ⚠️ The MTIME is still whatever the clock says. docs/ride-log-clock.md §5.
 OUTPUT="$DIRECTORY/capture-$(date +%Y%m%d-%H%M%S)-$BOOT_ID-$UPTIME.log.gz"
 export OUTPUT
+# ⚠️ Before `: > "$OUTPUT"`, for the same reason the tool guard is: anything that can fail
+# must fail while there is still no file, or each failure leaves an empty capture behind.
+# /tmp is tmpfs and that is fine here — two bytes of runtime state read by this same shell,
+# never capture data, and a cut that loses it has killed the reader too.
+STATUS_FILE=$(mktemp)
 : > "$OUTPUT"
 
 echo "capturing to $OUTPUT"
-# stdbuf -oL: line-buffered, so candump hands each line to the pipe as it is decoded.
-# 8 h cap so a forgotten capture can't fill the card.
+# Why each piece is here — the arguments, the measurements and what a power cut costs are
+# in docs/can-capture.md §"The capture unit itself" and §"Why the capture is compressed,
+# and what a power cut now costs". In one line each:
 #
-# -D: don't exit when can0 goes down. The socket stays bound with its filters
-# registered (net/can/raw.c raw_notify: NETDEV_DOWN sets ENETDOWN and nothing
-# else), so frames resume by themselves and this keeps writing the SAME file.
-# Only NETDEV_UNREGISTER — the adapter unplugged — unbinds, and that still exits.
-#
-# ⚠️ 2>&1 is deliberate and must stay. -D removes the file boundary that used to
-# mark a gap, so candump's own "can0: interface down" line is the only evidence
-# IN THE FILE that one happened; the journal does not travel with the archive.
-#
-# The `echo` puts the boot id and uptime INSIDE the file, for the reason 2>&1 is here: the
-# archive travels to the laptop, the journal stays on a card that gets reflashed.
-# replay-capture.ts counts an unparseable line as `framesSkipped`, so it costs a reader nothing.
-#
-# ⚠️ `split -C 65536` and not a plain `| gzip`: gzip -1 emits nothing until ~786 kB of input
-# has accumulated, which is 7 s of bus a power cut would take with it. -C (not -b) also ends
-# every member on a line boundary, so only the final partial member can yield a partial line.
-# `-c` and `>>` are both load-bearing: without -c gzip writes nowhere, and `>` in place of `>>`
-# makes every member truncate the file, leaving a valid, readable gzip holding the last 64 kB
-# of an eight-hour ride with nothing anywhere saying so.
-#
-# ⚠️ candump's status travels in a FILE, not out of the pipeline. A pipeline's status is
-# its LAST command's — split's — so a candump that dies (SIOCGIFINDEX on a missing
-# adapter, ENODEV on an unplugged one) would exit 0, systemd would call the unit cleanly
-# finished, and the capture would stop until the next boot. `set -o pipefail` fixes that
-# and is NOT portable enough to rely on for it: it reached dash only in 0.5.12, and CI
-# caught this script exiting 0 on a runner whose /bin/sh has no such option. The `if`
-# is what keeps `set -e` from killing the group before the status is recorded.
-# `mktemp` lands in /tmp, which IS tmpfs — deliberately, and not the hazard docs/pi-agent-brief.md
-# bans: this holds two bytes of runtime state read by this same shell, never capture data, and a
-# power cut that loses it kills the reader too.
-STATUS_FILE=$(mktemp)
+#   -D            keep the socket when can0 goes down, so one boot is one file (#160)
+#   -tA           the absolute timestamps every reader in this repo parses
+#   timeout 28800 with -D, the only thing that ever closes a capture
+#   stdbuf -oL    candump hands over whole lines, not 4 kB blocks
+#   2>&1          candump's "interface down" is the ONLY in-band record of a gap
+#   echo # boot   the boot id inside the file; the journal does not travel with the archive
+#   split -C      64 kB gzip members: a plain `| gzip` holds 7 s of bus, this holds ~0.6 s
+#   -c and >>     without -c gzip writes nowhere; `>` makes every member truncate the file
+#   STATUS_FILE   a pipeline reports SPLIT's status, so candump's has to travel out by hand
 {
   echo "# boot $BOOT_ID uptime $UPTIME"
   if stdbuf -oL timeout 28800 candump -D -tA can0; then

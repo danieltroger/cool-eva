@@ -33,6 +33,11 @@ export interface StubRunOptions {
    * way capture.sh can lose candump's exit code without any command having failed.
    */
   corruptStatus?: boolean;
+  /**
+   * A `mktemp` that passes `command -v` and then fails when called. The tool guard cannot
+   * catch this one, so it is what actually tests the ORDER of the two file-creating lines.
+   */
+  mktempFails?: boolean;
   /** Replaces the script text, for mutation runs. Rewrites still apply. */
   scriptText?: string;
 }
@@ -180,6 +185,9 @@ exec /bin/sh -c "$filter"
   };
   if (options.corruptStatus) {
     stubs.cat = `#!/bin/sh\necho "not-a-number"\n`;
+  }
+  if (options.mktempFails) {
+    stubs.mktemp = `#!/bin/sh\necho "mktemp: no space left on device" >&2\nexit 1\n`;
   }
   return stubs;
 }

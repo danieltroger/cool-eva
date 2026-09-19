@@ -91,6 +91,17 @@ const CHECKS: SelfCheck[] = [
       "[Service] where systemd ignores it, and that the script parses as POSIX sh",
   },
   {
+    script: "scripts/check-capture-behaviour.ts",
+    covers:
+      "what capture.sh DOES, by running it under stubbed ip/candump/df/split/sleep in a temp directory — the " +
+      "orderings scripts/check-can-capture.ts can only approximate by reading it: that a healthy run writes one " +
+      "readable .log.gz through 64 kB members with candump's stderr folded in, that the disk floor refuses below " +
+      "10 GiB, passes exactly ON 10 GiB and fails CLOSED on a df that prints nothing, that candump's exit code " +
+      "reaches systemd unchanged on whatever /bin/sh the runner has (CI's dash has no pipefail, which is how the " +
+      "first version of this was caught exiting 0 on a dead candump), that a status file holding a non-number is " +
+      "loud, and that a missing binary leaves NO empty capture behind",
+  },
+  {
     script: "scripts/check-capture-reader.ts",
     covers:
       "the one reader that opens a compressed capture: that the concatenated 64 kB gzip members capture.sh now " +

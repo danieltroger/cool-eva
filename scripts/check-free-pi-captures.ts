@@ -38,6 +38,7 @@ checkTheStoredCopy();
 checkStrictHashing();
 checkDeduplicationAcrossProofSources();
 checkAbsentIsNotARefusal();
+checkAnUnknownBootIdRefusesEverything();
 
 if (failures.length > 0) {
   console.error("\nFAILED:");
@@ -237,6 +238,23 @@ function checkDeduplicationAcrossProofSources(): void {
   }
   if (plan.deletable[0]?.proofSource !== "MANIFEST.tsv") {
     failures.push("the first proof source named on the command line did not win the attribution");
+  }
+}
+
+/**
+ * ⚠️ Losing the boot id must refuse EVERYTHING, not quietly fall back to the clock. The
+ * diff reviewer demonstrated the hole: with the id null and a stale mtime, a capture the
+ * running boot was appending to came back deletable.
+ */
+function checkAnUnknownBootIdRefusesEverything(): void {
+  for (const bootId of [null, ""]) {
+    const plan = planCaptureDeletions({ ...base(row(), remote()), currentBootId: bootId });
+    if (plan.deletable.length !== 0) {
+      failures.push(`a boot id of ${JSON.stringify(bootId)} still allowed a deletion; it must refuse everything`);
+    }
+    if (!plan.refusals[0]?.reason.includes("boot id could not be read")) {
+      failures.push(`an unreadable boot id was refused for the wrong reason: ${plan.refusals[0]?.reason}`);
+    }
   }
 }
 

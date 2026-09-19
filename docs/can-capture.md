@@ -178,7 +178,7 @@ with **no** `can-capture` restart in `journalctl -u can-capture` around it, and 
 
 ## Why the capture is compressed, and what a power cut now costs
 
-`candump` writes **394 MB/h** of text into `/home/pi/ride-captures/`. On 2026-09-19 that directory held 625 files and 88.9 GiB against 17.2 GB free — about **43 powered-on hours** of headroom before the capture, the `.celog` ride log and journald would be fighting over the last gigabytes, and the ride log is the one that must not lose. Compressing the stream at 7.6:1 turns those 43 hours into **~320**. Issue #289.
+`candump` writes **394 MB/h** of text into `/home/pi/ride-captures/`. On 2026-09-19 that directory held 625 files and 88.9 GiB against 16.3 GiB free (17.5 GB — `df -Pk` said 17 081 612 kB, and `df -h`'s "17G" is GiB) — about **43 powered-on hours** of headroom before the capture, the `.celog` ride log and journald would be fighting over the last gigabytes, and the ride log is the one that must not lose. Compressing the stream at 7.6:1 turns those 43 hours into **~320**. Issue #289.
 
 The cost is the tail. Everything below is measured on the Pi, feeding a real capture into each candidate at 112 kB/s — the archive's own average rate — and snapshotting the output file after 25 s.
 
@@ -199,31 +199,35 @@ The cost is the tail. Everything below is measured on the Pi, feeding a real cap
     worst-case loss  =  CHUNK / 112000        (the chunk not yet compressed)
                      +  5.6 kB × 7.6 / 112000 (the compressed tail ext4 had not written back)
 
-`docs/power-cuts.md` §7 measures that second term on the existing archive: the file tail a cut costs is **≤ ~5.6 kB**, which on a `.gz` is _compressed_ bytes and so worth ~43 kB of frames, ≈ 0.38 s. Then:
+`docs/power-cuts.md` §7 measures that second term on the existing archive: the file tail a cut costs is **≤ ~5.6 kB** — one 4096-byte page plus the longest trailing NUL run it observed, 1 527 bytes. That is a **filesystem** quantity, about pages that never reached the card, so it is the same number of _file_ bytes whatever those bytes encode; on a `.gz` they are compressed, and at 7.6:1 they carry ~43 kB of frames, ≈ 0.38 s. Then:
 
 | CHUNK     | typical loss | worst-case loss |
 | --------- | ------------ | --------------- |
 | 131072    | ~0.96 s      | **1.55 s**      |
 | **65536** | **~0.57 s**  | **0.97 s**      |
 
-**65536 is the largest chunk whose worst case stays under 1.367 s** — the longest of the three complete shutdown walks in `docs/power-cuts.md` §7, which end 0.000 / 0.184 / 1.367 s after the bike's last `0x101` substate change. At 131072 a power cut could swallow that measurement whole; at 65536 it cannot. The ratio cost of the smaller chunk is **3.4 %**, measured on the same window.
+The bound is 1.367 s — the longest of the three complete shutdown walks in `docs/power-cuts.md` §7, which end 0.000 / 0.184 / 1.367 s after the bike's last `0x101` substate change. Solving for the chunk gives `(1.367 − 0.38) × 112000` ≈ **110 kB**, and **65536 is the largest power of two under it**. (Not "the largest chunk" — 110 592 would also fit. A power of two is the conventional choice and leaves margin, which is worth having because the 0.38 s term is a bound rather than a measurement.) At 131072 the worst case is 1.55 s and a power cut could swallow the measurement whole; at 65536 it is 0.97 s. The ratio cost of the smaller chunk is **3.4 %**, measured on the same window.
 
-⚠️ **Say what this does and does not cost, because the two classes differ by two orders of magnitude.** Park-lead measurements — the 10.03–442.11 s between entering state 60 and the end of the boot, which is what `src/storage/seal-on-park.ts` is built on — are untouched; §7 already treats them as lower bounds that tail loss only makes more conservative. The shutdown-walk class (0–1.4 s) is preserved by this chunk size and would not be by a larger one. Nothing moves retroactively: all three of those files are in the uncompressed archive on the laptop.
+⚠️ **Say what this does and does not cost — and do not overstate the second half.** Park-lead measurements — the 10.03–442.11 s between entering state 60 and the end of the boot, which is what `src/storage/seal-on-park.ts` is built on — are untouched; §7 already treats them as lower bounds that tail loss only makes more conservative.
+
+The shutdown-walk class is a different matter, and an earlier draft of this paragraph was too kind to itself. **A 0.97 s worst case does not preserve a 0.000 s or a 0.184 s walk; it erases them, and it shortens the 1.367 s one.** What the chunk size buys is that such a walk is not swallowed _whole_ — the last `0x101` substate change stays inside the file rather than falling off the end of it, which a 1.55 s worst case could not promise. A shutdown walk measured off a compressed capture is a **lower bound on the lead, not a measurement of the ending**, and should be written down as one. Nothing moves retroactively: all three files behind the existing figures are in the uncompressed archive on the laptop.
 
 ### Truncated captures are the normal case, and every reader must survive one
 
 The Pi takes its power from the bike, so almost every capture ends mid-stream. Measured on a real 37.9 MB capture, cut, and then cut and NUL-padded (the ext4 delayed-allocation signature `evidence/keyoff/tail-shape.py` measures):
 
-| reader                                | truncated multi-member `.gz`  | + a trailing NUL run      |
-| ------------------------------------- | ----------------------------- | ------------------------- |
-| `gzip -dc` (GNU 1.13, on the Pi)      | 380 534 B of 400 000, exit 1  | prefix, exit 1            |
-| `gzip -dc` (Apple gzip 479, on a Mac) | **327 567 B** — 53 kB less    | prefix, exit 1            |
-| Node `zlib.createGunzip()`            | 380 534 B, then `Z_BUF_ERROR` | same, then `Z_DATA_ERROR` |
-| Python `gzip.open()`                  | 380 534 B, then `EOFError`    | same                      |
+| reader                                | truncated multi-member `.gz`  | + a trailing NUL run                  |
+| ------------------------------------- | ----------------------------- | ------------------------------------- |
+| `gzip -dc` (GNU 1.13, on the Pi)      | 388 134 B of 400 000, exit 1  | prefix, exit 1                        |
+| `gzip -dc` (Apple gzip 479, on a Mac) | **327 551 B** — 60 kB less    | prefix, exit 1                        |
+| Node `zlib.createGunzip()`            | 388 134 B, then `Z_BUF_ERROR` | 390 754 B, then **`Z_BUF_ERROR` too** |
+| Python `gzip.open()`                  | 388 134 B, then `EOFError`    | same                                  |
 
 ⚠️ **How much a CLI recovers from a cut member is implementation-dependent** — Apple's gzip gives up 53 kB earlier than GNU's on the identical file — so `scripts/check-capture-reader.ts` asserts against **Node's** number, which is the same on both platforms because it is the same zlib. What every reader agrees on is that the recovered bytes are a **byte-exact prefix**, and that the last line is routinely a partial one. `scripts/replay-capture.ts` counts an unparseable line as `framesSkipped` and `evidence/keyoff/reduce-captures.awk` guards with `NF < 6`, so a partial final line costs a reader nothing.
 
-`scripts/capture-lines.ts` is the one place that opens a capture: it treats `Z_BUF_ERROR` and `Z_DATA_ERROR` as end-of-data, warns once with the line count, and re-throws anything else — so a missing or unreadable file is still a fault and not an empty capture.
+`scripts/capture-lines.ts` is the one place that opens a capture: it treats **`Z_BUF_ERROR` only** as end-of-data, warns once with the line count, and re-throws everything else — so a missing file, an unreadable one, or a corrupt one is still a fault and not a short capture.
+
+⚠️ **`Z_DATA_ERROR` is deliberately NOT in that set, and an earlier version of this section had it wrong.** Both power-cut shapes give `Z_BUF_ERROR` — the clean cut and the NUL-tailed one, measured above. What gives `Z_DATA_ERROR` is corruption: one flipped byte 20 000 into the _intact_ 400 000 B fixture returns **147 456 B**, one warning and exit 0. Accepting that code as truncation silently loses 63 % of a capture that was entirely there — the same silent-truncation failure this file rejects zstd for, reproduced in gzip by a too-generous error test. Found by the diff reviewer on #302.
 
 ⚠️ **The `grep -a` trap has a sibling.** `docs/handlebar-gestures.md` records that a NUL-tailed capture reads as binary to `grep`. A `.gz` is binary to `grep` _always_: it is `gzip -dc file.log.gz | grep …`, never `grep … file.log.gz`, and a cut capture is binary **and** truncated, so the pipe's exit status will be non-zero even when the grep found what you wanted.
 
@@ -263,11 +267,33 @@ and `closeout()` blocks:
 
 `closeout` — closing the write end and **blocking in `waitpid`** — runs before `create` spawns the next filter, and `line_bytes_split` (the `-C` path) writes only through `cwrite`. So the previous `gzip` has exited, and flushed its complete member and trailer, before the next one starts. Confirmed on the Pi: 207 samples over a 20 s paced run, **max concurrent `gzip` = 1**, and the output decompressed to a byte-exact copy of the input.
 
-That same `closeout` turns a filter's non-zero exit into `error (ex, 0, "with FILE=%s, exit %d from command: %s")`, so **a gzip that dies makes `split` exit non-zero** — which with `pipefail` restarts the unit rather than quietly writing nothing.
+That same `closeout` turns a filter's non-zero exit into `error (ex, 0, "with FILE=%s, exit %d from command: %s")`, so **a gzip that dies makes `split` exit non-zero** — and `split` is the pipeline's last command, so that status is the pipeline's and `set -e` restarts the unit rather than quietly writing nothing.
 
-### ⚠️ `pipefail`, or a dying candump exits 0
+### ⚠️ Why candump's exit status travels in a file, and not through `pipefail`
 
-`candump` used to be the unit's main process, so its exit status was the unit's. In a pipeline the status is `split`'s. Without `set -o pipefail` a `candump` that dies — `SIOCGIFINDEX: No such device` after the 240 s wait loop gives up, `ENODEV` on an unplugged adapter — would exit **0**, systemd would call the unit cleanly finished, and the capture would stop until the next boot. The loud 240 s restart loop described above would become silence. `/bin/sh` on this Pi is dash, which supports `pipefail`; the guard `(set -o pipefail) 2>/dev/null` is there so a shell without it still runs, and says in the journal what it has lost.
+`candump` used to be the unit's main process, so its exit status was the unit's. In a pipeline the status is `split`'s — so a `candump` that dies (`SIOCGIFINDEX: No such device` after the 240 s wait loop gives up, `ENODEV` on an unplugged adapter) would exit **0**, systemd would call the unit cleanly finished, and the capture would stop until the next boot. The loud 240 s restart loop described above would become silence.
+
+`set -o pipefail` fixes that and **is not portable enough to be trusted with it**, which was learned the expensive way: the first version of this change used it behind a `(set -o pipefail) 2>/dev/null` guard, and CI went red because that runner's `/bin/sh` has no such option — dash gained it only in 0.5.12 — so the fallback fired and the script exited 0 on a dead candump. The exact failure the line exists to prevent, reintroduced by depending on an optional feature to prevent it.
+
+So the status goes into a file and out through an explicit exit:
+
+```sh
+STATUS_FILE=$(mktemp)
+{
+  echo "# boot $BOOT_ID uptime $UPTIME"
+  if stdbuf -oL timeout 28800 candump -D -tA can0; then
+    echo 0 > "$STATUS_FILE"
+  else
+    echo $? > "$STATUS_FILE"
+  fi
+} 2>&1 | split -C 65536 --filter='gzip -1 -c >> "$OUTPUT"'
+
+CANDUMP_STATUS=$(cat "$STATUS_FILE")
+rm -f "$STATUS_FILE"
+exit "$CANDUMP_STATUS"
+```
+
+The `if` is what stops `set -e` killing the group before the status is written; a status that reads back as anything but a number exits 1 loudly rather than reporting success; and `mktemp`, `cat` and `rm` joined the `command -v` guard because they are now load-bearing. `set -o pipefail` reappearing in the script is itself a check failure, with the reason attached, so it does not come back as a tidy-up.
 
 ### The disk floor waits; it does not exit
 
@@ -299,4 +325,4 @@ head -c 400000 /home/pi/ride-captures/capture-20260919-165030-dcf59758-00000024.
 head -c $(( $(stat -c %s clean.log.gz) - 2000 )) clean.log.gz > truncated.log.gz
 ```
 
-7 members, 400 000 B, `cmp`-clean against the input; the truncated one keeps 6 members and 388 097 B, a byte-exact prefix. The clean fixture's own last line is partial because `head -c` cut it there — deliberately, so a reader that mishandles a partial final line cannot pass.
+7 members and 400 000 B, `cmp`-clean against the input; the truncated one keeps 5 whole members plus the cut one, and Node recovers 388 134 B of byte-exact prefix from it — which is the shape `evidence/keyoff/tail-shape.py` reports for it. The clean fixture's own last line is partial because `head -c` cut it there — deliberately, so a reader that mishandles a partial final line cannot pass.

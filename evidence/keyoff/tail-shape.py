@@ -37,35 +37,44 @@ def trailing_nulls(handle, size):
     return run
 
 def gzip_tail(path, size):
-    """Members completed, bytes recovered, and whether the last line is whole."""
+    """Members completed, bytes recovered, and whether the last line is whole.
+
+    Streams: one pass, a 1 MiB window, counters rather than a buffer. The obvious version
+    — slice the file from the current member and decompress the rest — is O(members^2) in
+    copying and holds the whole decompressed capture in memory. A real 8 h capture is
+    ~50 000 members and ~3 GB decompressed, so that version could not do this job at all.
+    """
+    members, decoded, cut, last_byte, fed = 0, 0, False, None, False
+    machine = zlib.decompressobj(31)
     with open(path, "rb") as handle:
-        body = handle.read()
-    decoded, members, position, cut = bytearray(), 0, 0, False
-    while position < len(body):
-        machine = zlib.decompressobj(31)
-        try:
-            decoded += machine.decompress(body[position:])
-            decoded += machine.flush()
-        except zlib.error:
-            # Not the ordinary cut — that is `eof` below. This is a member whose bytes are
-            # corrupt rather than merely absent, which is what a NUL run decodes as.
-            cut = True
-            break
-        # ⚠️ `decompress()` does NOT raise on a member that simply stops early: it returns
-        # what it has and waits for bytes that never come, and `flush()` does not raise
-        # either. `eof` is the only thing that distinguishes a complete member from a cut
-        # one. An earlier draft tested for an exception and reported every truncated
-        # capture as clean.
-        if not machine.eof:
-            cut = True
-            break
-        members += 1
-        if not machine.unused_data:
-            break
-        position = len(body) - len(machine.unused_data)
+        while not cut:
+            chunk = handle.read(1 << 20)
+            if not chunk:
+                break
+            while chunk:
+                fed = True
+                try:
+                    out = machine.decompress(chunk)
+                except zlib.error:
+                    # Corrupt rather than merely absent — what a NUL run decodes as once it
+                    # lands past a member boundary. Everything before it is still intact.
+                    cut = True
+                    break
+                decoded += len(out)
+                if out:
+                    last_byte = out[-1]
+                if not machine.eof:
+                    break
+                members += 1
+                chunk = machine.unused_data
+                machine = zlib.decompressobj(31)
+                fed = False
+    # A member that was fed and never reached its end marker is the ordinary power cut.
+    if fed and not machine.eof:
+        cut = True
     return {"path": os.path.basename(path), "size": size, "members": members,
-            "cutMember": cut, "decoded": len(decoded),
-            "endsWithNewline": decoded.endswith(b"\n") if decoded else None}
+            "cutMember": cut, "decoded": decoded,
+            "endsWithNewline": (last_byte == 0x0A) if last_byte is not None else None}
 
 
 for path in sys.argv[1:]:

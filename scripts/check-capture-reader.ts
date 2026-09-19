@@ -37,6 +37,7 @@ try {
   await checkCleanFixture();
   await checkTruncatedFixture();
   await checkNulTailedCapture();
+  await checkCorruptionStillThrows();
   await checkPlainCapture();
   checkCodecRouting();
   checkTruncationClassification();
@@ -108,8 +109,9 @@ async function checkTruncatedFixture(): Promise<void> {
 
 /**
  * The delayed-allocation signature: i_size published, blocks never written back, so the
- * file ends in NULs. `evidence/keyoff/tail-shape.py` measures it as the power-cut shape,
- * and it decodes as Z_DATA_ERROR rather than Z_BUF_ERROR — a different code, same meaning.
+ * file ends in NULs. `evidence/keyoff/tail-shape.py` measures it as the power-cut shape.
+ * It decodes as Z_BUF_ERROR, the same code a clean cut gives — measured, after an earlier
+ * version of this comment asserted Z_DATA_ERROR and was simply wrong.
  */
 async function checkNulTailedCapture(): Promise<void> {
   const holed = join(workspace, "capture-20260919-210000-7ce067a7-00000042.log.gz");
@@ -120,6 +122,33 @@ async function checkNulTailedCapture(): Promise<void> {
   }
   if (warnings.length !== 1) {
     failures.push(`a NUL-tailed capture warned ${warnings.length} times, expected exactly 1`);
+  }
+}
+
+/**
+ * ⚠️ A capture whose bytes are WRONG rather than merely absent must throw, not be read as
+ * a short one. One flipped byte 20 000 into the intact fixture returns 147 456 B — 37 % of
+ * it — and an over-generous truncation test made that a warning and an exit 0, which is
+ * precisely the silent-truncation failure this project rejected zstd for.
+ */
+async function checkCorruptionStillThrows(): Promise<void> {
+  const corrupt = join(workspace, "capture-20260919-210000-7ce067a7-00000043.log.gz");
+  const body = Buffer.from(await readFile(CLEAN));
+  body[20000] ^= 0xff;
+  await writeFile(corrupt, body);
+  let threw = "";
+  try {
+    for await (const line of openCaptureLines(corrupt)) {
+      void line;
+    }
+  } catch (error) {
+    threw = (error as { code?: string }).code ?? "";
+  }
+  if (threw !== "Z_DATA_ERROR") {
+    failures.push(
+      `a capture with a flipped byte in the middle gave ${threw || "no error"}; corrupt data must throw, ` +
+        "or a reader silently returns part of a capture that is all there"
+    );
   }
 }
 
@@ -150,14 +179,13 @@ function checkCodecRouting(): void {
 }
 
 function checkTruncationClassification(): void {
-  for (const code of ["Z_BUF_ERROR", "Z_DATA_ERROR"]) {
-    if (!isTruncationError(Object.assign(new Error("x"), { code }))) {
-      failures.push(`${code} is not classified as truncation, so a normal power cut would throw`);
-    }
+  if (!isTruncationError(Object.assign(new Error("x"), { code: "Z_BUF_ERROR" }))) {
+    failures.push("Z_BUF_ERROR is not classified as truncation, so a normal power cut would throw");
   }
   // ⚠️ The other direction matters more: a reader that treats every error as truncation
-  // turns a missing or unreadable file into an empty capture and a shrug.
-  for (const code of ["ENOENT", "EACCES", undefined]) {
+  // turns a missing or unreadable file into an empty capture and a shrug. Z_DATA_ERROR is
+  // in this list, not the one above: it means corrupt data, not a stream that ran out.
+  for (const code of ["Z_DATA_ERROR", "ENOENT", "EACCES", undefined]) {
     if (isTruncationError(Object.assign(new Error("x"), code === undefined ? {} : { code }))) {
       failures.push(`${code ?? "an error with no code"} is classified as truncation, which would swallow a real fault`);
     }

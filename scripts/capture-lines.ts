@@ -49,14 +49,17 @@ export function captureCodecFor(name: string): "gzip" | "plain" {
 }
 
 /**
- * Whether an error means "the stream stops here" rather than "this is not a capture".
+ * Whether an error means "the stream ran out" rather than "this data is wrong".
  *
- * ⚠️ Both codes are needed and neither is hypothetical. A clean cut gives `Z_BUF_ERROR`
- * ("unexpected end of file"). A cut that landed inside ext4's delayed allocation leaves the
- * file ending in NULs — `evidence/keyoff/tail-shape.py` measures that as the power-cut
- * signature — and NULs decode as `Z_DATA_ERROR`. Anything else is a real fault and throws.
+ * ⚠️ `Z_BUF_ERROR` only, and `Z_DATA_ERROR` deliberately NOT — that was a bug, found by
+ * the diff reviewer and reproduced here. Both of the shapes a power cut leaves give
+ * Z_BUF_ERROR: a clean cut (measured, 388 134 B of the truncated fixture) and a cut that
+ * landed inside ext4's delayed allocation so the file ends in NULs (390 754 B). What gives
+ * Z_DATA_ERROR is CORRUPTION — one flipped byte in the middle of the intact fixture
+ * returned 147 456 B, one warning and exit 0, silently losing 63 % of a capture that was
+ * all there. That is the same silent-truncation failure this project rejected zstd for,
+ * reproduced in gzip by a too-generous error test.
  */
 export function isTruncationError(error: unknown): boolean {
-  const code = (error as { code?: string } | null)?.code;
-  return code === "Z_BUF_ERROR" || code === "Z_DATA_ERROR";
+  return (error as { code?: string } | null)?.code === "Z_BUF_ERROR";
 }

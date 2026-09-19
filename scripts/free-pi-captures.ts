@@ -78,7 +78,7 @@ function report(plan: DeletionPlan, bootId: string | null): void {
   if (plan.absent.length > 0) {
     console.log(`\nalready gone from the Pi — ${plan.absent.length} (nothing to free)`);
   }
-  console.log(`\nthe Pi's current boot is ${bootId ?? "UNKNOWN — the boot-id guard did not run"}`);
+  console.log(`\nthe Pi's current boot is ${bootId || "UNKNOWN — every capture is refused without it"}`);
   if (!options.requireStoredCopy) {
     console.log(
       "⚠️  --no-stored-copy-check: this run did NOT confirm the verified copy still exists. Every deletion\n" +
@@ -244,7 +244,16 @@ async function ssh(host: string, script: string, input: string): Promise<string>
     child.on("error", reject);
     child.on("close", code => {
       if (code !== 0) {
-        reject(new Error(`ssh ${host} exited ${code}: ${errors.trim() || "(no stderr)"}`));
+        // ⚠️ The output goes into the error. On the delete path a non-zero exit is most
+        // likely a PARTIAL delete, and throwing away stdout would lose the only record of
+        // which files went — leaving the manifest and the card disagreeing with nothing
+        // to say where.
+        reject(
+          new Error(
+            `ssh ${host} exited ${code}: ${errors.trim() || "(no stderr)"}` +
+              (output.trim() ? `\n--- output before the failure ---\n${output.trim()}` : "")
+          )
+        );
         return;
       }
       if (errors.trim().length > 0) {
