@@ -33,14 +33,26 @@ So a backfill importer is possible but small, and it is not the fix.
 
 | class                                                                      | windows | km        | hours |
 | -------------------------------------------------------------------------- | ------- | --------- | ----- |
-| **(a) stationary** — parked, distance deadband; nothing missing            | 270     | **0.0**   | 330.3 |
+| **(a) stationary** — no distance in them; nothing missing                  | 270     | **0.0**   | 330.3 |
 | **(f) service restart** — `session_id` changes across the window           | 11      | **113.4** | 573.6 |
 | **(e) stream alive, no usable fix** — `gps_satellites` logged, no position | 33      | **29.9**  | 107.7 |
 | needs a capture to decide                                                  | 2       | 2.6       | 0.6   |
 
-⚠️ **(a) is the headline for anyone reading the map.** A 63-minute "GPS gap" on 2026-09-18 resolves to 2 `gps_lat` rows against **3 799 `gps_epoch_s` rows**, 0.0 km of odometer advance and a peak speed of 8.5 km/h. The service had position for the whole hour. The map is not missing a ride; the bike was standing still.
+⚠️ **(a) is the headline for anyone reading the map**: 270 windows, 330 hours, **0.0 km**. Nothing is missing from the track, whatever the cause.
 
-✅ **(e) is confirmed at the source.** Satellite counts logged _inside_ dark windows: **0 × 165 rows, 3 × 146 rows**, and only 57 rows at 4 or above. `src/gps/decode.ts#decodeUtc` gates on `satellites >= 4`, so the receiver simply did not have a fix to give — on either transport.
+🚨 **The cause is NOT the `gps_lat` deadband, and an earlier draft of this file said it was.** A dark window needs `gps_epoch_s` absent too, and that is deadbanded on an _advancing clock_ (0.5 s), not on distance — a parked bike with a live fix keeps logging it at ~1 Hz. A stationary bike alone therefore cannot open a dark window. Measured over the 270, using six always-on high-rate signals (`inst_consumption_wh`, `throttle_pct`, `attitude_pitch_deg`, `speed_can_kmh`, `drive_torque_feedback_nm`, `psu_12v_mv`) as the liveness proxy:
+
+|                                                     | windows | hours |
+| --------------------------------------------------- | ------- | ----- |
+| other signals logging, **no GPS on the bus at all** | 99      | 151.5 |
+| stream alive, no usable fix                         | 99      | 41.9  |
+| nothing logging — bike or Pi off                    | 72      | 136.9 |
+
+⚠️ Those counts are only as good as the six-signal proxy: a window in which only a rare signal logged reads here as "nothing logging". The #313 review put the same split at 10 / 106 / 154 from a wider scan, which I could not reproduce cheaply and therefore do not quote as mine. **Both agree on the point that matters — the dominant mechanism is the cluster ceasing to transmit the multiplex while parked**, which `docs/can-0x410.md` already records ("⚠️ They are not always on the bus"), not a deadband.
+
+🟡 **The deadband is real, but it silences `gps_lat` only.** 2026-09-18 15:08:14Z → 16:11:19Z carries 2 `gps_lat` rows against **3 799 `gps_epoch_s` rows**, 0.0 km of odometer advance and a peak speed of 8.5 km/h — the service had position for the whole hour. ⚠️ **That window is not one of the 316**, precisely because `gps_epoch_s` never stopped. It is what a `gps_lat`-only hold looks like, and it is why the enumeration here keys on both signals.
+
+✅ **(e) is confirmed at the source.** Satellite counts logged _inside_ dark windows: **0 × 165 rows, 3 × 146 rows**, and only 57 rows at 4 or above. `src/gps/decode.ts#decodeUtc` returns `null` when `#fix === 0 || satellites < 4`, so the receiver simply did not have a fix to give — on either transport.
 
 ## What the captures say, for the days we hold them
 
