@@ -249,6 +249,23 @@ check(
 check(`…and does NOT clear the ride log's ${RIDE_LOG_MAX_MS} ms press, which is known`, WIFI_HOLD_MS < RIDE_LOG_MAX_MS);
 check("the ride-log corpus is the larger one, so it is the one that governs", RIDE_LOG_PRESSES > CAPTURE_PRESSES);
 
+// ⚠️ THE MEASUREMENT THAT CHOSE THE BUTTON, pinned — because everything else about the
+// binding (registered, in `buttons`, no deadband, not the forbidden cruise-enable, all
+// three gestures distinct) is equally true of `btn_cruise_set`, which this hold length
+// cannot go on. Presses at or over WIFI_HOLD_MS, both corpora summed; the capture archive
+// is 268 files / 14 854 432 frames of 0x400, the ride log is as imported 2026-09-19 18:15.
+const PRESSES_AT_OR_OVER_5S = {
+  btn_set_back: 1,
+  btn_cruise_enable: 2,
+  btn_cruise_set: 26,
+  btn_heated_grip: 0,
+};
+const chosen = PRESSES_AT_OR_OVER_5S[WIFI_GESTURE_BUTTON as keyof typeof PRESSES_AT_OR_OVER_5S];
+check(`${WIFI_GESTURE_BUTTON} is one of the measured 0x400 buttons`, chosen !== undefined);
+// One is accepted and argued from the cost of a false fire; twenty-six is not.
+check(`…and reaches ${WIFI_HOLD_MS} ms at most once on record (it is ${chosen})`, chosen <= 1);
+check("btn_cruise_set is excluded by that same rule rather than by opinion", PRESSES_AT_OR_OVER_5S.btn_cruise_set > 1);
+
 // ⚠️ SAMPLE_MAX_AGE_MS is argued in long-press.ts from 0x102's worst frame gap of 14 ms.
 // This is the first gesture on 0x400, whose worst intra-press gap across all 129 archive
 // presses is 160.2 ms — so the margin that governs is 3.12x, not 0x102's 35x.
@@ -288,10 +305,19 @@ for (const key of ["wifi_rejoin_seq", "wifi_rejoin_outcome"]) {
   check(`…and is not onDemand, so the group's liveness stays honest`, entry.onDemand === undefined);
 }
 const outcome = SIGNALS.find(item => item.key === "wifi_rejoin_outcome");
+const codes = Object.values(REJOIN_OUTCOME);
+// ⚠️ Against the REGISTRY's own declaration, not only through isPlausible(). boundsFor()
+// reads the GENERATED table first, and that file is only rewritten when the generator
+// runs — so a bound narrowed in registry.ts slips past any assertion that resolves
+// through it until `npm test` regenerates. Both are asserted; this one goes red first.
 check(
-  "every REJOIN_OUTCOME code is plausible",
-  outcome !== undefined &&
-    Object.values(REJOIN_OUTCOME).every(code => isPlausible(outcome.key, code, outcome.unit, outcome.group))
+  "the declared bound covers every REJOIN_OUTCOME code",
+  outcome?.bounds !== undefined &&
+    codes.every(code => code >= (outcome.bounds ?? [0, 0])[0] && code <= (outcome.bounds ?? [0, 0])[1])
+);
+check(
+  "…and so does the bound the dashboard actually resolves",
+  outcome !== undefined && codes.every(code => isPlausible(outcome.key, code, outcome.unit, outcome.group))
 );
 // ⚠️ The republish itself, driven rather than inspected. status.ts calls this on EVERY
 // poll so the group is never permanently part-dark; a mutation that drops the call leaves
