@@ -49,6 +49,7 @@ export const WAYPOINT_REFUSAL_TEXT = {
 export function installAnnouncements() {
   announceFanState();
   announceWaypoints();
+  announceWifiRejoin();
 }
 
 /**
@@ -177,6 +178,43 @@ function announceFanState() {
  * two identical refusals in a row would otherwise be one banner, and the second hold at
  * the same spot with the same stale fix would look like it had worked.
  */
+/**
+ * What the rider is told when the wifi recovers itself, or when a hold asks it to.
+ *
+ * ⚠️ Keyed off `wifi_rejoin_seq`, a COUNTER, and not off the outcome code: two identical
+ * outcomes in a row move no signal, so a code alone would raise one banner for two
+ * recoveries and the second hold at the same charger would look like it had worked.
+ * Same shape and same reason as the waypoint refusal below.
+ */
+const WIFI_REJOIN_TEXT = /** @type {Record<number, [text: string, tone: "good" | "bad"]>} */ ({
+  1: ["Wi-Fi is up — state dumped, link untouched. Hold again to force a rejoin.", "good"],
+  2: ["Wi-Fi rejoined.", "good"],
+  3: ["Wi-Fi rejoin failed — the dump is on the Pi.", "bad"],
+  4: ["Hotspot not in range — state dumped.", "bad"],
+});
+
+function announceWifiRejoin() {
+  let rejoined = /** @type {{ value: number | null, baselined: boolean }} */ (blank());
+  van.derive(() => {
+    if (connection.val !== "live") {
+      rejoined = blank();
+      return;
+    }
+    // peek(), not valueOf(): the counter is what this reacts to, and the outcome is only
+    // read to word a banner already decided on. store.js §peek has the rule.
+    const outcome = peek("wifi_rejoin_outcome");
+    const folded = foldAnnouncement(rejoined, valueOf("wifi_rejoin_seq"));
+    rejoined = folded.state;
+    if (!folded.announce) {
+      return;
+    }
+    const said = WIFI_REJOIN_TEXT[Number(outcome ?? 0)];
+    if (said !== undefined) {
+      showToast(said[0], said[1]);
+    }
+  });
+}
+
 function announceWaypoints() {
   let saved = /** @type {{ value: number | null, baselined: boolean }} */ (blank());
   let refused = /** @type {{ value: number | null, baselined: boolean }} */ (blank());

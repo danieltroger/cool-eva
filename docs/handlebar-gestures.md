@@ -1,11 +1,12 @@
 # Handlebar gestures, recognised on the Pi
 
-A long press of a handlebar button as an input to this project rather than to the motorcycle. Two of them, both recognised by the service:
+A long press of a handlebar button as an input to this project rather than to the motorcycle. Three of them, all recognised by the service:
 
 | Button | Hold | What it does |
 | --- | --- | --- |
 | `btn_mode_enter` — MODE ENTER, left pod (`0x102` b0 bit 2) | **1200 ms** | steps the cooling fan round manual 100 % → off → automatic (`docs/fan-control.md`). ⚠️ _Off_ is enterable up to **15 km/h** since 2026-09-11 and handed back above it — so a hold made while creeping now silences the fan, where before it could not |
 | `btn_indicator_cancel` — the turn-signal switch pushed in (`0x102` b0 bit 5) | **500 ms** | saves a waypoint |
+| `btn_set_back` — SET/BACK, left pod below the flash-to-pass (`0x400` b2 bit 0) | **5000 ms** | dumps the wifi state and forces a rejoin (`docs/wifi.md` §4). ⚠️ Only below **0 km/h**, and while the link is UP the first hold dumps without touching it — a second hold within 60 s is what rejoins |
 
 `src/gestures/long-press.ts` is the recogniser and is pure — samples in, an edge out, no clock read and no I/O — so `scripts/check-hold-gestures.ts` replays press sequences through the very function the bike runs. `src/gestures/runner.ts` is the half that subscribes, beats and acts.
 
@@ -71,6 +72,12 @@ Every `0x102` and `0x400` frame in `~/Documents/cool-eva-archive` — **268 top-
 | `btn_cruise_enable` (b2 bit 1, right pod) | 36, median 995 ms, max 1125 ms | 146 pairs, max 8575 ms | 2 |
 | `btn_cruise_set` (b2 bit 2, right pod) | 78, median 1198 ms, **max 6225 ms** | 500 pairs, max 2 232 087 ms | **5 + 21 = 26** |
 | `btn_heated_grip` (b2 bit 3) | 0 — not fitted | 0 | 0 |
+
+⚠️ **The ride-log column above is as of that database's 2026-09-19 18:15 import, and the mtime is part of the claim.** `rides.db` is re-imported by other work; an earlier sweep of this very button read **53 pairs, max 1706 ms, 0 ≥ 5 s** at 17:05 and the figures below replaced it an hour later. Quote the mtime with any figure taken from it.
+
+🚨 **`btn_set_back` carries the 5 s wifi hold, and it is NOT clear of that corpus.** One press reaches **29 664 ms** — session 200, 2026-09-19, at **0.0 km/h**, so neither a longer threshold nor the stationary gate excludes it. Its provenance is the VCU soft-brick afternoon: journald shows **seven boots between 15:04 and 16:44 CEST, one of exactly zero seconds**, against 25–95 minute boots either side, and the press is released 8 s before its boot ends. ⚠️ That is the **reading of the row, not an excuse** — a recogniser cannot tell one thumb from another. ⚠️ And journald boots do **not** map one-to-one onto ride-log sessions, so the two corpora corroborate in direction only; the boot table is what carries the key-cycling.
+
+**What carries the button is the cost of a false fire, not its absence.** One dump, and a rejoin only when the link is already down — which is the action wanted then anyway; while the link is up a hold does not touch it. That is categorically unlike the fan gesture, where a false fire changes cooling. `scripts/check-wifi-recover.ts` replays that exact 29 664 ms press through the shipped recogniser and requires it to fire **once**.
 
 🚨 **A 5 s hold cannot go on `btn_cruise_set`**, which is the likeliest reading of the owner's word "speedo-set" (the 2024 service-tool analysis in `obd-garage/` §3.0 calls it `BUTTON [SET SPD|C.CTRL] (RightFront)`). It would have fired 26 times already. **And a stationary gate does not rescue it:** 16 of the 21 long ride-log presses were made at **≤ 2.5 km/h**, several at 0.0 — this button is held long while parked as well as while setting a cruise speed at 78 km/h. Lengthening the hold does not save it either: 7 clear 8 s and 3 clear 10 s. That check was run _before_ the gate was proposed, and it killed it.
 

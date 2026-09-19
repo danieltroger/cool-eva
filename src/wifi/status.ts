@@ -1,8 +1,8 @@
-import { uptime } from "os";
 import { record } from "../can/signals.ts";
-import { monotonicNow, since } from "../monotonic.ts";
+import { monotonicNow } from "../monotonic.ts";
 import { NMCLI, runCommand } from "./nmcli.ts";
-import { writeWifiDump } from "./dump.ts";
+import { afterAttempt, faultHeldMs, foldPoll, newFaultClock, shouldRecoverNow } from "./ladder.ts";
+import { republishRejoin } from "./recover.ts";
 import { WIFI_LINK_STATE, parseDeviceState, parseWifiList, type WifiLinkState, type WifiListReading } from "./parse.ts";
 
 // Publishes what the wifi is doing as `wifi_*` signals. Not a bus signal — nothing on
@@ -35,7 +35,7 @@ export const WIFI_POLL_MS = 8_000;
 export const WIFI_POLL_TIMEOUT_MS = 3_000;
 
 /**
- * How long "disconnected, with the hotspot in range" must hold before a dump is taken.
+ * How long "disconnected, with the hotspot in range" must hold before the watchdog acts.
  *
  * ⚠️ Long enough that ordinary roaming cannot reach it. On 2026-09-19 NetworkManager
  * retried after twelve of thirteen failures, the quickest in 0.6 s and the slowest in
@@ -43,9 +43,6 @@ export const WIFI_POLL_TIMEOUT_MS = 3_000;
  * gaps, which are the same fault class and worth a dump each.
  */
 export const WIFI_FAULT_DUMP_AFTER_MS = 120_000;
-
-/** And no more than one dump per this, however long the fault lasts. */
-export const WIFI_DUMP_MIN_GAP_MS = 15 * 60_000;
 
 export interface WifiMonitor {
   stop: () => void;
@@ -62,20 +59,14 @@ export interface WifiMonitor {
 export function startWifiMonitor(
   iface: string,
   hotspotSsid: string,
-  dumpDirectory: string,
+  onSustainedFault: () => void,
   intervalMs = WIFI_POLL_MS
 ): WifiMonitor {
   let lastReported: string | null = null;
   let polling = false;
-  // Both monotonic: ../gps/clock.ts steps the wall clock, and a step would either freeze
-  // the fault timer or make it fire instantly. ../monotonic.ts.
-  let faultSince: number | null = null;
-  let lastDumpAt: number | null = null;
-  // ⚠️ Its OWN flag, and the dump is never awaited by the poll. A dump runs a dozen
-  // children and can take a minute; held inside `polling` it would skip poll after poll
-  // and leave the group reading dark on /status through exactly the fault it is dumping —
-  // defeating WIFI_POLL_MS's contract by a path no check can see.
-  let dumping = false;
+  // Monotonic throughout: ../gps/clock.ts steps the wall clock, and a step would either
+  // freeze the fault timer or make it fire instantly. ../monotonic.ts.
+  let clock = newFaultClock();
 
   if (hotspotSsid === "") {
     // ⚠️ LOUD, because the alternative is the failure this whole feature exists to catch:
@@ -97,36 +88,23 @@ export function startWifiMonitor(
     }
     polling = true;
     try {
-      const inFault = await pollOnce(iface, hotspotSsid, line => {
+      const reading = await pollOnce(iface, hotspotSsid, line => {
         if (line !== lastReported) {
           console.log(`wifi: ${line}`);
           lastReported = line;
         }
       });
-      if (!inFault) {
-        faultSince = null;
-      } else {
-        faultSince ??= monotonicNow();
-        if (!dumping && shouldDumpNow(since(faultSince), lastDumpAt === null ? null : since(lastDumpAt))) {
-          lastDumpAt = monotonicNow();
-          dumping = true;
-          void writeWifiDump(dumpDirectory, iface, uptime())
-            .then(written => {
-              console.log(
-                written === null
-                  ? "wifi-diag: the fault dump could not be written — see the warning above"
-                  : `wifi-diag: wrote ${written}`
-              );
-            })
-            .catch(error => {
-              // writeWifiDump does not throw by design; if it ever does, an escaped
-              // rejection ends the process and takes the CAN logging with it.
-              console.warn("wifi-diag: the fault dump threw:", error);
-            })
-            .finally(() => {
-              dumping = false;
-            });
-        }
+      const now = monotonicNow();
+      clock = foldPoll(clock, { ...reading, nowMs: now });
+      if (shouldRecoverNow(clock, now, WIFI_FAULT_DUMP_AFTER_MS)) {
+        const held = faultHeldMs(clock, now) ?? 0;
+        console.log(`wifi: disconnected ${(held / 1000).toFixed(0)} s with the hotspot in range — recovering`);
+        clock = afterAttempt(clock, now);
+        // ⚠️ NOT awaited, and the reason is the same one ./recover.ts's in-flight flag
+        // exists for: a ladder rescans and activates and can take most of a minute. Held
+        // inside `polling` it would skip poll after poll and leave the group reading dark
+        // on /status through exactly the fault it is recovering from.
+        onSustainedFault();
       }
     } catch (error) {
       // pollOnce does not throw by design; if it ever does, the timer must survive it —
@@ -164,23 +142,15 @@ export function signalsToRecord(linkState: WifiLinkState | null, reading: WifiLi
 }
 
 /**
- * Whether to take a dump now. Pure, so scripts/check-wifi-diag.ts can walk the rule
- * without a radio: the fault must have held, and a dump must not have been taken too
- * recently however long it goes on.
- */
-export function shouldDumpNow(faultHeldMs: number, msSinceLastDump: number | null): boolean {
-  if (faultHeldMs < WIFI_FAULT_DUMP_AFTER_MS) {
-    return false;
-  }
-  return msSinceLastDump === null || msSinceLastDump >= WIFI_DUMP_MIN_GAP_MS;
-}
-
-/**
  * One cycle: two reads, three signals, and a sentence for the journal when it changes.
  * Answers whether the bike is in the state worth dumping — NOT connected, while the
  * hotspot is sitting in the scan list.
  */
-async function pollOnce(iface: string, hotspotSsid: string, report: (line: string) => void): Promise<boolean> {
+async function pollOnce(
+  iface: string,
+  hotspotSsid: string,
+  report: (line: string) => void
+): Promise<{ linkState: WifiLinkState | null; hotspotSeen: boolean }> {
   const results = [
     await runCommand(NMCLI, ["-t", "-f", "GENERAL.STATE", "device", "show", iface], WIFI_POLL_TIMEOUT_MS),
   ];
@@ -212,9 +182,14 @@ async function pollOnce(iface: string, hotspotSsid: string, report: (line: strin
   for (const [key, value] of signalsToRecord(linkState, reading)) {
     record(key, value);
   }
+  // ⚠️ Re-recorded on EVERY poll although they move only on a recovery. `record()` seals
+  // a row only when the value CHANGES, so this costs no rows — and it keeps the `wifi`
+  // group fully live on /status instead of standing at [3, 5] for ever, which would break
+  // the "never permanently part-dark" property the group was created for. docs/wifi.md §2.
+  republishRejoin();
 
   report(describeState(linkState, reading, hotspotSsid !== ""));
-  return linkState === WIFI_LINK_STATE.DISCONNECTED && reading !== null && reading.hotspotSeen;
+  return { linkState, hotspotSeen: reading !== null && reading.hotspotSeen };
 }
 
 /**

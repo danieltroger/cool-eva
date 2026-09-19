@@ -1,4 +1,5 @@
 import { SIGNALS } from "../src/can/registry.ts";
+import { WIFI_GESTURE_BUTTON } from "../src/wifi/recover.ts";
 import { defineSignals, latestValue, record } from "../src/can/signals.ts";
 import { FAN_MODE_CODE, startFanAutomatic } from "../src/fan/auto.ts";
 import type { FanController, FanState } from "../src/fan/control.ts";
@@ -963,6 +964,7 @@ const defined = new Map(SIGNALS.map(signal => [signal.key, signal]));
 const bound: [string, string][] = [
   ["the fan cycle", FAN_GESTURE_BUTTON],
   ["the waypoint", WAYPOINT_GESTURE_BUTTON],
+  ["the wifi dump and rejoin", WIFI_GESTURE_BUTTON],
 ];
 for (const [role, key] of bound) {
   const signal = defined.get(key);
@@ -973,7 +975,9 @@ for (const [role, key] of bound) {
   check(`…with no deadband`, !signal?.deadband);
   check(`…and it is not ${FORBIDDEN_BINDING}`, (key as string) !== FORBIDDEN_BINDING);
 }
-check("the two gestures are on different buttons", (FAN_GESTURE_BUTTON as string) !== WAYPOINT_GESTURE_BUTTON);
+// ⚠️ Pairwise, not just "the first two differ": two gestures sharing a button would both
+// fire on one thumb, and on this set that means a fan step AND a radio action at once.
+check("all three gestures are on different buttons", new Set(bound.map(([, key]) => key)).size === bound.length);
 // ⚠️ Read OFF bounds.js rather than compared to a second literal 300. The comment in
 // src/gps/fix-plausibility.ts claims the two "cannot come to disagree"; only this makes
 // that true, and the previous form was green for every value of either.

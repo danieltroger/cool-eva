@@ -21,6 +21,7 @@ export const SIGNAL_BOUNDS = Object.assign(Object.create(null), {
   "wifi_link_state": [0, 3],
   "wifi_network": [0, 2],
   "wifi_hotspot_seen": [0, 1],
+  "wifi_rejoin_outcome": [0, 4],
   "batt_temp_lo": [-30, 90],
   "batt_temp_hi": [-30, 90],
   "pack_v": [0, 450],
