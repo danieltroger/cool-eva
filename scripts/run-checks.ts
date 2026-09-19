@@ -488,6 +488,30 @@ const CHECKS: SelfCheck[] = [
       "otherwise have taken away",
   },
   {
+    script: "scripts/check-wifi-diag.ts",
+    covers:
+      "the wifi logging and the dump builder behind #290, where NetworkManager latched the hotspot profile out of " +
+      "autoconnect on 2026-09-19 and sat disconnected for twenty minutes while the Pi — reachable only over that " +
+      "very wifi — could not be asked why. The parsing traps first, both captured off the Pi rather than imagined: " +
+      "`nmcli -t` escapes the separator INSIDE a value, so a BSSID prints as `CC\\:BA\\:BD\\:34\\:31\\:92` and a naive " +
+      '`split(":")` reads six fields out of a three-field row — and an SSID may contain a colon too, which a ' +
+      "hotspot rename can produce at any time; and `GENERAL.STATE` is a NUMBER AND A WORD (`100 (connected)`), so " +
+      "`Number()` of the whole value is NaN. Then the fold itself, against libnm's own constants read out of " +
+      "nm-dbus-interface.h: FAILED (120) and DEACTIVATING (110) are DISCONNECTED and not UNAVAILABLE, because the " +
+      "radio worked throughout the 2026-09-19 silence and naming that 'unavailable' names the wrong fault. Then the " +
+      "reading the whole feature turns on — the hotspot IS in range and we are NOT on it — which neither half says " +
+      "alone. Then the dump: a fixture CARRYING a real-looking PSK must come out with that string absent while the " +
+      "setting it sat on is still visible (a redaction test whose input has nothing to redact passes with the " +
+      "redactor deleted), and a failed, timed-out or truncated command must say so rather than looking complete. " +
+      "Then the rail that a dump is safe to take at any moment: every collected command is a READ, no `connection " +
+      "up`, no forced rescan, and never `--show-secrets`. Finally two contracts that are invisible from either side " +
+      "on its own — each wifi_* key's bound resolved from its REGISTRY ENTRY rather than spelled, so moving the " +
+      "group back to `diag` (where a blank-unit code is silently gated to [0,1] and `wifi_link_state = 3` draws as " +
+      "a dead sensor) turns it red; and the poll interval read off src/http/status.ts's own FRESH_MS, because a " +
+      '`source: "poll"` signal slower than that window reads dark on a healthy Pi and `live === 0` is what a ' +
+      "reader of /status filters on to find a dead source",
+  },
+  {
     script: "scripts/check-fan-off-ceiling.ts",
     covers:
       "the fan's *off* step at a creep, and the hand-back when a creep becomes a departure. Daniel silenced the " +

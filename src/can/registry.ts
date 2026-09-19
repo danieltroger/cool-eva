@@ -63,6 +63,27 @@ export const SIGNALS: SignalDef[] = [
   // [0, 1] as a BOOLEAN_GROUP — so no per-key bound is needed.
   { key: "can_link", unit: "", group: "diag", source: "poll" },
 
+  // What the wifi is doing, polled from `nmcli` (src/wifi/status.ts, docs/wifi.md). Same
+  // shape as `can_link` above and a DIFFERENT group on purpose.
+  //
+  // ⚠️ `wifi` and not `diag`, for two reasons — and NOT for the one that looks obvious.
+  // `diag` is a BOOLEAN_GROUP in public/lib/bounds-rules.js, but a declared `bounds` beats
+  // that gate (boundsFor consults the generated per-key table first), and `abs_warning_lamp`
+  // below is a 0-3 code living in `diag` on exactly that basis. What the group really buys:
+  // (1) it reaches no fallback rule at all, so generate-signal-bounds.ts REFUSES a future
+  // wifi_* declaring neither `bounds` nor `unbounded` — it fails closed rather than gating
+  // wrongly; (2) a Pi with no NetworkManager cannot drag `diag`'s /status liveness down.
+  { key: "wifi_link_state", unit: "", group: "wifi", source: "poll", bounds: [0, 3] },
+  { key: "wifi_network", unit: "", group: "wifi", source: "poll", bounds: [0, 2] },
+  // The decisive one: "the hotspot is in range AND we are not on it" is the shape of the
+  // 2026-09-19 failure, and neither half says it alone.
+  { key: "wifi_hotspot_seen", unit: "", group: "wifi", source: "poll", bounds: [0, 1] },
+  // ⚠️ There is deliberately NO `wifi_signal_pct`. A signal has no honest value while the
+  // radio is disconnected, and an unwritten one goes stale — so a percent key would drag
+  // this group's /status liveness fraction down during exactly the fault the group exists
+  // for. The real signal strength, in dBm rather than nmcli's percent, is in the dump's
+  // `iw dev wlan0 link`. docs/wifi.md §2.
+
   // 0x200 / 0x660 — BMS
   // batt_temp_lo/hi always mean the TRUE pack temperature, whichever frame supplies
   // them (see pack-temperature.ts), so the history stays one continuous series. That

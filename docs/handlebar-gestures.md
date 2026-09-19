@@ -61,6 +61,23 @@ Every `0x102` and `0x400` frame in `~/Documents/cool-eva-archive` — **268 top-
 
 ⚠️ **This retires `LONGEST_ORDINARY_PRESS_MS = 920`**, which `scripts/check-handlebar-gestures.ts` carried until 2026-09-08 and which `docs/dashboard-decisions.md` argued `LONG_PRESS_MS` from. It came from 14 captures and two presses of `btn_cruise_enable`; over 36 presses that button reaches **1.125 s**. The figure was not wrong when it was written, and it is wrong now — which is the argument for recording the sample size next to every number in this table.
 
+### The `0x400` buttons, measured for #290
+
+⚠️ **The table above is `0x102`, the VCU's left-pod discretes. `0x400` is the DASHBOARD's frame** and carries four more buttons (`obd-garage/HEATED_GRIPS.md` §3.5 pins each to a `J8` pin). They were measured for the wifi gesture in `docs/wifi.md`, over the same 268 files — **14 854 432 frames of `0x400`, 98 files carrying it** — and against `rides.db` as a second corpus, because §"Long ENTER presses in the ride log" is the standing warning that one archive is not enough.
+
+| button | captures | ride log | ≥ 5 s |
+| --- | --- | --- | --- |
+| `btn_set_back` (b2 bit 0, left pod) | 15 presses, median 145 ms, **max 300 ms** | 53 pairs, max 1706 ms | **0** |
+| `btn_cruise_enable` (b2 bit 1, right pod) | 36, median 995 ms, max 1125 ms | 146 pairs, max 8575 ms | 2 |
+| `btn_cruise_set` (b2 bit 2, right pod) | 78, median 1198 ms, **max 6225 ms** | 500 pairs, max 2 232 087 ms | **5 + 21 = 26** |
+| `btn_heated_grip` (b2 bit 3) | 0 — not fitted | 0 | 0 |
+
+🚨 **A 5 s hold cannot go on `btn_cruise_set`**, which is the likeliest reading of the owner's word "speedo-set" (the 2024 service-tool analysis in `obd-garage/` §3.0 calls it `BUTTON [SET SPD|C.CTRL] (RightFront)`). It would have fired 26 times already. **And a stationary gate does not rescue it:** 16 of the 21 long ride-log presses were made at **≤ 2.5 km/h**, several at 0.0 — this button is held long while parked as well as while setting a cruise speed at 78 km/h. Lengthening the hold does not save it either: 7 clear 8 s and 3 clear 10 s. That check was run _before_ the gate was proposed, and it killed it.
+
+⚠️ **`SAMPLE_MAX_AGE_MS`'s 35× margin is `0x102`'s number, not this frame's.** `long-press.ts` argues 500 ms from `0x102`'s worst intra-press gap of 14 ms; the first gesture on a `0x400` bit needs `0x400`'s. Measured across all 129 archive presses: **worst intra-press gap 160.2 ms** (`btn_cruise_set`, 2026-08-09, `capture-20260809-181842-5f095c14.log`), **0 presses with any gap over 500 ms**, so the margin is **3.12×** rather than 35×. Per button it is `btn_set_back` **22.3 ms (22.4×)**, `btn_cruise_enable` 155.2 ms, `btn_cruise_set` 160.2 ms.
+
+And the frame is live when it is needed: inside two DC-charge windows — `capture-20260804-193952` (1038.1 s) and `capture-20260809-181059` (658.7 s) — `0x400` arrives at **89.7 Hz and 79.9 Hz with worst gaps of 130 ms and 106 ms and zero over 500 ms**. On an **AC** charge it goes quiet with everything else: the same 4622.3 s span and the same single **1422.1 s** hole as `0x102` in `capture-20260808-182129`. No hold can be recognised in that hole, the press is abandoned rather than assumed, and that is the fail-closed behaviour rather than a defect.
+
 ### Method, and where it does not hold
 
 Presses are paired per file and then **deduped by absolute press instant**, because two `candump` instances recorded some of the same seconds — the artefact `src/can/vcu-digitals.ts` warns about, which turns one hold into hundreds of 10 ms toggles if the files are concatenated first. It caught two duplicated ENTER presses across two files.

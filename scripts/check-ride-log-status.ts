@@ -426,6 +426,8 @@ async function checkADeadBusIsNotReportedAsHealthy(): Promise<StatusPayload | nu
     "powertrain",
     "security",
     "vcu",
+    // #290's wifi poller. It polls faster than FRESH_MS, so it is genuinely live.
+    "wifi",
   ];
   const declared = [...MUST_BE_SUMMARISED].sort();
   const unknown = declared.filter(group => !SIGNALS.some(signal => signal.group === group));
