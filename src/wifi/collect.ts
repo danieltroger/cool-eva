@@ -1,4 +1,5 @@
 import { IP, IW, JOURNALCTL, NMCLI, RFKILL, runCommand, type CommandResult } from "./nmcli.ts";
+import { parseWifiProfileNames } from "./parse.ts";
 
 // The read-only commands a wifi dump is made of, and the loop that runs them. Impure by
 // definition; ./diag.ts turns what this returns into text. docs/wifi.md.
@@ -31,22 +32,31 @@ export const JOURNAL_MAX_LINES = "20000";
  * — two of them scanning — is a spike at the one moment the rider is already unhappy.
  * The whole list costs under a second in normal conditions.
  */
-export async function collectWifiState(iface: string, hotspotSsid: string): Promise<CommandResult[]> {
-  const results: CommandResult[] = [];
-  for (const [file, args] of readOnlyCommands(iface, hotspotSsid)) {
+export async function collectWifiState(iface: string): Promise<CommandResult[]> {
+  // ⚠️ One extra read FIRST, because a profile cannot be addressed by SSID. Its result is
+  // kept in the dump like any other, so a reader sees what the lookup answered.
+  const listing = await runCommand(NMCLI, ["-t", "-f", "NAME,TYPE", "connection", "show"], COMMAND_TIMEOUT_MS);
+  const profiles = listing.exitCode === 0 ? parseWifiProfileNames(listing.stdout) : [];
+  if (listing.exitCode !== 0) {
+    console.warn(`wifi-diag: ${listing.command} exited ${listing.exitCode}, so no per-profile detail is collected`);
+  }
+  const results: CommandResult[] = [listing];
+  for (const [file, args] of readOnlyCommands(iface, profiles)) {
     results.push(await runCommand(file, args, COMMAND_TIMEOUT_MS));
   }
   return results;
 }
 
 /** The list itself, as data, so the check can assert what is in it and what is not. */
-export function readOnlyCommands(iface: string, hotspotSsid: string): [string, string[]][] {
+export function readOnlyCommands(iface: string, wifiProfiles: readonly string[]): [string, string[]][] {
   return [
     [NMCLI, ["-f", "ALL", "device", "show", iface]],
     [NMCLI, ["-f", "ALL", "connection", "show"]],
+    // Per-profile detail, BY NAME — `autoconnect-priority`, `seen-bssids`, a pinned
+    // `bssid` — which is where the 2026-09-19 answer would have been found.
     // ⚠️ No `--show-secrets`. Without it nmcli prints the PSK as `<hidden>`, which is the
     // control that keeps the key out of a file we may later want to paste somewhere.
-    [NMCLI, ["-f", "ALL", "connection", "show", hotspotSsid]],
+    ...wifiProfiles.map((name): [string, string[]] => [NMCLI, ["-f", "ALL", "connection", "show", name]]),
     // `--rescan no` reads NM's cache. A forced scan costs airtime and can disturb an
     // association, which is the opposite of what a diagnostic should do.
     [NMCLI, ["-t", "-f", "ACTIVE,SSID,SIGNAL,FREQ,BSSID,SECURITY", "device", "wifi", "list", "--rescan", "no"]],

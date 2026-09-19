@@ -1,4 +1,5 @@
 import { execFile } from "child_process";
+import { monotonicNow, since } from "../monotonic.ts";
 
 // The only place in src/wifi that starts a process. Everything else takes strings.
 //
@@ -54,7 +55,11 @@ export interface CommandResult {
  * diagnostic whose failures are invisible is worse than none, because it looks complete.
  */
 export function runCommand(file: string, args: string[], timeoutMs: number): Promise<CommandResult> {
-  const startedAt = Date.now();
+  // ⚠️ monotonicNow(), not Date.now(). This is a DURATION, and ../gps/clock.ts steps
+  // this process's wall clock with `date -u -s` whenever satellite time disagrees — a
+  // step landing inside a call would print a negative or hour-long elapsed time into the
+  // dump, next to the command whose slowness is the thing being diagnosed. ../monotonic.ts.
+  const startedAt = monotonicNow();
   const command = [file, ...args].join(" ");
   return new Promise(resolve => {
     execFile(
@@ -62,7 +67,7 @@ export function runCommand(file: string, args: string[], timeoutMs: number): Pro
       args,
       { timeout: timeoutMs, maxBuffer: MAX_OUTPUT_BYTES, encoding: "utf8" },
       (error, stdout, stderr) => {
-        const elapsedMs = Date.now() - startedAt;
+        const elapsedMs = Math.round(since(startedAt));
         if (error === null) {
           resolve({ command, exitCode: 0, stdout, stderr, elapsedMs, timedOut: false, truncated: false });
           return;

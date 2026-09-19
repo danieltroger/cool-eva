@@ -1,6 +1,16 @@
+import { uptime } from "os";
 import { record } from "../can/signals.ts";
+import { monotonicNow, since } from "../monotonic.ts";
 import { NMCLI, runCommand } from "./nmcli.ts";
-import { WIFI_LINK_STATE, classifyNetwork, parseDeviceState, parseWifiList } from "./parse.ts";
+import { writeWifiDump } from "./dump.ts";
+import {
+  WIFI_LINK_STATE,
+  classifyNetwork,
+  parseDeviceState,
+  parseWifiList,
+  type WifiLinkState,
+  type WifiListReading,
+} from "./parse.ts";
 
 // Publishes what the wifi is doing as `wifi_*` signals. Not a bus signal — nothing on
 // can0 reports it — so it cannot ride in on a frame; it is `nmcli` state read on a timer,
@@ -14,24 +24,28 @@ import { WIFI_LINK_STATE, classifyNetwork, parseDeviceState, parseWifiList } fro
 /**
  * How often the state is re-read.
  *
- * ⚠️ 8 s and NOT the 15 s ../can/link-status.ts uses, and the reason is a contract rather
- * than a preference. `../http/status.ts` counts a signal live only if it arrived inside
- * `FRESH_MS`, and `live === 0` is what a reader of that summary filters on to find a dead
- * source. A poll slower than FRESH_MS therefore reads as half-dark on a perfectly healthy
- * Pi — which `can_link` already does at 15 s and gets away with only because it sits in a
- * `diag` group of three dozen other signals that dilute the fraction. A six-signal `wifi`
- * group has nothing to hide behind, so the poll is faster than the window instead of
- * documenting an exception to it. scripts/check-wifi-diag.ts pins WIFI_POLL_MS < FRESH_MS.
- *
- * What it costs, measured on this Pi Zero 2 W (quad-core) rather than estimated: ten
- * sequential cycles of the two calls below take 1.289 s user + 0.560 s sys, i.e. ~185 ms
- * of CPU per cycle — 2.3 % of one core at this interval, ~0.6 % of the machine. That is a
- * floor, not a total: it excludes NetworkManager's own D-Bus work on the other side.
+ * ⚠️ 8 s and NOT the 15 s ../can/link-status.ts uses, because it is a CONTRACT with
+ * ../http/status.ts: a `source: "poll"` signal polled slower than its `FRESH_MS` reads
+ * dark on a healthy Pi. Measured cost here is ~185 ms of CPU per cycle, 0.6 % of this
+ * quad-core machine. Both arguments, and why `can_link` gets away with 15 s: docs/wifi.md §2.
  */
 export const WIFI_POLL_MS = 8_000;
 
 /** Per-call ceiling. Short, because a hung nmcli must not stack polls on top of each other. */
 const POLL_TIMEOUT_MS = 5_000;
+
+/**
+ * How long "disconnected, with the hotspot in range" must hold before a dump is taken.
+ *
+ * ⚠️ Long enough that ordinary roaming cannot reach it. On 2026-09-19 NetworkManager
+ * retried after twelve of thirteen failures, the quickest in 0.6 s and the slowest in
+ * 14 min 58 s — so two minutes is far past any roam and still catches every one of those
+ * gaps, which are the same fault class and worth a dump each.
+ */
+export const WIFI_FAULT_DUMP_AFTER_MS = 120_000;
+
+/** And no more than one dump per this, however long the fault lasts. */
+export const WIFI_DUMP_MIN_GAP_MS = 15 * 60_000;
 
 export interface WifiMonitor {
   stop: () => void;
@@ -45,9 +59,18 @@ export interface WifiMonitor {
  * module for WIFI_POLL_MS — so a poll started up here would shell out to an `nmcli` that
  * is not on a laptop, every eight seconds, for as long as the check run lasted.
  */
-export function startWifiMonitor(iface: string, hotspotSsid: string, intervalMs = WIFI_POLL_MS): WifiMonitor {
+export function startWifiMonitor(
+  iface: string,
+  hotspotSsid: string,
+  dumpDirectory: string | null,
+  intervalMs = WIFI_POLL_MS
+): WifiMonitor {
   let lastReported: string | null = null;
   let polling = false;
+  // Both monotonic: ../gps/clock.ts steps the wall clock, and a step would either freeze
+  // the fault timer or make it fire instantly. ../monotonic.ts.
+  let faultSince: number | null = null;
+  let lastDumpAt: number | null = null;
 
   const poll = async (): Promise<void> => {
     if (polling) {
@@ -58,12 +81,31 @@ export function startWifiMonitor(iface: string, hotspotSsid: string, intervalMs 
     }
     polling = true;
     try {
-      await pollOnce(iface, hotspotSsid, line => {
+      const inFault = await pollOnce(iface, hotspotSsid, line => {
         if (line !== lastReported) {
           console.log(`wifi: ${line}`);
           lastReported = line;
         }
       });
+      if (!inFault) {
+        faultSince = null;
+      } else {
+        if (faultSince === null) {
+          faultSince = monotonicNow();
+        }
+        if (
+          dumpDirectory !== null &&
+          shouldDumpNow(since(faultSince), lastDumpAt === null ? null : since(lastDumpAt))
+        ) {
+          lastDumpAt = monotonicNow();
+          const outcome = await writeWifiDump(dumpDirectory, iface, uptime());
+          console.log(
+            outcome.path === null
+              ? "wifi-diag: the fault dump could not be written — see the warning above"
+              : `wifi-diag: wrote ${outcome.path} (${outcome.problems} command(s) unhappy)`
+          );
+        }
+      }
     } catch (error) {
       // pollOnce does not throw by design; if it ever does, the timer must survive it —
       // a monitor that dies silently is worse than one that never started.
@@ -78,8 +120,49 @@ export function startWifiMonitor(iface: string, hotspotSsid: string, intervalMs 
   return { stop: () => clearInterval(timer) };
 }
 
-/** One cycle: two reads, four signals, and a sentence for the journal when it changes. */
-async function pollOnce(iface: string, hotspotSsid: string, report: (line: string) => void): Promise<void> {
+/**
+ * What one cycle has learned, as signals. Pure, so the rule that matters most here is
+ * reachable from a check without a radio.
+ *
+ * ⚠️ A FAILED READ RECORDS NOTHING. Writing `wifi_hotspot_seen = 0` because `nmcli` did
+ * not answer asserts "the hotspot is not in range" — the opposite of what a failed read
+ * means, and the one claim the 2026-09-19 diagnosis turns on. An unrecorded signal goes
+ * stale and its group reads dark, which is the honest answer to "we cannot say".
+ */
+export function signalsToRecord(
+  linkState: WifiLinkState | null,
+  reading: WifiListReading | null,
+  hotspotSsid: string
+): [string, number][] {
+  const signals: [string, number][] = [];
+  if (linkState !== null) {
+    signals.push(["wifi_link_state", linkState]);
+  }
+  if (reading !== null) {
+    signals.push(["wifi_hotspot_seen", reading.hotspotSeen ? 1 : 0]);
+    signals.push(["wifi_network", classifyNetwork(reading.activeSsid, hotspotSsid)]);
+  }
+  return signals;
+}
+
+/**
+ * Whether to take a dump now. Pure, so scripts/check-wifi-diag.ts can walk the rule
+ * without a radio: the fault must have held, and a dump must not have been taken too
+ * recently however long it goes on.
+ */
+export function shouldDumpNow(faultHeldMs: number, msSinceLastDump: number | null): boolean {
+  if (faultHeldMs < WIFI_FAULT_DUMP_AFTER_MS) {
+    return false;
+  }
+  return msSinceLastDump === null || msSinceLastDump >= WIFI_DUMP_MIN_GAP_MS;
+}
+
+/**
+ * One cycle: two reads, three signals, and a sentence for the journal when it changes.
+ * Answers whether the bike is in the state worth dumping — NOT connected, while the
+ * hotspot is sitting in the scan list.
+ */
+async function pollOnce(iface: string, hotspotSsid: string, report: (line: string) => void): Promise<boolean> {
   const device = await runCommand(NMCLI, ["-t", "-f", "GENERAL.STATE", "device", "show", iface], POLL_TIMEOUT_MS);
   const list = await runCommand(
     NMCLI,
@@ -97,42 +180,47 @@ async function pollOnce(iface: string, hotspotSsid: string, report: (line: strin
     console.warn(`wifi: ${list.command} exited ${list.exitCode}: ${list.stderr.trim()}`);
   }
 
-  const linkState = device.exitCode === 0 ? parseDeviceState(device.stdout) : WIFI_LINK_STATE.UNAVAILABLE;
+  const linkState = device.exitCode === 0 ? parseDeviceState(device.stdout) : null;
   const reading = list.exitCode === 0 ? parseWifiList(list.stdout, hotspotSsid) : null;
-  const network = classifyNetwork(reading?.activeSsid ?? null, hotspotSsid);
-
-  record("wifi_link_state", linkState);
-  record("wifi_network", network);
-  record("wifi_hotspot_seen", reading?.hotspotSeen === true ? 1 : 0);
-  if (reading?.signalPercent !== null && reading?.signalPercent !== undefined) {
-    record("wifi_signal_pct", reading.signalPercent);
+  for (const [key, value] of signalsToRecord(linkState, reading, hotspotSsid)) {
+    record(key, value);
   }
 
-  report(
-    describe(linkState, reading?.activeSsid ?? null, reading?.hotspotSeen === true, reading?.signalPercent ?? null)
-  );
+  report(describeState(linkState, reading));
+  return linkState === WIFI_LINK_STATE.DISCONNECTED && reading !== null && reading.hotspotSeen;
 }
 
 /**
  * The journal sentence. Written only when it CHANGES, so a healthy boot costs a handful
  * of lines rather than one every eight seconds — ../can/link-status.ts's arrangement.
+ *
+ * ⚠️ A null argument is "the read failed", which is not a state of the radio. Saying
+ * "radio unavailable" over a failed nmcli — as an earlier version did whenever the LIST
+ * call failed on a perfectly connected bike — reports a fault that is ours, as if it were
+ * the bike's.
  */
-function describe(
-  linkState: number,
-  activeSsid: string | null,
-  hotspotSeen: boolean,
-  signalPercent: number | null
-): string {
-  if (linkState === WIFI_LINK_STATE.CONNECTED && activeSsid !== null) {
-    return `on "${activeSsid}"${signalPercent === null ? "" : ` at ${signalPercent} %`}`;
+export function describeState(linkState: WifiLinkState | null, reading: WifiListReading | null): string {
+  if (linkState === null) {
+    return "cannot say — nmcli did not answer";
+  }
+  if (linkState === WIFI_LINK_STATE.CONNECTED) {
+    const where = reading?.activeSsid ?? null;
+    const strength = reading?.signalPercent ?? null;
+    if (where === null) {
+      return "connected, but the scan list did not say to what";
+    }
+    return `on "${where}"${strength === null ? "" : ` at ${strength} %`}`;
   }
   if (linkState === WIFI_LINK_STATE.CONNECTING) {
     return "connecting";
   }
   if (linkState === WIFI_LINK_STATE.DISCONNECTED) {
+    if (reading === null) {
+      return "not connected, and the scan list did not answer";
+    }
     // The sentence worth having. "In range and not joined" is the 2026-09-19 shape, and
     // saying it here is what makes the ride log answer the question without an ssh.
-    return hotspotSeen ? "NOT connected, and the hotspot IS in range" : "not connected, hotspot not in range";
+    return reading.hotspotSeen ? "NOT connected, and the hotspot IS in range" : "not connected, hotspot not in range";
   }
   return "radio unavailable";
 }

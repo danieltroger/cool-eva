@@ -46,6 +46,7 @@ import { startWaypointFixTracking, waypointHoldGesture } from "./gps/waypoint.ts
 import { bringUpCan, openChannel } from "./can/socket.ts";
 import { startCanLinkMonitor } from "./can/link-status.ts";
 import { startWifiMonitor } from "./wifi/status.ts";
+import { WIFI_DIAG_DIRNAME } from "./wifi/dump.ts";
 import { decodeFrame, STREAM_IDS } from "./can/decode.ts";
 import { frameArrival } from "./can/frame-arrival.ts";
 import { configurePackTemperature, resolvePackTemperatures } from "./can/pack-temperature.ts";
@@ -436,7 +437,9 @@ const canLinkMonitor = startCanLinkMonitor(CAN_IFACE);
 // HERE rather than at module scope in src/wifi/status.ts, exactly as the line above is,
 // so importing that module in a check on a laptop does not shell out to an nmcli that
 // is not there. docs/wifi.md.
-const wifiMonitor = WIFI_ENABLED ? startWifiMonitor(WIFI_IFACE, WIFI_HOTSPOT_SSID) : null;
+const wifiMonitor = WIFI_ENABLED
+  ? startWifiMonitor(WIFI_IFACE, WIFI_HOTSPOT_SSID, join(ROOT, WIFI_DIAG_DIRNAME))
+  : null;
 
 // --- Bluetooth: Connectivity Hub (torque/power, odometer, vehicle state, GPS) ---
 let bleClient: BleClient | undefined;

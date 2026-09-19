@@ -10,18 +10,27 @@ import { SIGNALS } from "../src/can/registry.ts";
 import { FRESH_MS } from "../src/http/status.ts";
 import { REDACTED, buildWifiDump, redactSecrets } from "../src/wifi/diag.ts";
 import { JOURNAL_MAX_LINES, readOnlyCommands } from "../src/wifi/collect.ts";
-import { MAX_OUTPUT_BYTES } from "../src/wifi/nmcli.ts";
-import { WIFI_DIAG_KEEP, dumpFilename } from "../src/wifi/dump.ts";
-import { WIFI_POLL_MS } from "../src/wifi/status.ts";
+import { MAX_OUTPUT_BYTES, runCommand } from "../src/wifi/nmcli.ts";
+import { WIFI_DIAG_KEEP, dumpFilename, dumpsToRemove } from "../src/wifi/dump.ts";
+import {
+  WIFI_DUMP_MIN_GAP_MS,
+  WIFI_FAULT_DUMP_AFTER_MS,
+  WIFI_POLL_MS,
+  describeState,
+  shouldDumpNow,
+  signalsToRecord,
+} from "../src/wifi/status.ts";
 import {
   WIFI_LINK_STATE,
   WIFI_NETWORK,
   classifyNetwork,
   parseDeviceState,
   parseWifiList,
+  parseWifiProfileNames,
   splitTerseFields,
 } from "../src/wifi/parse.ts";
-import { boundsFor, isPlausible } from "../public/lib/bounds.js";
+import { isPlausible } from "../public/lib/bounds.js";
+import { fallbackBoundsFor } from "../public/lib/bounds-rules.js";
 
 let failures = 0;
 
@@ -200,7 +209,7 @@ check(
 
 console.log("\n5. every collected command is a read");
 
-const commands = readOnlyCommands("wlan0", "orange-juice");
+const commands = readOnlyCommands("wlan0", ["Wi-Fi connection 2", "Martin Router King"]);
 const flat = commands.map(([file, args]) => [file, ...args].join(" "));
 // ⚠️ The rail. A dump must be safe to take at any moment, including mid-charge on a
 // healthy link. The forced rejoin is a separate, deliberate act.
@@ -228,6 +237,38 @@ check(
 );
 // The one control that actually keeps the PSK out of the file.
 check("the connection dump never asks for secrets", !flat.some(line => line.includes("--show-secrets")));
+// ⚠️ A profile is addressed by NAME. NetworkManager 1.52.1's nmc_find_connection() matches
+// uuid/id/path/filename and has no SSID arm, so `connection show orange-juice` can only
+// answer "unknown connection" — this Pi's profile is called "Wi-Fi connection 2".
+check(
+  "per-profile detail is asked for by PROFILE NAME",
+  flat.some(line => line.includes("connection show Wi-Fi connection 2"))
+);
+check("…and never by SSID", !flat.some(line => line.includes("connection show orange-juice")));
+check(
+  "a Pi with no saved wifi profiles still produces the rest of the dump",
+  readOnlyCommands("wlan0", []).length === commands.length - 2
+);
+
+console.log("\n5b. resolving the profile names");
+
+// Captured shape of `nmcli -t -f NAME,TYPE connection show` on this Pi.
+const PROFILE_LISTING = [
+  "Martin Router King:802-11-wireless",
+  "lo:loopback",
+  "airbnb-chimp:802-11-wireless",
+  "Wi-Fi connection 2:802-11-wireless",
+].join("\n");
+check("only the wifi profiles are picked out", parseWifiProfileNames(PROFILE_LISTING).length === 3);
+check(
+  "…including the hotspot's oddly-named one",
+  parseWifiProfileNames(PROFILE_LISTING).includes("Wi-Fi connection 2")
+);
+check("…and loopback is not one of them", !parseWifiProfileNames(PROFILE_LISTING).includes("lo"));
+check(
+  "a profile name containing a colon survives",
+  parseWifiProfileNames("pub\\:wifi:802-11-wireless")[0] === "pub:wifi"
+);
 // The command that would have answered 2026-09-19 without an ssh.
 check(
   "the journal is collected",
@@ -243,11 +284,38 @@ check(
 );
 check("the buffer is larger than Node's 1 MB default", MAX_OUTPUT_BYTES > 1024 * 1024);
 
+// --- 5c. runCommand never throws, and never swallows -------------------------------
+
+console.log("\n5c. the command rail itself");
+
+// Real children. /bin/echo and /bin/sh exist on macOS and on the Pi, so this runs
+// everywhere the suite does — and the point is precisely that the rail is not simulated.
+const ok = await runCommand("/bin/echo", ["hello"], 5_000);
+check("a successful command reports exit 0 and its output", ok.exitCode === 0 && ok.stdout.trim() === "hello");
+check("…and a non-negative elapsed time", Number.isFinite(ok.elapsedMs) && ok.elapsedMs >= 0);
+
+const failed = await runCommand("/bin/sh", ["-c", "echo oops >&2; exit 3"], 5_000);
+check("a non-zero exit comes back as a NUMBER, not a throw", failed.exitCode === 3);
+// ⚠️ Never swallow errors: the stderr is what a reader of the dump needs.
+check("…with its stderr intact", failed.stderr.includes("oops"));
+
+// ENOENT: execFile's `code` is a STRING here, so there is no numeric exit status to
+// report. It must still resolve, and it must still say something.
+const missing = await runCommand("/usr/bin/definitely-not-a-real-binary-xyz", [], 5_000);
+check("a missing binary resolves rather than throwing", missing.exitCode === null);
+check("…and says why, rather than coming back blank", missing.stderr.trim() !== "");
+
+const slow = await runCommand("/bin/sh", ["-c", "sleep 5"], 300);
+check("a timeout resolves and is flagged", slow.timedOut === true);
+check("…and is not mistaken for a truncation", slow.truncated === false);
+
 // --- 6. The signals, resolved through the registry rather than spelled ----------------
 
 console.log("\n6. bounds, resolved the way the dashboard resolves them");
 
-const WIFI_KEYS = ["wifi_link_state", "wifi_network", "wifi_hotspot_seen", "wifi_signal_pct"];
+// ⚠️ No `wifi_signal_pct`: see src/can/registry.ts. A percent key has no honest value
+// while disconnected, so it would drag this group's /status liveness through the fault.
+const WIFI_KEYS = ["wifi_link_state", "wifi_network", "wifi_hotspot_seen"];
 for (const key of WIFI_KEYS) {
   // ⚠️ unit and group come from the REGISTRY ENTRY and are never written out here. A
   // check that spells `boundsFor(key, "", "wifi")` stays green after the registry moves
@@ -261,9 +329,23 @@ for (const key of WIFI_KEYS) {
   check(`…and polled`, signal.source === "poll");
 }
 
-// The whole range each code can take must be plausible. `wifi_link_state` reaching 3 is
-// an ordinary connected bike; under `diag`'s [0, 1] gate the dashboard would draw it as a
-// dead sensor, and the ride log would keep the row while the phone showed a fault.
+// ⚠️ THE RAIL IS `fallbackBoundsFor`, NOT `boundsFor`. boundsFor() consults the
+// generated per-key table FIRST, so once a key has an entry there the group argument is
+// inert — `boundsFor("wifi_link_state", "", "diag")` still answers [0, 3]. What the
+// `wifi` group actually buys is that these keys reach NO fallback rule, which is what
+// makes generate-signal-bounds.ts refuse an undeclared one. Asserted from the registry
+// entry so a group move turns it red here rather than only in the generator.
+for (const key of WIFI_KEYS) {
+  const signal = SIGNALS.find(entry => entry.key === key);
+  check(
+    `${key}'s group reaches no fallback rule, so the generator must refuse it undeclared`,
+    signal !== undefined && fallbackBoundsFor(signal.key, signal.unit, signal.group) === null
+  );
+}
+
+// And the consequence, stated separately: the whole range each code can take is plausible.
+// `wifi_link_state` reaching 3 is an ordinary connected bike; under `diag`'s [0, 1] gate
+// the dashboard would draw it as a dead sensor.
 const linkStateSignal = SIGNALS.find(entry => entry.key === "wifi_link_state");
 check(
   "wifi_link_state = 3 (connected) is plausible",
@@ -275,15 +357,14 @@ check(
   networkSignal !== undefined && isPlausible(networkSignal.key, 2, networkSignal.unit, networkSignal.group)
 );
 check(
-  "wifi_signal_pct reaches the % rule rather than a flag gate",
-  (() => {
-    const signal = SIGNALS.find(entry => entry.key === "wifi_signal_pct");
-    if (signal === undefined) {
-      return false;
-    }
-    const range = boundsFor(signal.key, signal.unit, signal.group);
-    return range !== null && range[0] === 0 && range[1] === 100;
-  })()
+  "no percent signal joined the group, which would read dark through the fault",
+  SIGNALS.every(entry => entry.group !== "wifi" || entry.unit === "")
+);
+// Every wifi signal is written on EVERY successful poll, so the group is either fully
+// live or genuinely unknown — never permanently part-dark on a healthy bike.
+check(
+  "no wifi signal is onDemand, so none of them can be silent by design",
+  SIGNALS.filter(entry => entry.group === "wifi").every(entry => entry.onDemand === undefined)
 );
 
 // --- 7. The poll interval is a contract with /status, not a preference ----------------
@@ -314,6 +395,79 @@ check(
   dumpFilename(Date.UTC(2026, 11, 31, 23, 0, 0)) < dumpFilename(Date.UTC(2027, 0, 1, 1, 0, 0))
 );
 check("a bounded number of dumps is kept", WIFI_DIAG_KEEP > 0 && WIFI_DIAG_KEEP <= 100);
+
+// ⚠️ The DIRECTION is the whole of the prune, and a mutation that deleted the newest
+// survived until this existed. Named oldest-first so the expectation is readable.
+const dumps = ["2026-09-17T08-00-00-000Z.txt", "2026-09-18T08-00-00-000Z.txt", "2026-09-19T08-00-00-000Z.txt"];
+check("with room to spare, nothing is removed", dumpsToRemove(dumps, 5).length === 0);
+check("over the cap, the OLDEST goes", dumpsToRemove(dumps, 2).length === 1 && dumpsToRemove(dumps, 2)[0] === dumps[0]);
+check("…and the newest is never chosen", !dumpsToRemove(dumps, 1).includes(dumps[2]));
+check("…in order, oldest first", dumpsToRemove(dumps, 1).join(",") === `${dumps[0]},${dumps[1]}`);
+check("files that are not dumps are left alone", dumpsToRemove([...dumps, "README"], 0).length === 3);
+
+console.log("\n9. when a fault is worth a dump");
+
+// ⚠️ Two minutes, so ordinary roaming cannot reach it: NetworkManager retried after
+// twelve of thirteen failures on 2026-09-19, the quickest in 0.6 s.
+check("a momentary drop takes no dump", !shouldDumpNow(30_000, null));
+check("a drop just under the threshold takes no dump", !shouldDumpNow(WIFI_FAULT_DUMP_AFTER_MS - 1, null));
+check("a sustained fault takes one", shouldDumpNow(WIFI_FAULT_DUMP_AFTER_MS, null));
+check("…and not a second one straight after", !shouldDumpNow(10 * 60_000, 60_000));
+check("…but does again once the gap has passed", shouldDumpNow(40 * 60_000, WIFI_DUMP_MIN_GAP_MS));
+// ⚠️ Deliberately BELOW the longest ordinary retry seen (14 min 58 s on 2026-09-19), not
+// above it: those long gaps are the same fault class and each is worth a dump. What the
+// threshold has to clear is a roam, which is seconds.
+check("the threshold sits below the longest ordinary retry gap", WIFI_FAULT_DUMP_AFTER_MS < 14 * 60_000);
+check("…and well above any roam", WIFI_FAULT_DUMP_AFTER_MS > 30_000);
+
+console.log("\n10. a failed read claims nothing");
+
+// ⚠️ The rule the whole diagnosis turns on. `wifi_hotspot_seen = 0` means "the hotspot is
+// not in range"; a failed nmcli means "we cannot say", and those are opposite claims.
+const goodRead = { activeSsid: null, signalPercent: null, hotspotSeen: true };
+check(
+  "a good read records all three",
+  signalsToRecord(WIFI_LINK_STATE.DISCONNECTED, goodRead, "orange-juice").length === 3
+);
+check(
+  "a failed LIST read records neither hotspot_seen nor network",
+  signalsToRecord(WIFI_LINK_STATE.DISCONNECTED, null, "orange-juice").every(([key]) => key === "wifi_link_state")
+);
+check(
+  "…and specifically never writes a 0 for hotspot_seen",
+  !signalsToRecord(WIFI_LINK_STATE.DISCONNECTED, null, "orange-juice").some(([key]) => key === "wifi_hotspot_seen")
+);
+check(
+  "a failed DEVICE read records no link state",
+  !signalsToRecord(null, goodRead, "orange-juice").some(([key]) => key === "wifi_link_state")
+);
+check("both reads failing records nothing at all", signalsToRecord(null, null, "orange-juice").length === 0);
+check(
+  "every key it emits is one the registry declares",
+  signalsToRecord(WIFI_LINK_STATE.CONNECTED, goodRead, "orange-juice").every(([key]) =>
+    SIGNALS.some(entry => entry.key === key && entry.group === "wifi")
+  )
+);
+
+console.log("\n11. the journal sentence never reports our own failure as the bike's");
+
+// ⚠️ A failed nmcli is not a state of the radio. An earlier version said "radio
+// unavailable" whenever the LIST call failed on a perfectly connected bike.
+check("a failed device read says so", describeState(null, null).includes("cannot say"));
+check(
+  "connected with no list still says connected",
+  describeState(WIFI_LINK_STATE.CONNECTED, null).includes("connected") &&
+    !describeState(WIFI_LINK_STATE.CONNECTED, null).includes("unavailable")
+);
+check(
+  "disconnected with no list does not claim the hotspot is absent",
+  !describeState(WIFI_LINK_STATE.DISCONNECTED, null).includes("hotspot not in range")
+);
+check(
+  "the sentence worth having",
+  describeState(WIFI_LINK_STATE.DISCONNECTED, { activeSsid: null, signalPercent: null, hotspotSeen: true }) ===
+    "NOT connected, and the hotspot IS in range"
+);
 
 console.log("");
 if (failures > 0) {

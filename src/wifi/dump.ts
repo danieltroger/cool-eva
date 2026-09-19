@@ -31,13 +31,8 @@ export interface WifiDumpOutcome {
  * swallowed: the caller is a handlebar gesture with nobody watching a terminal, and the
  * only other way the rider learns anything is the signal the caller records afterwards.
  */
-export async function writeWifiDump(
-  directory: string,
-  iface: string,
-  hotspotSsid: string,
-  uptimeSeconds: number
-): Promise<WifiDumpOutcome> {
-  const results = await collectWifiState(iface, hotspotSsid);
+export async function writeWifiDump(directory: string, iface: string, uptimeSeconds: number): Promise<WifiDumpOutcome> {
+  const results = await collectWifiState(iface);
   const problems = results.filter(result => result.exitCode !== 0 || result.timedOut || result.truncated).length;
   const at = Date.now();
   const text = buildWifiDump({ at, uptimeSeconds, results });
@@ -62,7 +57,21 @@ export async function writeWifiDump(
  * is what the Pi's boot partition is and what a rescue copy would land on.
  */
 export function dumpFilename(at: number): string {
-  return new Date(at).toISOString().replace(/[:.]/g, "-").replace(/Z$/, "Z");
+  return new Date(at).toISOString().replace(/[:.]/g, "-");
+}
+
+/**
+ * Which dumps to delete, given everything in the directory. Pure, and separate from the
+ * unlinking for one reason: the direction is the whole of the behaviour and a filesystem
+ * test of it is awkward, so a mutation that deletes the NEWEST instead survived until
+ * this was reachable from a check.
+ *
+ * ⚠️ The filename is an ISO instant with its punctuation swapped, so a lexical sort IS a
+ * chronological one — no `stat()` per file and no clock read to decide what is old.
+ */
+export function dumpsToRemove(names: readonly string[], keep: number): string[] {
+  const dumps = names.filter(name => name.endsWith(".txt")).sort();
+  return dumps.slice(0, Math.max(0, dumps.length - keep));
 }
 
 /** Keeps the newest WIFI_DIAG_KEEP dumps and removes the rest. */
@@ -74,10 +83,7 @@ async function pruneOldDumps(directory: string): Promise<void> {
     console.warn(`wifi-diag: could not list ${directory} to prune it:`, error);
     return;
   }
-  // The filename is an ISO instant with the punctuation swapped, so a lexical sort IS a
-  // chronological one — no stat() per file, and no clock read to decide what is old.
-  const dumps = names.filter(name => name.endsWith(".txt")).sort();
-  for (const name of dumps.slice(0, Math.max(0, dumps.length - WIFI_DIAG_KEEP))) {
+  for (const name of dumpsToRemove(names, WIFI_DIAG_KEEP)) {
     try {
       await unlink(join(directory, name));
     } catch (error) {

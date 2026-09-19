@@ -79,9 +79,11 @@ export const SIGNALS: SignalDef[] = [
   // The decisive one: "the hotspot is in range AND we are not on it" is the shape of the
   // 2026-09-19 failure, and neither half says it alone.
   { key: "wifi_hotspot_seen", unit: "", group: "wifi", source: "poll", bounds: [0, 1] },
-  // Deadbanded because the number wanders a few percent while nothing is happening; the
-  // `%` unit reaches bounds-rules.js's own [0, 100], so it declares none.
-  { key: "wifi_signal_pct", unit: "%", group: "wifi", source: "poll", deadband: 5 },
+  // ⚠️ There is deliberately NO `wifi_signal_pct`. A signal has no honest value while the
+  // radio is disconnected, and an unwritten one goes stale — so a percent key would drag
+  // this group's /status liveness fraction down during exactly the fault the group exists
+  // for. The real signal strength, in dBm rather than nmcli's percent, is in the dump's
+  // `iw dev wlan0 link`. docs/wifi.md §2.
 
   // 0x200 / 0x660 — BMS
   // batt_temp_lo/hi always mean the TRUE pack temperature, whichever frame supplies

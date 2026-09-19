@@ -59,7 +59,13 @@ and `src/core/nm-policy.c`, `_auto_activate_device()` — the `continue`, and th
 
 That `_LOGI` is the journal's `policy: auto-activating connection 'Wi-Fi connection 2' (45eacfc9-…)`. **Its absence is the finding.**
 
-⚠️ **Nothing clears the latch on a timer.** The only paths in the source are an update carrying **new secrets** (`nm-settings-connection.c`, _"New secrets, allow autoconnection again"_) and `reset_autoconnect_all(…, only_no_secrets = TRUE)` from `secret_agent_registered()`. So the latch lives as long as the `NetworkManager` process.
+⚠️ **Nothing clears the latch on a timer**, which is the property that matters — but this enumeration is the corrected one, because an earlier draft said "the only paths" and named two of three:
+
+1. an update carrying **new secrets** (`nm-settings-connection.c`, _"New secrets, allow autoconnection again"_);
+2. `reset_autoconnect_all(…, only_no_secrets = TRUE)` from `secret_agent_registered()`;
+3. `reset_autoconnect_all(…, only_no_secrets = FALSE)` from `sleeping_changed()` (`nm-policy.c`), which fires on `notify::networking-enabled` — **so `nmcli networking off && nmcli networking on` is a third cure**, and a blunter one than a reboot.
+
+None is time-based, so the latch lives as long as the `NetworkManager` process unless somebody does one of them.
 
 ### In order
 
@@ -73,19 +79,21 @@ That `_LOGI` is the journal's `policy: auto-activating connection 'Wi-Fi connect
 
 Every activation failure logged on 2026-09-19, and whether NetworkManager retried:
 
-| failed           | reason                  | next `auto-activating`                                               |
-| ---------------- | ----------------------- | -------------------------------------------------------------------- |
-| 10:47:19.284     | `ssid-not-found`        | 17.5 s                                                               |
-| **10:48:52.196** | **`no-secrets`**        | **never — 20 min of boot remained**                                  |
-| 11:53:26.175     | `ssid-not-found`        | 6 min 53 s                                                           |
-| 13:16:06.146     | `supplicant-timeout`    | 0.6 s                                                                |
-| 13:16:57.067     | `ssid-not-found`        | 6 min 54 s                                                           |
-| 13:45:35.148     | `ssid-not-found`        | 14 min 58 s                                                          |
-| 14:07:16.172     | `ssid-not-found`        | 41.5 s                                                               |
-| 14:09:47.145     | `ssid-not-found`        | 2 min 14 s                                                           |
-| 16:44–16:58 (×5) | `ip-config-unavailable` | retried; two more are inconclusive, their boot ending at the failure |
+| failed           | reason                  | next `auto-activating`              |
+| ---------------- | ----------------------- | ----------------------------------- |
+| 10:47:19.284     | `ssid-not-found`        | 17.5 s                              |
+| **10:48:52.196** | **`no-secrets`**        | **never — 20 min of boot remained** |
+| 11:53:26.175     | `ssid-not-found`        | 6 min 53 s                          |
+| 13:16:06.146     | `supplicant-timeout`    | 0.6 s                               |
+| 13:16:57.067     | `ssid-not-found`        | 6 min 54 s                          |
+| 13:45:35.148     | `ssid-not-found`        | 14 min 58 s                         |
+| 14:07:16.172     | `ssid-not-found`        | 41.5 s                              |
+| 14:09:47.145     | `ssid-not-found`        | 2 min 14 s                          |
+| 16:44–16:58 (×5) | `ip-config-unavailable` | retried                             |
 
-**Twelve retried. The one that never did is the only one whose reason was `no-secrets`** — and `grep -c "no-secrets"` over the _entire_ retained journal, which begins 2026-09-15 04:12:34 and covers roughly forty boots, returns **1**. One occurrence in four and a half days, and it is the one silence.
+⚠️ **The table is the thirteen failures in the captured window; a later pull reaches fifteen day-wide** (7 `ssid-not-found`, 5 `ip-config-unavailable`, 2 `supplicant-timeout`, 1 `no-secrets`). Of the fifteen, **twelve were retried, two are inconclusive** — their boot ended at or near the failure, so nothing can be concluded either way — **and one was never retried.**
+
+**That one is the only one whose reason was `no-secrets`** — and `grep -c "no-secrets"` over the _entire_ retained journal, which begins 2026-09-15 04:12:34 and covers roughly forty boots, returns **1**. One occurrence in four and a half days, and it is the one silence.
 
 ### Ruled out, each with its evidence
 
@@ -113,7 +121,10 @@ Every activation failure logged on 2026-09-19, and whether NetworkManager retrie
 | `wifi_link_state`   | `0` unavailable · `1` disconnected · `2` connecting · `3` connected |
 | `wifi_network`      | `0` none · `1` the hotspot · `2` some other network                 |
 | `wifi_hotspot_seen` | the hotspot's SSID is in NetworkManager's scan list                 |
-| `wifi_signal_pct`   | the active AP's signal, deadband 5                                  |
+
+⚠️ **There is deliberately no `wifi_signal_pct`.** A percent has no honest value while the radio is disconnected, and an unwritten signal goes stale — so it would drag this group's `/status` liveness fraction down during exactly the fault the group exists for. The real strength, in dBm rather than nmcli's percent, is in the dump's `iw dev wlan0 link`. All three signals above are written on **every** successful poll, so the group is either fully live or genuinely unknown, never permanently part-dark.
+
+⚠️ **Nothing is recorded when the read itself fails.** Writing `wifi_hotspot_seen = 0` because `nmcli` did not answer would assert "the hotspot is not in range" — the opposite of what a failed read means, and the one claim this whole diagnosis turns on.
 
 ⚠️ **`wifi_hotspot_seen` is the one that answers this failure**, and only together with `wifi_link_state`: _"the hotspot is in range **and** we are not on it"_ is the shape of the fault, and neither half says it alone. The journal gets the same sentence, once, when it changes: `wifi: NOT connected, and the hotspot IS in range`.
 
@@ -125,16 +136,19 @@ It is readable during the silence, which is not obvious — a blocked profile mi
 
 ### ⚠️ The poll is 8 s because `/status` says so
 
-`src/http/status.ts` counts a signal live only if it arrived within `FRESH_MS` = 10 s, and `live === 0` is what a reader of that summary filters on to find a dead source. **A `source: "poll"` signal polled slower than that window reads as dark on a healthy Pi.** `can_link` already does this at 15 s and gets away with it only because it sits in a `diag` group of three dozen other signals that dilute the fraction; a four-signal group has nothing to hide behind. So the poll is faster than the window rather than an exception to it, and `FRESH_MS` is exported so the check can pin the two together.
+`src/http/status.ts` counts a signal live only if it arrived within `FRESH_MS` = 10 s, and `live === 0` is what a reader of that summary filters on to find a dead source. **A `source: "poll"` signal polled slower than that window reads as dark on a healthy Pi.** `can_link` already does this at 15 s and gets away with it only because it sits in a `diag` group of three dozen other signals that dilute the fraction; a three-signal group has nothing to hide behind. So the poll is faster than the window rather than an exception to it, and `FRESH_MS` is exported so the check can pin the two together.
 
 Measured on this Pi Zero 2 W (quad-core): ten sequential cycles of the two `nmcli` calls cost 1.289 s user + 0.560 s sys, i.e. **~185 ms of CPU per cycle — 2.3 % of one core, ~0.6 % of the machine.** ⚠️ That is a **floor**: a `/proc/stat` delta over the same run showed 3.72 CPU-seconds, which includes NetworkManager's own D-Bus work and the service's 100 Hz baseline and was not separated out.
 
 ## 3. The dump
 
+**When it is taken:** automatically, once the Pi has been **disconnected with the hotspot in the scan list for two minutes**, and then no more than once every fifteen. ⚠️ Two minutes is far past any roam — NetworkManager retried after twelve of the failures above, the quickest in 0.6 s — and deliberately _below_ the longest ordinary retry (14 min 58 s), because those long gaps are the same fault class and each is worth a dump. The handlebar button will take one on demand too, once §4's question is answered.
+
 `src/wifi/dump.ts` writes the whole picture — `nmcli` device and connection state, the scan list, `iw link` / `scan dump` / `reg get`, `rfkill`, addresses and routes, and **the last 20 minutes of NetworkManager and wpa_supplicant** — to `/home/pi/cool-eva/wifi-diag/<timestamp>.txt`.
 
 - ⚠️ **Not `/tmp`.** That is tmpfs here and the bike cuts 12 V at key-off, so a dump taken at a charger would be gone before anyone could read it.
 - ⚠️ **`wifi-diag/` is in `.gitignore`.** A dump carries SSIDs and BSSIDs — the networks this bike and its owner have been near — which is the same class of thing as the coordinate rule in `docs/route-map.md`, in a form that looks innocuous.
+- ⚠️ **A profile is addressed by NAME, never by SSID.** NetworkManager 1.52.1's `nmc_find_connection()` matches uuid, id, path and filename and has no SSID arm — and on this Pi the hotspot's profile is called **`Wi-Fi connection 2`** while its SSID is `orange-juice`. So `nmcli connection show orange-juice` can only ever answer "unknown connection", and the per-profile detail carrying `autoconnect-priority`, `seen-bssids` and any pinned `bssid` — which is where the 2026-09-19 answer lives — would have been missing from every dump. The names are looked up first, with one extra read whose own result stays in the dump.
 - **Every collected command is a read.** No `connection up`, no `device disconnect`, no forced rescan (`--rescan no` on the list, `scan dump` rather than `scan`, because a forced scan costs airtime and can disturb an association). A dump must be safe to take mid-charge on a healthy link.
 - **Secrets**: `nmcli connection show` prints the PSK as `<hidden>` unless `--show-secrets` is passed, and it is never passed — that is the control that matters. `buildWifiDump()` redacts secret-looking settings as a second line of defence, and the check feeds it a fixture _carrying_ a real-looking PSK, because a redaction test whose input has nothing to redact passes with the redactor deleted.
 - **Failures are reported, never dropped**: a non-zero exit, its stderr, a timeout and a truncation all reach the file. ⚠️ Node's `execFile` default buffer is 1 MB and it **kills** the child on overflow, so the command that overflows is the one whose output is lost — and the likeliest to overflow is the journal, whose size grows with exactly the trouble worth capturing. The buffer is 8 MB, the journal call is bounded by `--lines` as well as `--since`, and a truncated capture says `TRUNCATED` rather than looking complete.

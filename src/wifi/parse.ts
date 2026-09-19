@@ -42,14 +42,8 @@ export interface WifiListReading {
  * parser that takes the whole value gets `"100 (connected)"` and a `Number()` of it is
  * NaN. The number is the part libnm defines; the word is nmcli's own rendering.
  *
- * The thresholds are `NMDeviceState` in NetworkManager 1.52.1's
- * `src/libnm-core-public/nm-dbus-interface.h`, read rather than remembered: UNKNOWN 0,
- * UNMANAGED 10, UNAVAILABLE 20, DISCONNECTED 30, PREPARE 40, CONFIG 50, NEED_AUTH 60,
- * IP_CONFIG 70, IP_CHECK 80, SECONDARIES 90, ACTIVATED 100, DEACTIVATING 110, FAILED 120.
- *
- * ⚠️ FAILED and DEACTIVATING fold to DISCONNECTED and not to UNAVAILABLE: the radio is
- * perfectly usable in both, and it is precisely the state the 2026-09-19 latch left the
- * device in for twenty minutes. Calling that "unavailable" would name the wrong fault.
+ * Thresholds are `NMDeviceState`, read out of NetworkManager 1.52.1's
+ * `src/libnm-core-public/nm-dbus-interface.h` rather than remembered. docs/wifi.md §2.
  */
 export function parseDeviceState(terse: string): WifiLinkState {
   const raw = fieldAfter(terse, "GENERAL.STATE");
@@ -101,6 +95,29 @@ export function parseWifiList(terse: string, hotspotSsid: string): WifiListReadi
     }
   }
   return reading;
+}
+
+/**
+ * The NAMES of the saved wifi profiles, from `nmcli -t -f NAME,TYPE connection show`.
+ *
+ * ⚠️ A profile is addressed by NAME, UUID, path or filename — never by SSID. NetworkManager
+ * 1.52.1's `nmc_find_connection()` has no SSID arm, and on this Pi the hotspot's profile is
+ * called `Wi-Fi connection 2` while its SSID is `orange-juice`, so `nmcli connection show
+ * orange-juice` can only ever answer "unknown connection". The names have to be looked up
+ * before the per-profile detail can be asked for. docs/wifi.md §3.
+ */
+export function parseWifiProfileNames(terse: string): string[] {
+  const names: string[] = [];
+  for (const line of terse.split("\n")) {
+    if (line.trim() === "") {
+      continue;
+    }
+    const fields = splitTerseFields(line);
+    if (fields.length >= 2 && fields[1] === "802-11-wireless" && fields[0] !== "") {
+      names.push(fields[0]);
+    }
+  }
+  return names;
 }
 
 /** Which of the three networks the active SSID is, or NONE. */
