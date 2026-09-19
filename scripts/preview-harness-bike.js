@@ -246,6 +246,10 @@ const STATUS = {
     { outcome: "refused", refusal: 8, at: NOW - 3 * MINUTE, clockTrustworthy: true },
   ],
   log: { files: 13, bytes: 4812442, enabled: true },
+  // The Pi's 117 GB card as it actually read on 2026-09-19: 17.2 GB free, well clear of
+  // capture.sh's 10 GiB floor. `freeBytes` is bavail, not bfree — src/http/status.ts says
+  // why the two must not be mixed up.
+  disk: { freeBytes: 17491533824, totalBytes: 125459910656 },
   groups: {
     battery: [17, 46],
     cells: [81, 81],

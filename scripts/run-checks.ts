@@ -91,6 +91,36 @@ const CHECKS: SelfCheck[] = [
       "[Service] where systemd ignores it, and that the script parses as POSIX sh",
   },
   {
+    script: "scripts/check-capture-behaviour.ts",
+    covers:
+      "what capture.sh DOES, by running it under stubbed ip/candump/df/split/sleep in a temp directory — the " +
+      "orderings scripts/check-can-capture.ts can only approximate by reading it: that a healthy run writes one " +
+      "readable .log.gz through 64 kB members with candump's stderr folded in, that the disk floor refuses below " +
+      "10 GiB, passes exactly ON 10 GiB and fails CLOSED on a df that prints nothing, that candump's exit code " +
+      "reaches systemd unchanged on whatever /bin/sh the runner has (CI's dash has no pipefail, which is how the " +
+      "first version of this was caught exiting 0 on a dead candump), that a status file holding a non-number is " +
+      "loud, and that a missing binary leaves NO empty capture behind",
+  },
+  {
+    script: "scripts/check-capture-reader.ts",
+    covers:
+      "the one reader that opens a compressed capture: that the concatenated 64 kB gzip members capture.sh now " +
+      "writes read back as one stream — asserted against fixtures produced by the REAL split|gzip pipeline on the " +
+      "Pi, not hand-built with zlib — that a capture cut by a power cut yields its whole prefix with one warning " +
+      "and no throw, NUL-tailed (the ext4 delalloc signature) or cleanly, that an uncompressed .log still reads, " +
+      "and that a missing or unreadable file still THROWS rather than passing for an empty capture",
+  },
+  {
+    script: "scripts/check-free-pi-captures.ts",
+    covers:
+      "the gate that deletes raw captures off the bike's SD card, against the rows that were really wrong on " +
+      "2026-09-19: that a verified, complete, day-old capture is deletable and every guard refuses on its own — a " +
+      "name that is not a capture (capture.sh.superseded, the ORIGINAL untracked capture script, is a manifest " +
+      "row), a source_state that is not exactly complete including unknown ones, a size that moved under a live " +
+      "capture, the boot that is running now, either the mtime or the filename reading under 24 h on a Pi with no " +
+      "RTC, a verified copy that is missing or the wrong size, and a sha256 that disagrees under --strict",
+  },
+  {
     script: "scripts/check-attitude.ts",
     covers:
       "the attitude pair on 0x102 b4-7, which had no assertion anywhere in this suite until the bike fell onto " +

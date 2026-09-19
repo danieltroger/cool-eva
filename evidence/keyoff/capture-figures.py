@@ -13,11 +13,12 @@ import statistics
 import sys
 from datetime import datetime
 
-# Both name shapes. The trailing `-<uptime>` group arrived with #188; without the optional
-# group every capture written from that deploy on would `continue` out of the boot census
-# silently, shrinking the corpus with no error — this script would be invalidated by the
-# other half of the PR that introduced it.
-NAME = re.compile(r"capture-(\d{8})-(\d{6})-([0-9a-f]{8})(?:-(\d+))?\.log$")
+# All three name shapes. The trailing `-<uptime>` group arrived with #188 and the `.gz`
+# with #289; without either optional group every capture written from that deploy on would
+# `continue` out of the boot census silently, shrinking the corpus with no error — this
+# script would be invalidated by the other half of the PR that introduced it.
+# scripts/check-can-capture.ts asserts this regex against all three, in both directions.
+NAME = re.compile(r"capture-(\d{8})-(\d{6})-([0-9a-f]{8})(?:-(\d+))?\.log(?:\.gz)?$")
 MINIMUM_FRAMES = 1000
 #: A backward step under this is candump's own sub-second reordering, not a clock move.
 REORDER_TOLERANCE_SECONDS = 0.25

@@ -1,6 +1,4 @@
 import { createServer } from "http";
-import { createReadStream } from "fs";
-import { createInterface } from "readline";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { defineSignals, record } from "../src/can/signals.ts";
@@ -15,6 +13,7 @@ import { handleFaultInfokeysEndpoint } from "../src/http/fault-infokeys.ts";
 import { setupWs } from "../src/ws.ts";
 import { monotonicNow } from "../src/monotonic.ts";
 import { loadCapturedTroubleCodes } from "./captured-dtc-transfer.ts";
+import { openCaptureLines } from "./capture-lines.ts";
 
 // Replays a candump capture into the dashboard, on a laptop, with no bike.
 //
@@ -28,14 +27,15 @@ import { loadCapturedTroubleCodes } from "./captured-dtc-transfer.ts";
 // been through exactly the same path it takes on the Pi. That also makes this the
 // cheapest way to check a decoder against a recorded bus: replay and read the tile.
 //
-//   node --experimental-strip-types scripts/replay-capture.ts <capture.log> [options]
+//   node --experimental-strip-types scripts/replay-capture.ts <capture.log[.gz]> [options]
 //
 //     --speed <n>   replay rate, default 4× real time
 //     --skip <s>    start this many seconds into the capture
 //     --port <n>    default 8080
 //
 // Captures live in ~/Documents/cool-eva-archive (laptop) and /home/pi/ride-captures (Pi,
-// written by scripts/can-capture/ — never /tmp, which is tmpfs); see CAPTURES.md.
+// written by scripts/can-capture/ — never /tmp, which is tmpfs); see CAPTURES.md. The Pi's
+// are `.log.gz` since #289; scripts/capture-lines.ts opens either.
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
@@ -112,9 +112,12 @@ console.log("replay: capture exhausted — dashboard still serving the final sta
 /**
  * Streams the capture line by line rather than reading it in: these files run to
  * 184 MB, which is more than the Pi has of RAM and more than is polite here either.
+ *
+ * `.log.gz` and `.log` both work, and a capture that ends mid-stream — which is most of
+ * them, since the bike cuts the Pi's power — replays up to the cut and says so once.
  */
 async function replay({ file, speed, skipSeconds }: Options): Promise<void> {
-  const lines = createInterface({ input: createReadStream(file), crlfDelay: Infinity });
+  const lines = openCaptureLines(file);
 
   let firstCaptureSeconds: number | null = null;
   let startedAt = 0;
@@ -189,7 +192,7 @@ function parseCandumpLine(line: string): { seconds: number; id: number; data: Bu
 function parseArguments(argv: string[]): Options {
   const file = argv.find(argument => !argument.startsWith("--"));
   if (!file) {
-    console.error("usage: replay-capture.ts <capture.log> [--speed 4] [--skip 0] [--port 8080]");
+    console.error("usage: replay-capture.ts <capture.log[.gz]> [--speed 4] [--skip 0] [--port 8080]");
     process.exit(1);
   }
   const flag = (name: string, fallback: number): number => {

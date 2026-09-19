@@ -5,13 +5,19 @@ Every figure in `docs/power-cuts.md` §7 and `docs/ride-log-clock.md` is generat
 ```sh
 # 1. reduce the candump archive to its events (~12 min, one sequential pass, 16 GB)
 cd ~/Documents/cool-eva-archive
-ls capture-*.log buttons-2026-08-19.log charge-2026-08-02-real.log charge.log \
+ls capture-*.log capture-*.log.gz buttons-2026-08-19.log charge-2026-08-02-real.log charge.log \
    dtc-2026-08-02-*.log energica_probe.log energica_ride.log ride-1.log \
    ride-2026-08-02.log > /tmp/files.txt
 : > events.txt
 while read -r f; do
   echo "F $f" >> events.txt
-  LC_ALL=C awk -f <repo>/evidence/keyoff/reduce-captures.awk "$f" >> events.txt
+  # `gzip -dc`, not `zcat`: on a Mac zcat has historically meant .Z. Captures written by the
+  # Pi are .log.gz since #289, and a cut one exits non-zero — which is the NORMAL ending
+  # here, hence `|| true`, with reduce-captures.awk's own `NF < 6` guard for the last line.
+  case "$f" in
+    *.gz) LC_ALL=C sh -c "gzip -dc '$f' || true" | awk -f <repo>/evidence/keyoff/reduce-captures.awk >> events.txt ;;
+    *)    LC_ALL=C awk -f <repo>/evidence/keyoff/reduce-captures.awk "$f" >> events.txt ;;
+  esac
 done < /tmp/files.txt
 python3 <repo>/evidence/keyoff/tail-shape.py $(cat /tmp/files.txt) > tails.jsonl
 
@@ -21,6 +27,8 @@ python3 <repo>/evidence/keyoff/clock-figures.py <a read-only copy of rides.db>
 ```
 
 `figures.txt` beside this file is the committed output of step 2, so a reader can check a number in the docs without the 16 GB.
+
+⚠️ **`tail-shape.py` reports a different shape for a `.log.gz`.** The trailing-NUL run and the 4096-byte boundary are raw-file measurements and mean nothing on a compressed capture, so those rows carry `members`, `cutMember` and `decoded` instead of `nulls`. Every figure in `docs/power-cuts.md` §7 computed over `nulls` is therefore about the **uncompressed** archive only, and will silently cover a smaller share of the corpus as compressed captures arrive — count them rather than assuming the denominator held.
 
 ## Two traps that cost real time, both caught in review
 
