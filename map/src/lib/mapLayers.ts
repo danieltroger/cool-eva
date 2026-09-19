@@ -1,7 +1,8 @@
 import { BAND_COLOURS, fixAgeClass, FIX_AGE_COLOURS, NO_SPEED_COLOUR } from './format';
 import type { FeatureCollection, Point } from 'geojson';
 import type { TrackGeoJson } from './track';
-import type { Map as MapLibreMap } from 'maplibre-gl';
+import type { Map as MapLibreMap, StyleSpecification } from 'maplibre-gl';
+import { satelliteBasemap, vectorStyleUrl, type BasemapKind } from './basemap';
 import type { ChargeSession, Waypoint } from './server/snapshot';
 
 // The MapLibre style and the three layers, apart from the component so the component is about
@@ -13,26 +14,67 @@ import type { ChargeSession, Waypoint } from './server/snapshot';
 // asset; a hand-copied dist does not. docs/ride-map.md §"Three MapLibre v6 traps".
 
 /**
- * OpenFreeMap's public instance: no key, no registration, commercial use allowed, attribution
- * added by MapLibre automatically. Its tiles stop at z14, so past that the basemap overzooms
- * while the track — a client-side source, not a tiled one — stays at full resolution.
+ * The style for a given basemap choice.
  *
- * Two styles, because one is a defect in the other's theme: a dark sidebar beside a pale green
- * basemap is what the first screenshot of this page showed. `positron` is also deliberately
- * muted rather than `liberty`, so the basemap does not compete with the speed colours it is
- * underneath — the track is the data, the map is context.
+ * Vector is a URL; satellite is a hand-built style with one raster layer, because the imagery
+ * has to be UNDER our track and OVER nothing — layering it beneath OpenFreeMap's land fills
+ * would simply hide it. `map/src/lib/basemap.ts` carries the licences.
  */
-export function basemapStyleUrl(dark: boolean): string {
-	return dark
-		? 'https://tiles.openfreemap.org/styles/dark'
-		: 'https://tiles.openfreemap.org/styles/positron';
+export function basemapStyle(
+	kind: BasemapKind,
+	dark: boolean,
+	maptilerKey: string | null
+): string | StyleSpecification {
+	if (kind === 'map') {
+		return vectorStyleUrl(dark);
+	}
+	const imagery = satelliteBasemap(maptilerKey);
+	return {
+		version: 8,
+		sources: {
+			imagery: {
+				type: 'raster',
+				tiles: [imagery.styleOrTiles],
+				tileSize: 256,
+				// Attribution MapLibre cannot read from a bare tile template. Required by both
+				// providers; see basemap.ts for the sentence each one demands.
+				attribution: imagery.attribution
+			}
+		},
+		layers: [
+			{
+				id: 'background',
+				type: 'background',
+				paint: { 'background-color': dark ? '#0b0d11' : '#e9ebef' }
+			},
+			{ id: 'imagery', type: 'raster', source: 'imagery' }
+		]
+	};
 }
 
-export function addTrackLayer(map: MapLibreMap, track: TrackGeoJson): void {
+export function addTrackLayer(map: MapLibreMap, track: TrackGeoJson, overImagery: boolean): void {
 	// The parsed collection, not the URL: the page already holds it so that a ride can be
 	// framed from its own geometry, and fetching it twice to save a structured clone would be
 	// the wrong trade.
 	map.addSource('track', { type: 'geojson', data: track as unknown as FeatureCollection });
+	if (overImagery) {
+		// ⚠️ A CASING, because MapLibre has no line halo: `paint_line` in style-spec 26.4.4 has
+		// no halo property at all — they exist only on symbols. A wider dark line underneath is
+		// the only way to keep a thin coloured track readable over aerial imagery. Dimming the
+		// imagery instead would be a "Manipulation Or Modification" of it, which MapTiler's
+		// terms §4 treats differently from displaying it.
+		map.addLayer({
+			id: 'track-casing',
+			type: 'line',
+			source: 'track',
+			layout: { 'line-cap': 'round', 'line-join': 'round' },
+			paint: {
+				'line-width': ['interpolate', ['linear'], ['zoom'], 5, 3.4, 11, 5.2, 16, 8],
+				'line-color': '#05070b',
+				'line-layer-opacity': 0.55
+			}
+		});
+	}
 	map.addLayer({
 		id: 'track',
 		type: 'line',
@@ -40,7 +82,10 @@ export function addTrackLayer(map: MapLibreMap, track: TrackGeoJson): void {
 		layout: { 'line-cap': 'round', 'line-join': 'round' },
 		paint: {
 			'line-width': ['interpolate', ['linear'], ['zoom'], 5, 1.6, 11, 2.6, 16, 4.5],
-			'line-opacity': 0.92,
+			// ⚠️ line-LAYER-opacity, not line-opacity. The track crosses itself constantly, and
+			// per-feature opacity compounds at every crossing into darker knots; this composites
+			// the finished layer once.
+			'line-layer-opacity': 0.92,
 			// Per feature, because `line-gradient` is a per-layer ramp over `line-progress` and
 			// cannot read the data. This is why the track is split into speed bands at all.
 			'line-color': [
@@ -60,6 +105,23 @@ export function addTrackLayer(map: MapLibreMap, track: TrackGeoJson): void {
 			]
 		}
 	});
+}
+
+/** The two marker layers the toggles hide. `track` is deliberately not one of them. */
+export const TOGGLEABLE_LAYERS = { charges: 'charges', waypoints: 'waypoints' } as const;
+
+/**
+ * Show or hide a marker layer.
+ *
+ * ⚠️ Only for the two POINT layers. `setLayoutProperty` marks the source for reload, which is
+ * nothing for 50 charge stops or 210 waypoints and would not be nothing for the track's 17 000
+ * segments — so the track has no toggle and should not grow one this way.
+ */
+export function setLayerVisible(map: MapLibreMap, layerId: string, visible: boolean): void {
+	if (map.getLayer(layerId) === undefined) {
+		return;
+	}
+	map.setLayoutProperty(layerId, 'visibility', visible ? 'visible' : 'none');
 }
 
 export function addChargeLayer(map: MapLibreMap, charges: ChargeSession[]): void {

@@ -274,3 +274,31 @@ The 🚨 claim that `ts < 2000000000000` guarded every query was false as writte
 ### The line still drew what the ride list threw away
 
 `RIDES_SQL` drops fixes logged while plugged in; the track did not. **41 of 50 sessions** contain some, **17 044 points** of stationary scatter across the archive, drawn as if ridden. The builder now takes charge **intervals** rather than instants, drops the points inside them, and breaks there. Measured after: 266 689 → **249 483** vertices, 17 206 points gone.
+
+## The satellite terms, read rather than remembered
+
+⚠️ **The first attempt at this rejected EOX on the strength of a hostname that does not exist.** `docs.eox.at` is NXDOMAIN — `Host docs.eox.at not found: 3(NXDOMAIN)`. It was invented, it failed, and the failure was written up as "no terms read, so no recommendation." That is not a failed check; it is a check of nothing, reported as evidence about somebody's licensing. It is the same rule as the `#8018` citation, in mirror image: a **could not check** is worth only as much as what was actually opened.
+
+What the real sources say:
+
+- **EOX Sentinel-2 cloudless** — `https://tiles.maps.eox.at/wmts/1.0.0/WMTSCapabilities.xml` answers 200 with no key (67 911 B) and carries `s2cloudless-2022` … `s2cloudless-2025`. Each layer publishes its own attribution inline: _"EOxCloudless … by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2024) released under Creative Commons **BY-NC-SA 4.0**"_ (2016 and 2017 are BY 4.0). `ows:AccessConstraints`: _"Proper attribution is required for any usage."_ `s2maps.eu` redirects to `cloudless.eox.at`, whose `/license-non-commercial` is JS-rendered — which is why a plain `curl` shows nothing and is a fact about curl, not about the licence.
+- **MapTiler** — a free account may use the service _"up to the quota allowed under the free tiers"_; the free plan is _"Suitable for testing, personal or non-commercial use"_; attribution must include _"'© MapTiler' (with Free Account the MapTiler logo)"_ and stay _"always visible and readable"_; overrun degrades rather than bills — _"service will pause until the next month"_. Raster costs _"10-16 requests for raster tiles with 256px size"_ per map view against 4 for vector.
+- **Esri World Imagery** — its own item metadata (`licenseInfo`, via the sharing REST API) says _"This work is licensed under the Esri Master License Agreement"_, which one has to be party to. Not used.
+
+**So EOX is the default and MapTiler is the upgrade.** EOX needs no key, no `.env` and no quota, and non-commercial covers one person looking at where their own motorcycle went; ShareAlike does not reach a viewer that redistributes no derivative. The single reason to prefer MapTiler when a key exists is resolution: Sentinel-2 is 10 m and overzooms into mush past roughly z14. A second reason to keep EOX first: MapLibre renders no TileJSON `logo`, so the free MapTiler path needs a logo element the page has to add itself.
+
+⚠️ **The track needs a casing over imagery.** `paint_line` in style-spec 26.4.4 has no halo property — halos exist only on symbols — so a wider dark line underneath is the only way. Dimming the imagery instead would be a "Manipulation Or Modification" of it, which MapTiler's terms treat differently from displaying it.
+
+## Memory with imagery
+
+Same method as before — whole browser process tree, full archive, satellite on:
+
+|                                         | tree                     | page renderer | GPU    |
+| --------------------------------------- | ------------------------ | ------------- | ------ |
+| first paint                             | 1 319 MB                 | 411 MB        | 222 MB |
+| during 90 s of pan/zoom (10 801 frames) | 1 434 → 1 446 → 1 395 MB |               |        |
+| settled                                 | **1 398 MB**             | 482 MB        | 222 MB |
+
+Against the vector figures (1 013 MB at first paint, 1 235 MB settled), imagery costs about **+300 MB at first paint and +160 MB settled**, peaking at **1 446 MB**. It plateaus and gives memory back, like the vector case. JS heap is unchanged at 43–46 MB.
+
+⚠️ The growth is in the **renderer**, which holds decoded JPEG tiles — the GPU process is actually _lower_ on satellite (222 MB) than on vector (291 MB), where many style layers rasterise separately. Peaking at 1 446 MB leaves little headroom under the ~1.5 GB guideline, which is a third reason satellite is opt-in and is not remembered across reloads.

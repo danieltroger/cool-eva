@@ -5,6 +5,8 @@ import { join } from "path";
 import { buildMapFixture, DEFAULT_SHAPE, FIXTURE_BASE_MS } from "./map-fixture.ts";
 import { CHARGE_SESSIONS_SQL, RIDES_SQL, TRACK_SQL, WAYPOINTS_SQL } from "../map/src/lib/server/queries.ts";
 import { boundsOfRange, buildTrackGeoJson, bandOf, GAP_MS, type TrackPoint } from "../map/src/lib/track.ts";
+import { chargeFacts, chargeFlyZoom } from "../map/src/lib/chargeFacts.ts";
+import { needsMaptilerLogo, satelliteBasemap, EOX_TILES } from "../map/src/lib/basemap.ts";
 
 // The laptop map viewer's SQL and its track builder, against a synthetic ride log.
 //
@@ -39,6 +41,8 @@ async function main(): Promise<void> {
     checkThePluggedInDrop();
     checkTheWitnessSkew();
     checkTheYear2060Guard();
+    checkTheChargeFacts();
+    checkTheSatelliteChoice();
   } finally {
     db.close();
     await rm(directory, { recursive: true, force: true });
@@ -440,6 +444,86 @@ function checkTheWitnessSkew(): void {
   );
   other.close();
   db.close();
+}
+
+/**
+ * The six fields a charge stop shows, which the list row and the map tooltip BOTH render.
+ *
+ * ⚠️ The point is that they cannot diverge. `chargeColour` was a second copy of the fix-age
+ * thresholds once, so a pin and its row could have coloured one staleness two ways. These
+ * assertions are on the shared function, and every one of them fails if a field stops being
+ * derived there.
+ */
+function checkTheChargeFacts(): void {
+  console.log("what a charge stop says about itself");
+  const base = FIXTURE_BASE_MS;
+  const fresh = {
+    startTs: base + 600_000,
+    endTs: base + 600_000 + 45 * 60_000,
+    lat: 10,
+    lon: 20,
+    fixTs: base + 600_000 - 60_000,
+    whAdded: 9060,
+    socStart: 32,
+    socEnd: 85,
+    chargeType: "DC",
+  };
+  const facts = chargeFacts(fresh);
+  check("duration comes from the session's own bounds", facts.duration === "45 min");
+  check("energy is kWh to two places", facts.kwh === "9.06 kWh");
+  check("the SOC delta reads start to end", facts.socDelta === "32 → 85 %");
+  check("the type is carried through", facts.chargeType === "DC");
+  check("the fix age is stated in words", facts.fixAge === "fix 1 min old");
+  check("a placeable stop says so", facts.placeable);
+
+  const noSoc = chargeFacts({ ...fresh, socStart: null, socEnd: null });
+  check("a missing SOC pair is null, not 'null → null %'", noSoc.socDelta === null);
+
+  const noFix = chargeFacts({ ...fresh, lat: null, lon: null, fixTs: null });
+  check("a stop with no position says so rather than showing an age", noFix.fixAge === "no position logged");
+  check("and is not placeable", !noFix.placeable);
+
+  // ⚠️ The colour and the zoom are both functions of fix age, and they must agree about which
+  // class a stop is in — that agreement is the thing the duplicate broke.
+  const stale = chargeFacts({ ...fresh, fixTs: base + 600_000 - 2 * 3_600_000 });
+  const ancient = chargeFacts({ ...fresh, fixTs: base + 600_000 - 40 * 3_600_000 });
+  check("colour moves with staleness", facts.colour !== stale.colour && stale.colour !== ancient.colour);
+  check(
+    "and so does the zoom — a ten-day-old pin is not flown to at street level",
+    chargeFlyZoom(fresh) > chargeFlyZoom({ ...fresh, fixTs: base + 600_000 - 2 * 3_600_000 }) &&
+      chargeFlyZoom({ ...fresh, fixTs: base + 600_000 - 2 * 3_600_000 }) >
+        chargeFlyZoom({ ...fresh, fixTs: base + 600_000 - 40 * 3_600_000 })
+  );
+}
+
+/**
+ * Which imagery a key situation gets, and what it obliges us to show.
+ *
+ * ⚠️ EOX is the default BECAUSE it needs no key — its WMTS is keyless and CC BY-NC-SA 4.0 —
+ * and MapTiler replaces it only when one exists, because Sentinel-2 is 10 m and overzooms.
+ * The logo assertion is the one with teeth: a FREE MapTiler account must show the LOGO and
+ * MapLibre renders no TileJSON logo, so nothing but our own element satisfies it.
+ */
+function checkTheSatelliteChoice(): void {
+  console.log("the satellite basemap");
+  const keyless = satelliteBasemap(null);
+  check("with no key the imagery is EOX", keyless.styleOrTiles === EOX_TILES);
+  check(
+    "and carries its CC BY-NC-SA attribution",
+    keyless.attribution !== undefined && keyless.attribution.includes("by-nc-sa")
+  );
+  const keyed = satelliteBasemap("test-key");
+  check("with a key it is MapTiler instead", keyed.styleOrTiles.includes("api.maptiler.com"));
+  check("and the key reaches the URL", keyed.styleOrTiles.includes("key=test-key"));
+  check(
+    "whose attribution names MapTiler and OpenStreetMap",
+    keyed.attribution !== undefined &&
+      keyed.attribution.includes("MapTiler") &&
+      keyed.attribution.includes("OpenStreetMap")
+  );
+  check("the MapTiler logo is required only on the keyed satellite path", needsMaptilerLogo("satellite", "k"));
+  check("not on keyless satellite", !needsMaptilerLogo("satellite", null));
+  check("and never on the vector map", !needsMaptilerLogo("map", "k"));
 }
 
 function pointsAt(timestamps: number[], speed: number): TrackPoint[] {
