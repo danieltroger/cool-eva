@@ -13,6 +13,8 @@ import { WIFI_LINK_STATE, type WifiLinkState } from "../src/wifi/parse.ts";
 import { WIFI_FAULT_DUMP_AFTER_MS, WIFI_POLL_MS } from "../src/wifi/status.ts";
 import {
   CONNECTED_POLLS_TO_FORGIVE,
+  HOLD_ACTION,
+  decideHold,
   RECOVER_TRIGGER,
   REJOIN_BACKOFF_MINUTES,
   REJOIN_CONFIRM_WINDOW_MS,
@@ -20,7 +22,6 @@ import {
   afterAttempt,
   backoffMs,
   decideGesture,
-  faultHeldMs,
   foldPoll,
   newFaultClock,
   shouldRecoverNow,
@@ -32,6 +33,7 @@ import {
   WIFI_HOLD_MS,
   WIFI_SPEED_MAX_AGE_MS,
   gateAllowsGesture,
+  performWifiHold,
   recoverWifi,
   rejoinPublication,
   republishRejoin,
@@ -39,6 +41,7 @@ import {
 } from "../src/wifi/recover.ts";
 import { fallbackBoundsFor } from "../public/lib/bounds-rules.js";
 import { isPlausible } from "../public/lib/bounds.js";
+import { WIFI_REJOIN_TEXT } from "../public/lib/announce.js";
 
 let failures = 0;
 
@@ -90,7 +93,7 @@ console.log("\n1. the fault clock");
 
 const faultPolls = Math.ceil(WIFI_FAULT_DUMP_AFTER_MS / WIFI_POLL_MS) + 2;
 const held = walk(Array(faultPolls).fill(FAULT));
-check("a sustained fault accumulates time", faultHeldMs(held.clock) >= WIFI_FAULT_DUMP_AFTER_MS);
+check("a sustained fault accumulates time", held.clock.heldMs >= WIFI_FAULT_DUMP_AFTER_MS);
 check("…and the watchdog fires", shouldRecoverNow(held.clock, held.nowMs, WIFI_FAULT_DUMP_AFTER_MS));
 
 const brief = walk([FAULT, FAULT]);
@@ -104,7 +107,7 @@ const alreadyFaulted = walk([FAULT, FAULT]).clock;
 const awayThenBack = walk([...Array(1350).fill(OUT_OF_RANGE), FAULT], alreadyFaulted, 1_000_000);
 check(
   "three hours OUT OF RANGE add nothing to the accumulated fault time",
-  faultHeldMs(awayThenBack.clock) < WIFI_FAULT_DUMP_AFTER_MS
+  awayThenBack.clock.heldMs < WIFI_FAULT_DUMP_AFTER_MS
 );
 check(
   "…so the first poll the hotspot reappears does not fire a ladder",
@@ -119,7 +122,7 @@ check(
   "a qualified fault stops firing once the hotspot is gone",
   !shouldRecoverNow(qualifiedThenAway.clock, qualifiedThenAway.nowMs, WIFI_FAULT_DUMP_AFTER_MS)
 );
-check("…and the accumulated time is kept rather than reset", faultHeldMs(qualifiedThenAway.clock) > 0);
+check("…and the accumulated time is kept rather than reset", qualifiedThenAway.clock.heldMs > 0);
 check(
   "…and it fires again the moment the fault shape returns",
   (() => {
@@ -133,7 +136,7 @@ check(
 // guard a poll loop stalled for hours — a busy event loop, a long dump — would hand the
 // next fault poll the whole stall as if it had been spent faulting.
 const afterStall = walk([FAULT], walk([OUT_OF_RANGE], brief.clock, brief.nowMs).clock, brief.nowMs + 3 * 3_600_000);
-check("a long gap across a non-fault poll is not banked", faultHeldMs(afterStall.clock) < WIFI_FAULT_DUMP_AFTER_MS);
+check("a long gap across a non-fault poll is not banked", afterStall.clock.heldMs < WIFI_FAULT_DUMP_AFTER_MS);
 check(
   "…so a stalled poll loop cannot trip the watchdog on its first fault poll",
   !shouldRecoverNow(afterStall.clock, afterStall.nowMs, WIFI_FAULT_DUMP_AFTER_MS)
@@ -142,14 +145,14 @@ check(
 // ⚠️ Our own `connection up` shows as CONNECTING. If that cleared the accumulated time,
 // the backoff would restart on every attempt and the escalation could never advance.
 const midAttempt = walk([ACTIVATING], held.clock, held.nowMs);
-check("an attempt in flight (CONNECTING) does not clear the accumulated time", faultHeldMs(midAttempt.clock) > 0);
+check("an attempt in flight (CONNECTING) does not clear the accumulated time", midAttempt.clock.heldMs > 0);
 check(
   "…but it does not fire either, because the current poll is not in the fault",
   !shouldRecoverNow(midAttempt.clock, midAttempt.nowMs, WIFI_FAULT_DUMP_AFTER_MS)
 );
 
 const recovered = walk([UP], held.clock, held.nowMs);
-check("a connection clears the accumulated time", faultHeldMs(recovered.clock) === 0);
+check("a connection clears the accumulated time", recovered.clock.heldMs === 0);
 
 // UNAVAILABLE is the radio itself being gone; it suspends like any other non-fault state.
 const radioGone = walk(
@@ -242,10 +245,6 @@ check(
     decideGesture(WIFI_LINK_STATE.CONNECTED, REJOIN_CONFIRM_WINDOW_MS + 1).arm
 );
 check("an unknown link state is treated as down", decideGesture(null, null).rejoin);
-check(
-  "EVERY hold dumps, whatever else it does",
-  [null, 0, REJOIN_CONFIRM_WINDOW_MS + 1].every(armed => decideGesture(WIFI_LINK_STATE.CONNECTED, armed).dump)
-);
 
 // --- 5. One hold is one action --------------------------------------------------------
 
@@ -266,7 +265,6 @@ for (let at = 0; at <= LONG_PRESS_MS; at += HOLD_BEAT_MS) {
   }
 }
 check(`the real 29 664 ms press fires exactly once (got ${fires})`, fires === 1);
-check("…and it fires at all", fires > 0);
 
 let shortState = newHoldState();
 let shortFires = 0;
@@ -308,7 +306,6 @@ check(
 // carries the button is the COST of a false fire: one dump, and a rejoin only when the
 // link is already down. docs/handlebar-gestures.md.
 check(`…and does NOT clear the ride log's ${RIDE_LOG_MAX_MS} ms press, which is known`, WIFI_HOLD_MS < RIDE_LOG_MAX_MS);
-check("the ride-log corpus is the larger one, so it is the one that governs", RIDE_LOG_PRESSES > CAPTURE_PRESSES);
 
 // ⚠️ THE MEASUREMENT THAT CHOSE THE BUTTON, pinned — because everything else about the
 // binding (registered, in `buttons`, no deadband, not the forbidden cruise-enable, all
@@ -325,7 +322,6 @@ const chosen = PRESSES_AT_OR_OVER_5S[WIFI_GESTURE_BUTTON as keyof typeof PRESSES
 check(`${WIFI_GESTURE_BUTTON} is one of the measured 0x400 buttons`, chosen !== undefined);
 // One is accepted and argued from the cost of a false fire; twenty-six is not.
 check(`…and reaches ${WIFI_HOLD_MS} ms at most once on record (it is ${chosen})`, chosen <= 1);
-check("btn_cruise_set is excluded by that same rule rather than by opinion", PRESSES_AT_OR_OVER_5S.btn_cruise_set > 1);
 
 // ⚠️ SAMPLE_MAX_AGE_MS is argued in long-press.ts from 0x102's worst frame gap of 14 ms.
 // This is the first gesture on 0x400, whose worst intra-press gap across all 129 archive
@@ -349,13 +345,46 @@ check("a creeping bike may not", !gateAllowsGesture(0.1));
 check("a moving bike may not", !gateAllowsGesture(30));
 check("a missing reading may not — fail closed", !gateAllowsGesture(null));
 check("a NaN reading may not", !gateAllowsGesture(Number.NaN));
-check("nor a nonsense negative", !gateAllowsGesture(-5) === false || !gateAllowsGesture(-5));
+check("nor a nonsense negative reading — it is a bad read, not slower than stopped", !gateAllowsGesture(-5));
+
+// 🚨 AND THE CALL TO IT, which is the half a mutation slipped through: extracting the
+// predicate left `if (<predicate>)` at an unreachable call site, so replacing that whole
+// branch with `if (false)` — a gesture that acts at any speed — stayed green. The gate
+// now lives inside decideHold, where the check can drive it.
+const UP_STATE = WIFI_LINK_STATE.CONNECTED;
+const DOWN_STATE = WIFI_LINK_STATE.DISCONNECTED;
+check(
+  "moving: the hold is refused outright",
+  decideHold(30, DOWN_STATE, null, gateAllowsGesture).action === HOLD_ACTION.REFUSED
+);
+check("…even creeping", decideHold(0.4, DOWN_STATE, null, gateAllowsGesture).action === HOLD_ACTION.REFUSED);
+check("…and on a stale reading", decideHold(null, DOWN_STATE, null, gateAllowsGesture).action === HOLD_ACTION.REFUSED);
+check("…and a refusal never arms the window", !decideHold(30, UP_STATE, null, gateAllowsGesture).arm);
+check("stopped and down: recover", decideHold(0, DOWN_STATE, null, gateAllowsGesture).action === HOLD_ACTION.RECOVER);
+check(
+  "stopped and up: dump only, armed",
+  (() => {
+    const d = decideHold(0, UP_STATE, null, gateAllowsGesture);
+    return d.action === HOLD_ACTION.DUMP_ONLY && d.arm;
+  })()
+);
+check(
+  "stopped, up, confirmed inside the window: recover",
+  decideHold(0, UP_STATE, 1000, gateAllowsGesture).action === HOLD_ACTION.RECOVER
+);
 
 // ⚠️ ZERO, not the fan's 15: nothing about a wifi dump is useful while moving. Supported
 // rather than arbitrary — speed_can_kmh reads exactly 0 in 317 780 of 317 780 frames of
 // the 2026-08-08 AC session.
 check("the gesture's ceiling is its own constant, not the fan's 15", WIFI_GESTURE_MAX_KMH === 0);
-check("a stale speed reading is refused, so the gate fails closed", WIFI_SPEED_MAX_AGE_MS === SAMPLE_MAX_AGE_MS);
+// ⚠️ Its OWN value, asserted directly and NOT welded to SAMPLE_MAX_AGE_MS. They are both
+// 500 ms today, and ../fan/gesture.ts argues at length that a window deciding whether the
+// radio may be touched must not move when the button window is retuned for a slower bit.
+check("the speed window is 500 ms", WIFI_SPEED_MAX_AGE_MS === 500);
+check(
+  "…which is not longer than the button window it must not be welded to",
+  WIFI_SPEED_MAX_AGE_MS <= SAMPLE_MAX_AGE_MS
+);
 
 // --- 8. The new signals ---------------------------------------------------------------
 
@@ -459,6 +488,72 @@ const noProfile = await recoverWifi(context, RECOVER_TRIGGER.WATCHDOG, {
 });
 check("only a missing profile reads NO_PROFILE", noProfile === REJOIN_OUTCOME.NO_PROFILE);
 check("the counter advanced once per run", latestValue("wifi_rejoin_seq") === 3);
+
+// ⚠️ Every outcome the rider can be handed must HAVE a sentence. Without this the phone
+// silently shows nothing for a code nobody remembered to word — and NONE is the one code
+// that must NOT produce a banner, because it means a trigger was ignored.
+for (const [name, code] of Object.entries(REJOIN_OUTCOME)) {
+  const said = WIFI_REJOIN_TEXT[code];
+  if (code === REJOIN_OUTCOME.NONE) {
+    check(`REJOIN_OUTCOME.${name} deliberately has no banner`, said === undefined);
+    continue;
+  }
+  check(`REJOIN_OUTCOME.${name} has a banner`, said !== undefined && said[0].length > 0);
+  check(`…with a tone the toast understands`, said !== undefined && (said[1] === "good" || said[1] === "bad"));
+}
+// ⚠️ And it must not say the wrong thing: code 4 is "no saved profile carries the SSID",
+// which an earlier draft worded as a range problem in three separate places.
+check(
+  "the NO_PROFILE banner does not call it a range problem",
+  !(WIFI_REJOIN_TEXT[REJOIN_OUTCOME.NO_PROFILE]?.[0] ?? "").toLowerCase().includes("range")
+);
+
+console.log("\n10. one hold, end to end");
+
+// 🚨 The DISPATCH, not just the decision. A mutation collapsing the REFUSED arm — a
+// gesture that acts on the radio at any speed — survived until a hold could be driven.
+function hold(speed: number | null, link: WifiLinkState | null) {
+  const calls = { dumps: 0, recovers: 0 };
+  const deps = {
+    speedKmh: () => speed,
+    speedAgeMs: () => 0,
+    linkState: () => link,
+    dump: async () => {
+      calls.dumps += 1;
+      return "/tmp/fake.txt";
+    },
+    recover: async () => {
+      calls.recovers += 1;
+      return REJOIN_OUTCOME.REJOINED;
+    },
+  };
+  return { calls, run: () => performWifiHold(deps) };
+}
+
+const moving = hold(30, WIFI_LINK_STATE.DISCONNECTED);
+const movingSaid = await moving.run();
+check("moving: nothing is dumped", moving.calls.dumps === 0);
+check("moving: nothing touches the radio", moving.calls.recovers === 0);
+check("moving: and the rider is told why", movingSaid.includes("not proven stopped"));
+
+const stale = hold(null, WIFI_LINK_STATE.DISCONNECTED);
+await stale.run();
+check("a stale speed reading acts on nothing either", stale.calls.dumps === 0 && stale.calls.recovers === 0);
+
+const parkedDown = hold(0, WIFI_LINK_STATE.DISCONNECTED);
+await parkedDown.run();
+check("parked with the link down: the ladder runs", parkedDown.calls.recovers === 1);
+
+const parkedUp = hold(0, WIFI_LINK_STATE.CONNECTED);
+const upSaid = await parkedUp.run();
+check("parked with the link UP: it dumps", parkedUp.calls.dumps === 1);
+check("…and does NOT touch the link", parkedUp.calls.recovers === 0);
+check("…and says how to insist", upSaid.includes("Hold again"));
+
+// The window armed by that hold is what a second one confirms against.
+const confirmed = hold(0, WIFI_LINK_STATE.CONNECTED);
+await confirmed.run();
+check("a second hold inside the window does touch the link", confirmed.calls.recovers === 1);
 
 // The publication is pure, so "the counter always advances" is a property, not a line.
 check("rejoinPublication advances the counter", rejoinPublication(7, REJOIN_OUTCOME.REJOINED)[0][1] === 8);

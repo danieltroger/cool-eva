@@ -1,7 +1,7 @@
 import { record } from "../can/signals.ts";
 import { monotonicNow } from "../monotonic.ts";
 import { NMCLI, runCommand } from "./nmcli.ts";
-import { afterAttempt, faultHeldMs, foldPoll, newFaultClock, shouldRecoverNow } from "./ladder.ts";
+import { afterAttempt, foldPoll, newFaultClock, shouldRecoverNow } from "./ladder.ts";
 import { republishRejoin } from "./recover.ts";
 import { WIFI_LINK_STATE, parseDeviceState, parseWifiList, type WifiLinkState, type WifiListReading } from "./parse.ts";
 
@@ -97,7 +97,7 @@ export function startWifiMonitor(
       const now = monotonicNow();
       clock = foldPoll(clock, { ...reading, nowMs: now });
       if (shouldRecoverNow(clock, now, WIFI_FAULT_DUMP_AFTER_MS)) {
-        const held = faultHeldMs(clock);
+        const held = clock.heldMs;
         console.log(`wifi: disconnected ${(held / 1000).toFixed(0)} s with the hotspot in range — recovering`);
         clock = afterAttempt(clock, now);
         // ⚠️ NOT awaited, and the reason is the same one ./recover.ts's in-flight flag

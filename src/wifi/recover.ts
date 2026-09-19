@@ -2,10 +2,18 @@ import { uptime } from "os";
 import { ageMs, freshValue, record } from "../can/signals.ts";
 import { monotonicNow, since } from "../monotonic.ts";
 import type { HoldGesture } from "../gestures/runner.ts";
+import { COMMAND_TIMEOUT_MS } from "./collect.ts";
 import { writeWifiDump } from "./dump.ts";
 import { NMCLI, runCommand } from "./nmcli.ts";
 import { WIFI_LINK_STATE, parseWifiList, parseWifiProfileNames, type WifiLinkState } from "./parse.ts";
-import { REJOIN_OUTCOME, RECOVER_TRIGGER, decideGesture, type RecoverTrigger, type RejoinOutcome } from "./ladder.ts";
+import {
+  HOLD_ACTION,
+  REJOIN_OUTCOME,
+  RECOVER_TRIGGER,
+  decideHold,
+  type RecoverTrigger,
+  type RejoinOutcome,
+} from "./ladder.ts";
 
 // The half of the wifi recovery that touches the world: it takes a dump, refreshes the
 // scan and asks NetworkManager to activate the hotspot profile. ./ladder.ts decides
@@ -55,7 +63,9 @@ export function gateAllowsGesture(speedKmh: number | null): boolean {
   if (speedKmh === null || !Number.isFinite(speedKmh)) {
     return false;
   }
-  return speedKmh <= WIFI_GESTURE_MAX_KMH;
+  // ⚠️ A negative speed is not "slower than stopped", it is a bad reading — refused for
+  // the same reason a stale one is. ../fan/gesture.ts's isBelowOffCeiling guards it too.
+  return speedKmh >= 0 && speedKmh <= WIFI_GESTURE_MAX_KMH;
 }
 
 /**
@@ -92,11 +102,6 @@ export interface RecoverContext {
 let running = false;
 let armedAt: number | null = null;
 let rejoinSeq = 0;
-
-/** Whether a ladder is in flight, so ./status.ts does not start a second one. */
-export function recoveryInFlight(): boolean {
-  return running;
-}
 
 /**
  * Runs the recovery. Always resolves; never throws at its callers, which are a timer and
@@ -216,13 +221,17 @@ const ACTIVATE_TIMEOUT_MS = 30_000;
 
 /** Which saved profile carries the configured SSID. */
 async function hotspotProfileName(hotspotSsid: string): Promise<string | null> {
-  const listing = await runCommand(NMCLI, ["-t", "-f", "NAME,TYPE", "connection", "show"], 10_000);
+  const listing = await runCommand(NMCLI, ["-t", "-f", "NAME,TYPE", "connection", "show"], COMMAND_TIMEOUT_MS);
   if (listing.exitCode !== 0) {
     console.warn(`wifi-recover: ${listing.command} exited ${listing.exitCode}: ${listing.stderr.trim()}`);
     return null;
   }
   for (const name of parseWifiProfileNames(listing.stdout)) {
-    const ssid = await runCommand(NMCLI, ["-g", "802-11-wireless.ssid", "connection", "show", name], 10_000);
+    const ssid = await runCommand(
+      NMCLI,
+      ["-g", "802-11-wireless.ssid", "connection", "show", name],
+      COMMAND_TIMEOUT_MS
+    );
     if (ssid.exitCode === 0 && ssid.stdout.trim() === hotspotSsid) {
       return name;
     }
@@ -239,26 +248,48 @@ export function republishRejoin(): void {
 let lastOutcome: RejoinOutcome = REJOIN_OUTCOME.NONE;
 
 /** The handlebar hold. Same machinery as the fan and waypoint gestures. */
-export function wifiHoldGesture(context: RecoverContext): HoldGesture {
+export function wifiHoldGesture(context: RecoverContext, deps: HoldDeps = realHoldDeps(context)): HoldGesture {
   return {
     button: WIFI_GESTURE_BUTTON,
     holdMs: WIFI_HOLD_MS,
     description: "dump the wifi state and rejoin",
-    perform: async () => performWifiHold(context),
+    perform: async () => performWifiHold(deps),
+  };
+}
+
+/**
+ * What one hold reads and what it can do, injectable for the same reason
+ * `LadderEffects` is: without it the three-way dispatch below is unreachable, and a
+ * mutation collapsing the REFUSED arm — a gesture that acts at any speed — stayed green.
+ */
+export interface HoldDeps {
+  speedKmh: () => number | null;
+  speedAgeMs: () => number | null;
+  linkState: () => WifiLinkState | null;
+  dump: () => Promise<string | null>;
+  recover: () => Promise<RejoinOutcome>;
+}
+
+function realHoldDeps(context: RecoverContext): HoldDeps {
+  return {
+    speedKmh: () => freshValue("speed_can_kmh", WIFI_SPEED_MAX_AGE_MS),
+    speedAgeMs: () => ageMs("speed_can_kmh"),
+    linkState: currentLinkState,
+    dump: () => writeWifiDump(context.dumpDirectory, context.iface, uptime()),
+    recover: () => recoverWifi(context, RECOVER_TRIGGER.GESTURE),
   };
 }
 
 /** What one hold does. Kept out of the factory so it is not a nested declaration. */
-async function performWifiHold(context: RecoverContext): Promise<string> {
-  const speed = freshValue("speed_can_kmh", WIFI_SPEED_MAX_AGE_MS);
-  if (speed === null || speed > WIFI_GESTURE_MAX_KMH) {
+export async function performWifiHold(deps: HoldDeps): Promise<string> {
+  const speed = deps.speedKmh();
+  const decision = decideHold(speed, deps.linkState(), armedAt === null ? null : since(armedAt), gateAllowsGesture);
+  if (decision.action === HOLD_ACTION.REFUSED) {
     // ⚠️ FAIL-CLOSED on a missing or stale reading: `null` is "we cannot say the bike is
     // stopped", which is not permission to act on the radio. Same shape as ../fan/fun.ts.
-    const age = ageMs("speed_can_kmh");
-    return `refused — the bike is not proven stopped (speed ${speed ?? "unknown"}, age ${age ?? "never"} ms)`;
+    return `refused — the bike is not proven stopped (speed ${speed ?? "unknown"}, age ${deps.speedAgeMs() ?? "never"} ms)`;
   }
-  const decision = decideGesture(currentLinkState(), armedAt === null ? null : since(armedAt));
-  if (!decision.rejoin) {
+  if (decision.action === HOLD_ACTION.DUMP_ONLY) {
     // ⚠️ The dump takes the SHARED flag too. It runs a dozen children against the same
     // radio a watchdog ladder may already be using, and "it only dumps" is not a reason
     // to let two of them overlap.
@@ -269,7 +300,7 @@ async function performWifiHold(context: RecoverContext): Promise<string> {
     armedAt = decision.arm ? monotonicNow() : armedAt;
     let written: string | null = null;
     try {
-      written = await writeWifiDump(context.dumpDirectory, context.iface, uptime());
+      written = await deps.dump();
       lastOutcome = REJOIN_OUTCOME.DUMP_ONLY;
       for (const [key, value] of rejoinPublication(rejoinSeq, lastOutcome)) {
         record(key, value);
@@ -286,7 +317,7 @@ async function performWifiHold(context: RecoverContext): Promise<string> {
   // ⚠️ NOT assigned to lastOutcome: an ignored trigger answers NONE, and writing that
   // over the real outcome of the run still in flight would make the signal disagree with
   // the counter beside it. runLadder owns lastOutcome; this only words a sentence.
-  return describeOutcome(await recoverWifi(context, RECOVER_TRIGGER.GESTURE));
+  return describeOutcome(await deps.recover());
 }
 
 /**
@@ -309,27 +340,17 @@ function currentLinkState(): WifiLinkState | null {
 /** Three poll intervals: stale enough to be suspicious, fresh enough not to be flaky. */
 const WIFI_STATE_MAX_AGE_MS = 30_000;
 
-const VALID_LINK_STATES: readonly WifiLinkState[] = [
-  WIFI_LINK_STATE.UNAVAILABLE,
-  WIFI_LINK_STATE.DISCONNECTED,
-  WIFI_LINK_STATE.CONNECTING,
-  WIFI_LINK_STATE.CONNECTED,
-];
+const VALID_LINK_STATES: readonly WifiLinkState[] = Object.values(WIFI_LINK_STATE);
 
 function describeOutcome(outcome: RejoinOutcome): string {
   if (outcome === REJOIN_OUTCOME.REJOINED) {
     return "rejoined";
   }
   if (outcome === REJOIN_OUTCOME.NO_PROFILE) {
-    return "the hotspot was not in range; the dump is on the Pi";
+    return "no saved profile carries the configured SSID; the dump is on the Pi";
   }
   if (outcome === REJOIN_OUTCOME.NONE) {
     return "a recovery was already running, so this hold was ignored";
   }
   return "the rejoin did not take; the dump is on the Pi";
-}
-
-/** Lets ./status.ts record the outcome of its own ladder run. */
-export function noteOutcome(outcome: RejoinOutcome): void {
-  lastOutcome = outcome;
 }

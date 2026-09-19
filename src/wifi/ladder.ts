@@ -131,11 +131,6 @@ export function foldPoll(clock: FaultClock, reading: PollReading): FaultClock {
   return { ...base, inFault: false, connectedPolls: 0 };
 }
 
-/** How long the fault has held, counting only polls that were actually in it. */
-export function faultHeldMs(clock: FaultClock): number {
-  return clock.heldMs;
-}
-
 /**
  * Whether the watchdog should run the ladder now.
  *
@@ -168,8 +163,6 @@ export function afterAttempt(clock: FaultClock, nowMs: number): FaultClock {
 }
 
 export interface GestureDecision {
-  /** Always true: a hold that writes nothing tells the rider nothing. */
-  dump: true;
   /** Whether this hold also touches the radio. */
   rejoin: boolean;
   /** Whether it arms the confirm window for a second hold. */
@@ -197,7 +190,43 @@ export const REJOIN_CONFIRM_WINDOW_MS = 60_000;
 export function decideGesture(linkState: WifiLinkState | null, msSinceArmed: number | null): GestureDecision {
   if (linkState === WIFI_LINK_STATE.CONNECTED) {
     const confirmed = msSinceArmed !== null && msSinceArmed < REJOIN_CONFIRM_WINDOW_MS;
-    return { dump: true, rejoin: confirmed, arm: !confirmed };
+    return { rejoin: confirmed, arm: !confirmed };
   }
-  return { dump: true, rejoin: true, arm: false };
+  return { rejoin: true, arm: false };
+}
+
+/** Everything one hold can do. */
+export const HOLD_ACTION = {
+  /** The bike is not proven stopped, so nothing happens at all. */
+  REFUSED: "refused",
+  /** Dump and arm the confirm window; the link is left alone. */
+  DUMP_ONLY: "dump-only",
+  /** Dump and run the ladder. */
+  RECOVER: "recover",
+} as const;
+
+export type HoldAction = (typeof HOLD_ACTION)[keyof typeof HOLD_ACTION];
+
+/**
+ * The WHOLE of what a hold decides, in one pure function.
+ *
+ * 🚨 The speed gate lives HERE and not at the call site. It was inlined in the impure
+ * hold, and a mutation replacing it with `if (false)` — a gesture that acts at any speed
+ * — left every assertion green, because nothing could drive the branch. Extracting the
+ * predicate alone was not enough: the CALL to it was still unreachable.
+ */
+export function decideHold(
+  speedKmh: number | null,
+  linkState: WifiLinkState | null,
+  msSinceArmed: number | null,
+  stopped: (speed: number | null) => boolean
+): { action: HoldAction; arm: boolean } {
+  if (!stopped(speedKmh)) {
+    return { action: HOLD_ACTION.REFUSED, arm: false };
+  }
+  const decision = decideGesture(linkState, msSinceArmed);
+  return {
+    action: decision.rejoin ? HOLD_ACTION.RECOVER : HOLD_ACTION.DUMP_ONLY,
+    arm: decision.arm,
+  };
 }

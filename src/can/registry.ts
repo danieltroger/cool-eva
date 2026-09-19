@@ -86,7 +86,7 @@ export const SIGNALS: SignalDef[] = [
   // banner, and the second hold at the same charger would look like it had worked.
   { key: "wifi_rejoin_seq", unit: "", group: "wifi", source: "poll", unbounded: "counter" },
   // REJOIN_OUTCOME in src/wifi/ladder.ts: 0 none · 1 dump only, link untouched ·
-  // 2 rejoined · 3 attempted and failed · 4 the hotspot was not in the refreshed scan.
+  // 2 rejoined · 3 attempted and failed · 4 no saved profile carries the configured SSID.
   { key: "wifi_rejoin_outcome", unit: "", group: "wifi", source: "poll", bounds: [0, 4] },
   // ⚠️ There is deliberately NO `wifi_signal_pct`. A signal has no honest value while the
   // radio is disconnected, and an unwritten one goes stale — so a percent key would drag

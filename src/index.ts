@@ -48,7 +48,7 @@ import { startCanLinkMonitor } from "./can/link-status.ts";
 import { startWifiMonitor } from "./wifi/status.ts";
 import { WIFI_DIAG_DIRNAME } from "./wifi/dump.ts";
 import { RECOVER_TRIGGER } from "./wifi/ladder.ts";
-import { noteOutcome, recoverWifi, wifiHoldGesture, type RecoverContext } from "./wifi/recover.ts";
+import { recoverWifi, wifiHoldGesture, type RecoverContext } from "./wifi/recover.ts";
 import { decodeFrame, STREAM_IDS } from "./can/decode.ts";
 import { frameArrival } from "./can/frame-arrival.ts";
 import { configurePackTemperature, resolvePackTemperatures } from "./can/pack-temperature.ts";
@@ -466,9 +466,12 @@ const wifiMonitor = WIFI_ENABLED
   ? startWifiMonitor(WIFI_IFACE, WIFI_HOTSPOT_SSID, () => {
       // Deliberately not awaited by the poll — see startWifiMonitor. The rejection arm is
       // here because an escaped one ends the process and takes the CAN logging with it.
-      void recoverWifi(wifiContext, RECOVER_TRIGGER.WATCHDOG)
-        .then(noteOutcome)
-        .catch(error => console.warn("wifi-recover: the watchdog ladder threw:", error));
+      // ⚠️ The outcome is NOT captured here. runLadder owns it and publishes it; a
+      // refused-because-running call answers NONE, and writing that over a live outcome
+      // would make the signal disagree with the counter beside it.
+      void recoverWifi(wifiContext, RECOVER_TRIGGER.WATCHDOG).catch(error =>
+        console.warn("wifi-recover: the watchdog ladder threw:", error)
+      );
     })
   : null;
 
