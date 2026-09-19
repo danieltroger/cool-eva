@@ -1,1 +1,69 @@
 @import 'tailwindcss';
+@import 'maplibre-gl/dist/maplibre-gl.css';
+
+/* Both themes are defined here rather than only the dark one, because a page that paints only
+   under `prefers-color-scheme: dark` shows the host's own background through it in light mode.
+   The palette follows Grafana's dark dashboard so the two do not feel like different tools. */
+:root {
+	--surface: #ffffff;
+	--surface-raised: #f4f5f7;
+	--surface-sunken: #e9ebef;
+	--border: #d3d7de;
+	--text: #1b1f27;
+	--text-dim: #5a6270;
+	--accent: #3b82f6;
+	color-scheme: light;
+}
+
+:root[data-theme='dark'],
+:root:not([data-theme='light']) {
+	@media (prefers-color-scheme: dark) {
+		--surface: #111318;
+		--surface-raised: #181b22;
+		--surface-sunken: #0b0d11;
+		--border: #2a2f3a;
+		--text: #e6e9ef;
+		--text-dim: #99a1b0;
+		--accent: #60a5fa;
+		color-scheme: dark;
+	}
+}
+
+:root[data-theme='dark'] {
+	--surface: #111318;
+	--surface-raised: #181b22;
+	--surface-sunken: #0b0d11;
+	--border: #2a2f3a;
+	--text: #e6e9ef;
+	--text-dim: #99a1b0;
+	--accent: #60a5fa;
+	color-scheme: dark;
+}
+
+html,
+body {
+	height: 100%;
+	margin: 0;
+	background: var(--surface);
+	color: var(--text);
+	font-family:
+		ui-sans-serif,
+		system-ui,
+		-apple-system,
+		'Segoe UI',
+		Roboto,
+		Helvetica,
+		Arial,
+		sans-serif;
+}
+
+/* The attribution control is required by OpenFreeMap's terms and by OSM's licence, so it is
+   restyled to be readable in both themes rather than hidden. */
+.maplibregl-ctrl-attrib {
+	background: color-mix(in srgb, var(--surface) 82%, transparent);
+	color: var(--text-dim);
+	font-size: 10px;
+}
+.maplibregl-ctrl-attrib a {
+	color: var(--text-dim);
+}

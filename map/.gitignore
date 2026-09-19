@@ -21,3 +21,8 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# The persisted snapshot, if anyone points RIDES_DB at a copy inside this directory.
+# The real one lives beside rides.db and .gitignore's `rides.db*` covers it there.
+*.mapcache
+*.mapcache.tmp-*

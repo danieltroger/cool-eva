@@ -182,7 +182,7 @@ The open item that could have invalidated the whole data path. A route opening `
 }
 ```
 
-⚠️ **`vite.config.ts` contains no `ssr.external`, no `optimizeDeps`, nothing** — the scaffold as `sv create` emits it already externalises the native module for SSR, because a bundled one could not have loaded at all. The plan's worry was unfounded and the cheapest way to find that out was to run it. If a future Vite bundles it instead, the symptom will be a load error at first request, not a silent wrong answer.
+The probe route that produced this was deleted once `/api/track` and `/api/summary` covered the same path; the finding is the point, not the route. ⚠️ **`vite.config.ts` contains no `ssr.external`, no `optimizeDeps`, nothing** — the scaffold as `sv create` emits it already externalises the native module for SSR, because a bundled one could not have loaded at all. The plan's worry was unfounded and the cheapest way to find that out was to run it. If a future Vite bundles it instead, the symptom will be a load error at first request, not a silent wrong answer.
 
 `openedMs` 11.2 cold and **0.3 ms** warm, against 2–6 ms measured through the CLI — the 4 GB open remains a non-issue.
 
