@@ -62,7 +62,13 @@ export interface StatusPayload {
    */
   log: { files: number; bytes: number; enabled: boolean };
   /**
-   * Free space on the card the captures and the ride log share.
+   * Free space on the filesystem holding the ride log.
+   *
+   * ⚠️ That is the RIDE LOG's directory, which is `RIDE_LOG_DIR` and env-overridable — not
+   * `/home/pi/ride-captures`, which is what `scripts/can-capture/capture.sh` gates its disk
+   * floor on. On this Pi they are one card, so this answers "how close is the capture unit
+   * to its floor"; mount storage at either path and it stops doing so. Named as the
+   * assumption it is rather than stated as fact.
    *
    * ⚠️ `freeBytes` is `bavail`, NOT `bfree`. The two differ by the ~5 GB of reserved
    * blocks, and `scripts/can-capture/capture.sh` gates its disk floor on `df -Pk`'s

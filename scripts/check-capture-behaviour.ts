@@ -1,6 +1,7 @@
 import { readFile } from "fs/promises";
 import { fileURLToPath } from "url";
 import { runCaptureScriptWithStubs } from "./can-capture/stub-run.ts";
+import { isCaptureName } from "./free-pi-captures-plan.ts";
 
 // Runs the raw-CAN-capture script and checks what it DOES. Split from
 // scripts/check-can-capture.ts, which reads the same file and checks what it SAYS — that
@@ -20,10 +21,6 @@ const CAPTURE_SCRIPT = new URL("./can-capture/capture.sh", import.meta.url);
 const script = await readFile(CAPTURE_SCRIPT, "utf8");
 const failures: string[] = [];
 
-// ⚠️ Everything above reads the script. This runs it — under stubbed `ip`, `candump`,
-// `df`, `stdbuf`, `timeout`, `sleep` and `split`, in a temp directory — because three of
-// the properties that matter are ORDERINGS the regexes above can only approximate, and
-// because the floor's fail-closed direction is not a property any regex can see.
 const scriptPath = fileURLToPath(CAPTURE_SCRIPT);
 
 const healthy = await runCaptureScriptWithStubs(scriptPath);
@@ -34,6 +31,16 @@ if (healthy.captureFiles.length !== 1) {
   failures.push(`a healthy run wrote ${healthy.captureFiles.length} capture files, expected exactly 1`);
 } else if (!/^capture-\d{8}-\d{6}-[0-9a-f]{8}-\d{8}\.log\.gz$/.test(healthy.captureFiles[0])) {
   failures.push(`a healthy run wrote ${healthy.captureFiles[0]}, which is not the documented capture name`);
+} else if (!isCaptureName(healthy.captureFiles[0])) {
+  // ⚠️ The deletion allowlist, fed the name the REAL script just produced. Without this it is
+  // a hand-written copy of the name shape with no witness, and its failure is silent in the
+  // SAFE direction: a name change makes free-pi-captures.ts refuse every new capture, nothing
+  // goes red, and the card quietly stops being swept until it fills and the floor stops the
+  // capture too.
+  failures.push(
+    `free-pi-captures-plan.ts would not recognise ${healthy.captureFiles[0]} as a capture, so nothing ` +
+      `capture.sh writes from now on could ever be deleted off the card`
+  );
 }
 // The file must be real gzip AND carry the header, the frames and candump's stderr. That
 // last one is what proves 2>&1 actually reaches the pipe rather than the journal.
@@ -46,29 +53,47 @@ if (healthy.capturedText === null) {
     }
   }
 }
-// Parsed and compared as a NUMBER: `"-C 655360".includes("-C 65536")` is true, so the
-// substring test this replaces accepted a ten-times-larger chunk.
-const invokedChunk = /(?:^|\s)-C (\d+)(?:\s|$)/.exec(healthy.splitArgv ?? "");
-if (!invokedChunk || Number(invokedChunk[1]) !== 65536) {
+// ⚠️ This asserts AGREEMENT, not the value: what split was actually invoked with is what the
+// script text declares. The bound itself — why 65536 and not more — is derived from
+// docs/power-cuts.md §7 over in scripts/check-can-capture.ts, which is where it is argued.
+// Stating the literal a third time here would make retuning the chunk fail in a file that
+// gives no reason, and docs/can-capture.md says in as many words that it expects retuning.
+// Parsed as a NUMBER: `"-C 655360".includes("-C 65536")` is true, so a substring test would
+// have accepted a ten-times-larger chunk.
+const declaredChunk = /\bsplit -C (\d+) --filter=/.exec(script)?.[1];
+const invokedChunk = /(?:^|\s)-C (\d+)(?:\s|$)/.exec(healthy.splitArgv ?? "")?.[1];
+if (!declaredChunk || !invokedChunk || Number(invokedChunk) !== Number(declaredChunk)) {
   failures.push(
-    `split was invoked with chunk ${invokedChunk?.[1] ?? "none"}, expected exactly 65536 (argv: ${healthy.splitArgv})`
+    `split was invoked with chunk ${invokedChunk ?? "none"} while capture.sh declares ` +
+      `${declaredChunk ?? "none"} (argv: ${healthy.splitArgv})`
   );
 }
 
 // Below the floor: refuse, say so, and create NOTHING. The stub `sleep` aborts the wait,
 // so this observes the refusal rather than sitting in the retry loop for a minute.
-const starved = await runCaptureScriptWithStubs(scriptPath, { availableKb: "10485759" });
-if (starved.captureFiles.length !== 0) {
-  failures.push(`the disk floor let a capture be created with 10485759 kB free: ${starved.captureFiles.join(", ")}`);
+// ⚠️ Both boundaries are read from the script, so a retuned floor does not fail here with a
+// message asserting a requirement nobody makes. Safe only because scripts/check-can-capture.ts
+// independently asserts the declared floor against the 10 GiB docs/can-capture.md argues for —
+// without that pair this would agree with itself at any floor, including one too low to
+// protect the ride log.
+const floorKb = Number(/^FLOOR_KB=(\d+)$/m.exec(script)?.[1] ?? "0");
+if (floorKb <= 0) {
+  failures.push("capture.sh declares no FLOOR_KB, so the boundary cases below would test nothing");
 }
-if (!/disk floor: 10485759 kB free/.test(starved.output)) {
+const starved = await runCaptureScriptWithStubs(scriptPath, { availableKb: String(floorKb - 1) });
+if (starved.captureFiles.length !== 0) {
+  failures.push(
+    `the disk floor let a capture be created with ${floorKb - 1} kB free: ${starved.captureFiles.join(", ")}`
+  );
+}
+if (!new RegExp(`disk floor: ${floorKb - 1} kB free`).test(starved.output)) {
   failures.push(`the disk floor refused quietly — nothing in the journal names the free space:\n${starved.output}`);
 }
 
 // One kB the other side of it must proceed, or the floor is not a floor but a wall.
-const justEnough = await runCaptureScriptWithStubs(scriptPath, { availableKb: "10485760" });
+const justEnough = await runCaptureScriptWithStubs(scriptPath, { availableKb: String(floorKb) });
 if (justEnough.captureFiles.length !== 1) {
-  failures.push(`the disk floor refused at exactly 10485760 kB free, which is ON the floor and must pass`);
+  failures.push(`the disk floor refused at exactly ${floorKb} kB free, which is ON the floor and must pass`);
 }
 
 // ⚠️ An unreadable df FAILS CLOSED. Not knowing the free space is not permission to fill
@@ -86,7 +111,7 @@ const dyingCandump = await runCaptureScriptWithStubs(scriptPath, { candumpExitCo
 if (dyingCandump.exitCode === 0) {
   failures.push(
     "capture.sh exited 0 with a candump that failed. systemd would call the unit cleanly finished and the " +
-      "capture would stop until the next boot — this is what `set -o pipefail` is for"
+      "capture would stop until the next boot — this is what the status file is for"
   );
 }
 
@@ -124,7 +149,8 @@ if (dashLike.exitCode !== 7) {
   failures.push(`candump exited 7 and capture.sh exited ${dashLike.exitCode}; the status must pass through unchanged`);
 }
 
-// Any of the three binaries missing: exit non-zero, say which, and leave NO file behind.
+// A guarded binary missing: exit non-zero, say which, and leave NO file behind. `split` is
+// absent from the list because the harness stubs it, so its absence cannot be posed here.
 // `: > "$OUTPUT"` truncates whether or not the pipeline can run, so an ungated missing
 // binary means one empty capture per restart — ~17 000 a day at RestartSec=5.
 for (const tool of ["gzip", "candump", "mktemp", "cat"]) {

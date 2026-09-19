@@ -19,6 +19,11 @@ import sys
 import zlib
 
 CHUNK = 1 << 20
+#: Smaller than CHUNK on purpose. `decompressobj.unused_data` is a fresh copy of everything
+#: after the member just finished, so a window spanning N members copies it ~N/2 times over.
+#: A real capture is ~8 kB compressed per 64 kB member, so a 1 MiB window spans ~130 of them
+#: and costs ~65 MiB of memcpy per MiB read; 64 KiB spans ~8 and costs ~16x less.
+GZIP_WINDOW = 1 << 16
 
 def trailing_nulls(handle, size):
     run = 0
@@ -48,7 +53,7 @@ def gzip_tail(path, size):
     machine = zlib.decompressobj(31)
     with open(path, "rb") as handle:
         while not cut:
-            chunk = handle.read(1 << 20)
+            chunk = handle.read(GZIP_WINDOW)
             if not chunk:
                 break
             while chunk:

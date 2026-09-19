@@ -2,6 +2,7 @@ import { readFile, stat } from "fs/promises";
 import { spawn } from "child_process";
 import { dirname, isAbsolute, join } from "path";
 import { homedir } from "os";
+import { CAPTURE_DIRECTORY } from "./can-capture/unit.ts";
 import {
   planCaptureDeletions,
   type DeletionPlan,
@@ -17,7 +18,8 @@ import {
 //     node --experimental-strip-types scripts/free-pi-captures.ts --delete
 //
 //     --manifest <path>          a proof source; repeatable, defaults to the Mac's
-//     --host <alias>             default cool-eva-tunnel (see pi-access.md)
+//     --host <alias>             an ssh alias in ~/.ssh/config; default cool-eva-tunnel, which
+//                                reaches the bike's Pi through a jump host when it is away
 //     --strict                   re-hash every candidate on the Pi before deleting it
 //     --no-stored-copy-check     the proof's blobs are not on this machine (the odroid)
 //     --delete                   actually delete; without it nothing is removed
@@ -26,14 +28,13 @@ import {
 // what that needs, prints, and — when asked — removes.
 
 const DEFAULT_MANIFEST = join(homedir(), "Documents/cool-eva-route/data/ride-captures/MANIFEST.tsv");
-const CAPTURE_DIRECTORY = "/home/pi/ride-captures";
 
-export interface Options {
+interface Options {
   manifests: string[];
   host: string;
   strict: boolean;
   requireStoredCopy: boolean;
-  del: boolean;
+  deleteForReal: boolean;
 }
 
 const options = parseArguments(process.argv.slice(2));
@@ -51,9 +52,9 @@ const plan = planCaptureDeletions({
   requireStoredCopy: options.requireStoredCopy,
 } satisfies PlanInput);
 
-report(plan, probe.bootId);
+report();
 
-if (!options.del) {
+if (!options.deleteForReal) {
   console.log("\nDRY RUN — nothing was deleted. Add --delete to act on the list above.");
   process.exit(0);
 }
@@ -63,7 +64,8 @@ if (plan.deletable.length === 0) {
 }
 await deleteOnThePi(plan, options);
 
-function report(plan: DeletionPlan, bootId: string | null): void {
+/** Called once, and reads the module's own state rather than shadowing it with parameters. */
+function report(): void {
   const freed = plan.deletable.reduce((total, entry) => total + entry.bytes, 0);
   console.log(`\nDELETABLE — ${plan.deletable.length} files, ${(freed / 1e9).toFixed(2)} GB`);
   for (const entry of plan.deletable) {
@@ -78,7 +80,7 @@ function report(plan: DeletionPlan, bootId: string | null): void {
   if (plan.absent.length > 0) {
     console.log(`\nalready gone from the Pi — ${plan.absent.length} (nothing to free)`);
   }
-  console.log(`\nthe Pi's current boot is ${bootId || "UNKNOWN — every capture is refused without it"}`);
+  console.log(`\nthe Pi's current boot is ${probe.bootId || "UNKNOWN — every capture is refused without it"}`);
   if (!options.requireStoredCopy) {
     console.log(
       "⚠️  --no-stored-copy-check: this run did NOT confirm the verified copy still exists. Every deletion\n" +
@@ -153,6 +155,13 @@ async function measureStoredCopies(rows: ManifestRow[], options: Options): Promi
 
 /**
  * One ssh for the whole batch: the Pi's boot id, then a size and mtime per name.
+ *
+ * ⚠️ Two `stat` calls per file rather than one `stat -c '%s\\t%Y'`, which would halve the
+ * fork+exec count on a Zero 2 W (625 files is ~1250 today). The one-call form was written,
+ * and then reverted unverified: the tunnel to the Pi went down when the bike's charge
+ * completed, there is no GNU `stat` on this Mac to check the format against, and this is the
+ * command that drives a delete. Verified-slower beats unverified-faster here; the cost is
+ * dominated by ssh latency anyway. Worth doing the next time the Pi is reachable.
  *
  * ⚠️ Names go over STDIN and are never interpolated into the remote command. They are
  * validated against the capture pattern by the planner too — this is the second line of
@@ -270,7 +279,7 @@ function parseArguments(argv: string[]): Options {
   let host = "cool-eva-tunnel";
   let strict = false;
   let requireStoredCopy = true;
-  let del = false;
+  let deleteForReal = false;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--manifest") {
@@ -282,11 +291,17 @@ function parseArguments(argv: string[]): Options {
     } else if (argument === "--no-stored-copy-check") {
       requireStoredCopy = false;
     } else if (argument === "--delete") {
-      del = true;
+      deleteForReal = true;
     } else {
       console.error(`free-pi-captures: unknown argument ${argument}`);
       process.exit(1);
     }
   }
-  return { manifests: manifests.length > 0 ? manifests : [DEFAULT_MANIFEST], host, strict, requireStoredCopy, del };
+  return {
+    manifests: manifests.length > 0 ? manifests : [DEFAULT_MANIFEST],
+    host,
+    strict,
+    requireStoredCopy,
+    deleteForReal,
+  };
 }

@@ -1,9 +1,11 @@
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "fs/promises";
-import { spawn } from "child_process";
+import { execFile, spawn } from "child_process";
 import { tmpdir } from "os";
 import { join } from "path";
 import { gunzip } from "zlib";
 import { promisify } from "util";
+
+const execFileAsync = promisify(execFile);
 
 // Runs the REAL scripts/can-capture/capture.sh under stubbed `ip`, `candump`, `df`,
 // `stdbuf`, `timeout`, `sleep` and `split`, in a temp directory, and reports what it did.
@@ -129,16 +131,25 @@ async function buildStubEnvironment(root: string, scriptPath: string, options: S
   }
 
   const original = options.scriptText ?? (await readFile(scriptPath, "utf-8"));
+  // ⚠️ replaceAll, not replace: a plain string `.replace()` substitutes the FIRST occurrence
+  // only, so a second read of /proc/uptime — timing the floor wait, say — would leave the run
+  // half-rewritten and pointed at the real /proc.
   const rewritten = original
     .replace(/^DIRECTORY=.*$/m, `DIRECTORY=${captureDirectory}`)
-    .replace("/proc/sys/kernel/random/boot_id", bootIdFile)
-    .replace("/proc/uptime", uptimeFile);
-  // ⚠️ Asserted, not assumed. A silent no-op here — after a rename, or after prettier
-  // rewraps a line — would point the run at the real /home/pi/ride-captures and at /proc,
-  // and the check would go green having tested the wrong script.
+    .replaceAll("/proc/sys/kernel/random/boot_id", bootIdFile)
+    .replaceAll("/proc/uptime", uptimeFile);
+  // ⚠️ Asserted in BOTH directions, because "the replacement is present" cannot see a
+  // half-applied rewrite. A silent no-op here — after a rename, or after prettier rewraps a
+  // line — would point the run at the real /home/pi/ride-captures and at /proc, and the check
+  // would go green having tested the wrong script.
   for (const expected of [`DIRECTORY=${captureDirectory}`, bootIdFile, uptimeFile]) {
     if (!rewritten.includes(expected)) {
       throw new Error(`stub-run: rewriting the script for ${expected} did not apply — the check would test nothing`);
+    }
+  }
+  for (const original of ["/proc/sys/kernel/random/boot_id", "/proc/uptime", "DIRECTORY=/home/pi"]) {
+    if (rewritten.includes(original)) {
+      throw new Error(`stub-run: ${original} survived the rewrite — the run would read the real thing`);
     }
   }
   const scriptCopy = join(root, "capture.sh");
@@ -227,12 +238,29 @@ async function readIfPresent(path: string): Promise<string | null> {
   }
 }
 
+/**
+ * Where a tool lives, memoised.
+ *
+ * ⚠️ The memo is not a micro-optimisation: scripts/check-capture-behaviour.ts builds a stub
+ * environment ~13 times and each build resolved 8 tools, so this was ~104 lookups — two
+ * processes each — serialized inside a suite that CI runs on every push, for 8 answers that
+ * cannot change during a run.
+ */
+const resolvedTools = new Map<string, string | null>();
+
 async function which(tool: string): Promise<string | null> {
-  return new Promise(resolve => {
-    const child = spawn("/usr/bin/env", ["sh", "-c", `command -v ${tool}`]);
-    let found = "";
-    child.stdout.on("data", chunk => (found += chunk));
-    child.on("error", () => resolve(null));
-    child.on("close", () => resolve(found.trim() || null));
-  });
+  const remembered = resolvedTools.get(tool);
+  if (remembered !== undefined) {
+    return remembered;
+  }
+  let found: string | null = null;
+  try {
+    found = (await execFileAsync("/bin/sh", ["-c", `command -v ${tool}`])).stdout.trim() || null;
+  } catch (error) {
+    // `command -v` exits non-zero for a tool that is not there, which is an answer rather
+    // than a fault — the caller turns it into a thrown "cannot build the stub environment".
+    console.log(`  (${tool} is not on PATH: ${(error as Error).message.split("\n")[0]})`);
+  }
+  resolvedTools.set(tool, found);
+  return found;
 }

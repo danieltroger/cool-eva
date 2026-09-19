@@ -32,6 +32,8 @@ const TRUNCATED_LINES = 5392;
 
 const failures: string[] = [];
 const workspace = await mkdtemp(join(tmpdir(), "cool-eva-capture-reader-"));
+/** Decoded once: two checks compare against it, and it is 5 558 lines each time. */
+const complete = await readCapture(CLEAN);
 
 try {
   await checkCleanFixture();
@@ -60,7 +62,7 @@ console.log(
 
 /** A whole capture reads back with no warning at all. */
 async function checkCleanFixture(): Promise<void> {
-  const { lines, warnings } = await readCapture(CLEAN);
+  const { lines, warnings } = complete;
   if (lines.length !== CLEAN_LINES) {
     failures.push(`the clean fixture gave ${lines.length} lines, expected ${CLEAN_LINES}`);
   }
@@ -100,7 +102,6 @@ async function checkTruncatedFixture(): Promise<void> {
   // ⚠️ The real invariant, and stronger than the count: what comes back is a PREFIX. A
   // decoder that resynchronised and skipped a member would keep the line count plausible
   // while silently dropping frames out of the middle.
-  const complete = await readCapture(CLEAN);
   const divergence = lines.findIndex((line, index) => line !== complete.lines[index]);
   if (divergence !== -1) {
     failures.push(`the truncated read is not a prefix of the whole capture — it diverges at line ${divergence}`);

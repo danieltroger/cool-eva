@@ -42,10 +42,17 @@ export function declarationBody(source: string, declaration: string): string {
  * prose that EXPLAINS why it does not appear: src/http/fan.ts and src/http/can-restart.ts both
  * write "Access-Control-*" in a comment, and a check that banned the token outright would make
  * the true sentence unwritable in the one file where it belongs most.
+ *
+ * ⚠️ `style: "shell"` exists for scripts/check-can-capture.ts, which found the hazard the hard
+ * way: its bound on the capture's gzip chunk matched the `#` comment that EXPLAINS the bound —
+ * this repo's comments quote the constants they describe — so the assertion could never fire and
+ * a ten-times-larger chunk survived the mutation suite. A parameter here rather than a fourth
+ * inline filter, for the reason this module's own header gives.
  */
-export function withoutCommentLines(source: string): string {
+export function withoutCommentLines(source: string, style: "c" | "shell" = "c"): string {
+  const commentStart = style === "shell" ? /^\s*#/ : /^\s*(\/\/|\*|\/\*)/;
   return source
     .split("\n")
-    .filter(line => !/^\s*(\/\/|\*|\/\*)/.test(line))
+    .filter(line => !commentStart.test(line))
     .join("\n");
 }

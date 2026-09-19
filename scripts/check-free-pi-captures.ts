@@ -30,7 +30,9 @@ if (MINIMUM_AGE_SECONDS !== DAY) {
 }
 
 checkTheHappyPath();
+checkACompressedCapture();
 checkTheLiveCapture();
+checkASizeThatMoved();
 checkTheSupersededScript();
 checkUnknownSourceStates();
 checkTheUntrustworthyClock();
@@ -55,7 +57,7 @@ console.log(
 
 /** The case the whole script exists for: verified, complete, old, unchanged. */
 function checkTheHappyPath(): void {
-  const plan = plan1(row(), remote());
+  const plan = planFor(row(), remote());
   if (plan.deletable.length !== 1) {
     failures.push(`a verified day-old capture was not deletable: ${plan.refusals[0]?.reason ?? "no reason given"}`);
     return;
@@ -80,7 +82,7 @@ function checkTheLiveCapture(): void {
     sourceState: "prefix-of-live-file",
   });
   const onCard = remote({ bytes: 1358842394, mtimeEpochSeconds: NOW - 60 });
-  const plan = plan1(live, onCard);
+  const plan = planFor(live, onCard);
   if (plan.deletable.length !== 0) {
     failures.push(
       "the live capture — verified as a prefix, 976 MB larger on the card, written a minute ago — was deletable"
@@ -91,28 +93,43 @@ function checkTheLiveCapture(): void {
   }
   // Each of the other three must also refuse it ALONE, or the precedence is hiding a hole.
   const completed = { ...live, sourceState: "complete" };
-  if (plan1(completed, onCard).deletable.length !== 0) {
+  if (planFor(completed, onCard).deletable.length !== 0) {
     failures.push("with only source_state corrected, a file 976 MB larger than its proof became deletable");
   }
-  // ⚠️ The size guard needs a case of its own. Every variation above is ALSO caught by
-  // the boot-id or age guards, so a mutation run that deleted the size comparison
-  // survived the whole file until this was added — the other assertions were covering it.
-  const onlySizeMoved = plan1(row(), remote({ bytes: 37908480 + 4096 }));
-  if (onlySizeMoved.deletable.length !== 0) {
-    failures.push(
-      "an old capture from a dead boot was deletable although the card's copy is 4 kB bigger than its proof"
-    );
-  }
-  if (!onlySizeMoved.refusals[0]?.reason.includes("changed since it was verified")) {
-    failures.push(`a size mismatch was refused for the wrong reason: ${onlySizeMoved.refusals[0]?.reason}`);
-  }
-
-  const sizeAgrees = plan1({ ...completed, rawBytes: 1358842394 }, onCard);
+  const sizeAgrees = planFor({ ...completed, rawBytes: 1358842394 }, onCard);
   if (sizeAgrees.deletable.length !== 0) {
     failures.push("a capture written by the boot that is running now became deletable once its size agreed");
   }
   if (!sizeAgrees.refusals[0]?.reason.includes("boot that is running now")) {
     failures.push(`expected the clock-free boot-id guard to catch it; got ${sizeAgrees.refusals[0]?.reason}`);
+  }
+}
+
+/**
+ * ⚠️ The size guard needs a case of its own, on the roster rather than buried inside the live
+ * capture's. Every variation there is ALSO caught by the boot-id or age guards, so a mutation
+ * run that deleted the size comparison survived the whole file until this existed.
+ */
+function checkASizeThatMoved(): void {
+  const moved = planFor(row(), remote({ bytes: 37908480 + 4096 }));
+  if (moved.deletable.length !== 0) {
+    failures.push(
+      "an old capture from a dead boot was deletable although the card's copy is 4 kB bigger than its proof"
+    );
+  }
+  if (!moved.refusals[0]?.reason.includes("changed since it was verified")) {
+    failures.push(`a size mismatch was refused for the wrong reason: ${moved.refusals[0]?.reason}`);
+  }
+}
+
+/**
+ * ⚠️ The `.gz` arm of the allowlist — the shape of EVERY capture from this deploy on, and
+ * until now the one arm of it with no positive case anywhere in this file.
+ */
+function checkACompressedCapture(): void {
+  const compressed = planFor(row({ name: "capture-20260918-185937-bbec514f-00000024.log.gz" }), remote());
+  if (compressed.deletable.length !== 1) {
+    failures.push(`a .log.gz capture was not deletable: ${compressed.refusals[0]?.reason ?? "no reason given"}`);
   }
 }
 
@@ -132,7 +149,7 @@ function checkTheSupersededScript(): void {
     "capture-2026080-184526-1c8fc1e2.log",
   ];
   for (const name of notCaptures) {
-    const plan = plan1(row({ name }), remote());
+    const plan = planFor(row({ name }), remote());
     if (plan.deletable.length !== 0) {
       failures.push(`${name} is deletable, and the allowlist is the only thing that should have stopped it`);
     }
@@ -145,7 +162,7 @@ function checkTheSupersededScript(): void {
 /** A state nobody here has heard of must fail CLOSED, not fall through to deletable. */
 function checkUnknownSourceStates(): void {
   for (const state of ["prefix-of-live-file", "partial", "COMPLETE", "", "complete "]) {
-    const plan = plan1(row({ sourceState: state }), remote());
+    const plan = planFor(row({ sourceState: state }), remote());
     if (plan.deletable.length !== 0) {
       failures.push(`source_state ${JSON.stringify(state)} was treated as proof of a complete copy`);
     }
@@ -157,24 +174,24 @@ function checkUnknownSourceStates(): void {
  * 2060. So the age gate reads both clocks and refuses on either.
  */
 function checkTheUntrustworthyClock(): void {
-  const justUnder = plan1(row(), remote({ mtimeEpochSeconds: NOW - DAY + 60 }));
+  const justUnder = planFor(row(), remote({ mtimeEpochSeconds: NOW - DAY + 60 }));
   if (justUnder.deletable.length !== 0) {
     failures.push("a capture written 23 h 59 m ago was deletable, under a 24 h floor");
   }
-  const justOver = plan1(row(), remote({ mtimeEpochSeconds: NOW - DAY - 60 }));
+  const justOver = planFor(row(), remote({ mtimeEpochSeconds: NOW - DAY - 60 }));
   if (justOver.deletable.length !== 1) {
     failures.push(`a capture written 24 h 1 m ago was refused: ${justOver.refusals[0]?.reason}`);
   }
   // ⚠️ A stale mtime with a fresh NAME: the direction that would otherwise delete. The
   // mtime says two days, the filename says minutes, and the filename wins.
   const freshName = row({ name: `capture-20260919-205500-aaaaaaaa-00000024.log` });
-  const lyingMtime = plan1(freshName, remote({ mtimeEpochSeconds: NOW - 2 * DAY }));
+  const lyingMtime = planFor(freshName, remote({ mtimeEpochSeconds: NOW - 2 * DAY }));
   if (lyingMtime.deletable.length !== 0) {
     failures.push("a capture whose NAME is five minutes old was deletable because its mtime claimed two days");
   }
   // And the 2060 file: a name in the future is never 24 h old, so it refuses forever.
   const fromTheFuture = row({ name: "capture-20600808-220827-0887e861.log" });
-  if (plan1(fromTheFuture, remote({ mtimeEpochSeconds: NOW - 30 * DAY })).deletable.length !== 0) {
+  if (planFor(fromTheFuture, remote({ mtimeEpochSeconds: NOW - 30 * DAY })).deletable.length !== 0) {
     failures.push("the 2060-stamped capture was deletable — a future name must refuse, harmlessly, forever");
   }
 }
@@ -300,6 +317,6 @@ function base(manifestRow: ManifestRow, onCard: RemoteFile) {
   };
 }
 
-function plan1(manifestRow: ManifestRow, onCard: RemoteFile) {
+function planFor(manifestRow: ManifestRow, onCard: RemoteFile) {
   return planCaptureDeletions(base(manifestRow, onCard));
 }

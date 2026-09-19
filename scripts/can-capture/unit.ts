@@ -32,6 +32,17 @@ WantedBy=multi-user.target
 `;
 }
 
+/**
+ * Where the capture unit writes, and the one spelling of it in this repo's TypeScript.
+ *
+ * ⚠️ Not re-typed in scripts/free-pi-captures.ts, which `rm -f`s inside it: scripts/
+ * replay-capture.ts carried a stale `/tmp/ride-captures` for months (check-can-capture.ts
+ * records it), and that was a path that only READ. scripts/check-can-capture.ts asserts
+ * capture.sh's own `DIRECTORY=` against this value, so the shell and the TypeScript cannot
+ * drift apart silently.
+ */
+export const CAPTURE_DIRECTORY = "/home/pi/ride-captures";
+
 /** Where the unit is installed, and what the installer backs up before overwriting. */
 export const CAN_CAPTURE_UNIT_PATH = "/etc/systemd/system/can-capture.service";
 

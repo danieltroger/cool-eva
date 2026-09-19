@@ -73,6 +73,19 @@ export interface DeletionPlan {
  */
 const CAPTURE_NAME = /^capture-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-([0-9a-f]{8})(?:-\d{8})?\.log(?:\.gz)?$/;
 
+/**
+ * Whether a name is one this project's capture unit writes — the deletion allowlist.
+ *
+ * ⚠️ Exported so `scripts/check-capture-behaviour.ts` can feed it the filename the REAL
+ * capture.sh produced under stubs. Without that the allowlist is a fifth hand-written copy
+ * of the name shape with no witness, and the failure is silent in the safe direction: a
+ * name change makes this refuse every new capture, nothing goes red, and the card simply
+ * stops being swept until the disk floor stops the capture too.
+ */
+export function isCaptureName(name: string): boolean {
+  return CAPTURE_NAME.test(name);
+}
+
 /** A capture must be this old by every clock we have before it is a candidate. */
 export const MINIMUM_AGE_SECONDS = 24 * 60 * 60;
 
@@ -87,13 +100,15 @@ export function planCaptureDeletions(input: PlanInput): DeletionPlan {
       absent.push(row.name);
       continue;
     }
+    // `|| !remote` rather than a guard inside refuse(): the compiler then PROVES what a
+    // comment would otherwise have to assert, and the reason string stays in the one place
+    // that can produce it.
     const reason = refuse(row, remote, input);
-    if (reason) {
-      refusals.push({ name: row.name, reason });
+    if (reason || !remote) {
+      refusals.push({ name: row.name, reason: reason ?? "not on the Pi" });
       continue;
     }
-    // Non-null by construction: refuse() returns a reason whenever remote is undefined.
-    deletable.push({ name: row.name, bytes: remote!.bytes, proofSource: row.proofSource });
+    deletable.push({ name: row.name, bytes: remote.bytes, proofSource: row.proofSource });
   }
   return { deletable, refusals, absent };
 }
@@ -120,7 +135,7 @@ function refuse(row: ManifestRow, remote: RemoteFile | undefined, input: PlanInp
     return `source_state is ${JSON.stringify(row.sourceState)}, not "complete" — the copy may be a prefix`;
   }
   if (!remote) {
-    return "not on the Pi";
+    return null;
   }
   if (remote.bytes !== row.rawBytes) {
     return `the Pi's copy is ${remote.bytes} B, the proof covers ${row.rawBytes} B — it has changed since it was verified`;
@@ -182,5 +197,11 @@ function filenameEpochSeconds(parsed: RegExpExecArray): number {
  */
 function dedupeRows(rows: ManifestRow[]): ManifestRow[] {
   const seen = new Set<string>();
-  return rows.filter(row => (seen.has(row.name) ? false : seen.add(row.name) !== undefined));
+  return rows.filter(row => {
+    if (seen.has(row.name)) {
+      return false;
+    }
+    seen.add(row.name);
+    return true;
+  });
 }

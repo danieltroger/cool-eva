@@ -2,7 +2,8 @@ import { execFile } from "child_process";
 import { readFile } from "fs/promises";
 import { fileURLToPath } from "url";
 import { promisify } from "util";
-import { CAN_CAPTURE_UNIT_PATH, canCaptureUnitText } from "./can-capture/unit.ts";
+import { CAN_CAPTURE_UNIT_PATH, CAPTURE_DIRECTORY, canCaptureUnitText } from "./can-capture/unit.ts";
+import { withoutCommentLines } from "./source-blocks.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -23,12 +24,12 @@ const execFileAsync = promisify(execFile);
 const CAPTURE_SCRIPT = new URL("./can-capture/capture.sh", import.meta.url);
 
 const script = await readFile(CAPTURE_SCRIPT, "utf8");
-// ⚠️ For assertions about what the script DOES. Several comments below quote the very
-// constructs they forbid, and a naive `script.includes(…)` then fails on its own prose.
-const code = script
-  .split("\n")
-  .filter(line => !line.trimStart().startsWith("#"))
-  .join("\n");
+// ⚠️ EVERY content assertion below runs against `code`, not `script`. This repo's comments
+// quote the constants and constructs they explain, so a regex over the whole file can match
+// the prose describing an assertion instead of the code it is about — which is exactly how a
+// ten-times-larger gzip chunk survived the mutation suite here. `script` is kept only for the
+// `indexOf` ordering tests, which need offsets into the real file.
+const code = withoutCommentLines(script, "shell");
 const PROJECT_DIR = "/opt/probe-project-dir";
 const unit = canCaptureUnitText(PROJECT_DIR);
 const failures: string[] = [];
@@ -43,6 +44,7 @@ const failures: string[] = [];
 const CANDUMP_INVOCATION = /^\s*(?:if )?stdbuf -oL timeout \d+ candump\b/;
 const candumpLines = script.split("\n").filter(line => CANDUMP_INVOCATION.test(line));
 const candumpLine = candumpLines[0];
+const candumpIndex = candumpLine ? script.indexOf(candumpLine) : -1;
 if (candumpLines.length !== 1) {
   failures.push(
     `capture.sh should hold exactly one \`stdbuf -oL timeout <n> candump\` line; found ${candumpLines.length}. ` +
@@ -172,12 +174,11 @@ if (candumpLine && !/\btimeout\s+28800\b/.test(candumpLine)) {
 
 // The exec has to sit INSIDE the group the redirect covers, or candump writes to the
 // journal while the header line is the only thing in the file.
-const redirectIndex = pipeLine ? script.indexOf(pipeLine) : -1;
+const pipeIndex = pipeLine ? script.indexOf(pipeLine) : -1;
 const groupIndex = script.indexOf('{\n  echo "# boot');
-if (candumpLine && redirectIndex >= 0) {
-  const candumpIndex = script.indexOf(candumpLine);
-  if (!(groupIndex >= 0 && groupIndex < candumpIndex && candumpIndex < redirectIndex)) {
-    failures.push('the candump exec is no longer inside the group redirected to "$OUTPUT"');
+if (candumpIndex >= 0 && pipeIndex >= 0) {
+  if (!(groupIndex >= 0 && groupIndex < candumpIndex && candumpIndex < pipeIndex)) {
+    failures.push("the candump invocation is no longer inside the group piped into split");
   }
 }
 
@@ -235,6 +236,20 @@ if (!namePattern.test(script)) {
   );
 }
 
+// ⚠️ The disk floor's value, sourced from docs/can-capture.md §"The disk floor waits; it
+// does not exit" rather than from the script — scripts/check-capture-behaviour.ts drives the
+// boundary cases off whatever the script declares, and without this the pair would agree with
+// each other at any floor at all, including one too low to protect the ride log.
+const floorMatch = /^FLOOR_KB=(\d+)$/m.exec(code);
+if (!floorMatch) {
+  failures.push("capture.sh no longer declares FLOOR_KB — nothing stops a capture filling the card");
+} else if (Number(floorMatch[1]) < 10 * 1024 * 1024) {
+  failures.push(
+    `the disk floor is ${floorMatch[1]} kB, under the documented 10 GiB. The .celog ride log and journald ` +
+      `share this card and the ride log is the one that must not lose`
+  );
+}
+
 // ⚠️ Never a tmpfs. `docs/pi-agent-brief.md` states the rail — "never capture to /tmp, it
 // is tmpfs and the Pi loses power with the bike" — and this is not hypothetical drift:
 // scripts/replay-capture.ts carried a stale "/tmp/ride-captures" for months, which is
@@ -249,6 +264,12 @@ if (!directory) {
   );
 }
 
+// The shell and the TypeScript must name the same directory: scripts/free-pi-captures.ts
+// deletes inside it, and replay-capture.ts carried a stale copy of this very path for months.
+if (directory && directory !== CAPTURE_DIRECTORY) {
+  failures.push(`capture.sh writes to ${directory} but scripts/can-capture/unit.ts says ${CAPTURE_DIRECTORY}`);
+}
+
 // ⚠️ A healthy DIRECTORY is not the same as the file living in it. Repointing OUTPUT alone
 // at /tmp leaves every other assertion here green while a power cut takes the whole boot's
 // capture with it.
@@ -256,10 +277,7 @@ if (!/^OUTPUT="\$DIRECTORY\//m.test(script)) {
   failures.push('capture.sh no longer builds OUTPUT from "$DIRECTORY" — the file could sit anywhere, tmpfs included');
 }
 
-// can-utils is not a default Raspberry Pi OS package, and `exec … > "$OUTPUT"` truncates the
-// file in the SHELL before exec'ing — so without this guard a missing candump leaves one
-// empty capture per restart in the directory the archive is swept from.
-// Five binaries now, not one: `: > "$OUTPUT"` truncates the file whether or not the rest
+// Five binaries now, not one, and can-utils is not a default Raspberry Pi OS package: `: > "$OUTPUT"` truncates the file whether or not the rest
 // can run, so any of them missing would leave one empty capture per restart — ~17 000 a
 // day at RestartSec=5. mktemp/cat/rm are in the list because candump's exit status travels
 // through them, and a run that cannot report a failure is a capture that stops silently.
@@ -288,8 +306,7 @@ if (!script.includes("/proc/sys/kernel/random/boot_id")) {
 // cannot be bound to an interface that does not exist yet. The two overlap, neither is
 // redundant, and this has to come first.
 const waitIndex = script.indexOf("ip link show can0");
-const candumpIndexForWait = candumpLine ? script.indexOf(candumpLine) : -1;
-if (waitIndex === -1 || candumpIndexForWait === -1 || waitIndex > candumpIndexForWait) {
+if (waitIndex === -1 || candumpIndex === -1 || waitIndex > candumpIndex) {
   failures.push("capture.sh no longer waits for can0 to appear before running candump");
 }
 
