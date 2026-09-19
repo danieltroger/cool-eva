@@ -21,15 +21,16 @@ export const GET: RequestHandler = async () => {
 	const snapshot = await loadSnapshot();
 	const geojson = buildTrackGeoJson(points, breaksFromCharges(snapshot.charges));
 
-	// Handed to MapLibre as a URL rather than an object, so fetch and parse happen off the
-	// main thread. Measured at a wash on total time (1 053 vs 1 115 ms) and strictly better
-	// for responsiveness while it loads.
+	// ⚠️ The page fetches this once and keeps the parsed FeatureCollection, rather than handing
+	// MapLibre the URL. It costs the same request and about the same time (1 053 vs 1 115 ms
+	// measured), and it is what lets the client frame a ride from the track's own geometry —
+	// see boundsOfRange in $lib/track. Without it there is nothing on the client to fit to.
 	return new Response(JSON.stringify(geojson), {
 		headers: { 'content-type': 'application/geo+json', 'cache-control': 'no-store' }
 	});
 };
 
-/** A charge session ends a ride, so the line breaks at the last fix before each one starts. */
+/** A charge session ends a ride, so the line breaks where the session begins. */
 function breaksFromCharges(charges: { startTs: number }[]): TrackBreak[] {
-	return charges.map((charge) => ({ afterTs: charge.startTs, reason: 'charge' as const }));
+	return charges.map((charge) => ({ atTs: charge.startTs, reason: 'charge' as const }));
 }

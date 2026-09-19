@@ -11,7 +11,7 @@
 		chargeGeoJson,
 		waypointGeoJson
 	} from '$lib/mapLayers';
-	import { BAND_EDGES_KMH } from '$lib/track';
+	import { BAND_EDGES_KMH, boundsOfRange, type TrackGeoJson } from '$lib/track';
 	import { bandLabel, BAND_COLOURS, formatDate, formatDateTime, formatDuration } from '$lib/format';
 	import type { ChargeSession, Ride, Waypoint } from '$lib/server/snapshot';
 	import RideList from '$lib/RideList.svelte';
@@ -27,6 +27,8 @@
 	let map: MapLibreMap | null = null;
 	const resizeObservers: ResizeObserver[] = [];
 	let loadError = $state<string | null>(null);
+	let loading = $state<string | null>('Loading rides…');
+	let track: TrackGeoJson | null = null;
 	let rides = $state<Ride[]>([]);
 	let charges = $state<ChargeSession[]>([]);
 	let waypoints = $state<Waypoint[]>([]);
@@ -60,19 +62,32 @@
 
 	async function start() {
 		try {
-			const response = await fetch('/api/summary');
-			if (!response.ok) {
-				throw new Error(`/api/summary returned ${response.status}`);
+			// ⚠️ The FIRST load against a fresh archive builds the snapshot, which measured 23 476 ms
+			// on the real one. Saying so beats a blank page for twenty-three seconds; every later
+			// load reads the cache in about 4 ms and this flicks past.
+			loading = 'Building the ride summary — first run on this archive, about 30 s…';
+			const summaryResponse = await fetch('/api/summary');
+			if (!summaryResponse.ok) {
+				throw new Error(`/api/summary returned ${summaryResponse.status}`);
 			}
-			const summary = await response.json();
+			const summary = await summaryResponse.json();
 			rides = summary.rides;
 			charges = summary.charges;
 			waypoints = summary.waypoints;
+
+			loading = 'Loading the track…';
+			const trackResponse = await fetch('/api/track');
+			if (!trackResponse.ok) {
+				throw new Error(`/api/track returned ${trackResponse.status}`);
+			}
+			track = (await trackResponse.json()) as TrackGeoJson;
+			loading = null;
 		} catch (error) {
 			// Never swallowed: with no summary the map would draw a track and silently claim
 			// there were no rides, charges or waypoints at all.
 			loadError = (error as Error).message;
-			console.error('could not load the ride summary', error);
+			loading = null;
+			console.error('could not load the ride data', error);
 			return;
 		}
 		const darkMode = window.matchMedia('(prefers-color-scheme: dark)');
@@ -113,7 +128,9 @@
 				return;
 			}
 			map.resize();
-			addTrackLayer(map, '/api/track');
+			if (track !== null) {
+				addTrackLayer(map, track);
+			}
 			addChargeLayer(map, charges);
 			addWaypointLayer(map, waypoints);
 			applyRange();
@@ -124,26 +141,39 @@
 		});
 	}
 
+	/**
+	 * Frame whatever is in the current window, using the TRACK's geometry.
+	 *
+	 * ⚠️ Not the charge stops. Rides and charge sessions are disjoint by construction, so a
+	 * window can hold plenty of riding and no placeable stop at all.
+	 */
 	function fitToData() {
-		if (map === null) {
+		fitTo(fromTs, Number.MAX_SAFE_INTEGER, 48, 13, false);
+	}
+
+	function fitTo(
+		from: number,
+		to: number,
+		padding: number,
+		maxZoom: number,
+		animate: boolean
+	): void {
+		if (map === null || track === null) {
 			return;
 		}
-		const bounds = new LngLatBounds();
-		let any = false;
-		for (const feature of chargeGeoJson(visibleCharges).features) {
-			bounds.extend((feature.geometry as Point).coordinates as [number, number]);
-			any = true;
+		const bounds = boundsOfRange(track.features, from, to);
+		if (bounds === null) {
+			// Nothing drawn in this range. Leaving the camera alone is the honest answer; moving
+			// it somewhere arbitrary is not.
+			return;
 		}
-		for (const feature of waypointGeoJson(visibleWaypoints).features) {
-			bounds.extend((feature.geometry as Point).coordinates as [number, number]);
-			any = true;
-		}
-		// The track itself is the better extent, but its features live in the worker; querying
-		// the rendered ones only sees the current viewport, so the stops and waypoints are what
-		// frame the first view. They span the same riding.
-		if (any) {
-			map.fitBounds(bounds, { padding: 48, maxZoom: 13, animate: false });
-		}
+		map.fitBounds(
+			[
+				[bounds[0], bounds[1]],
+				[bounds[2], bounds[3]]
+			],
+			{ padding, maxZoom, animate, duration: animate ? 700 : 0 }
+		);
 	}
 
 	/** A window change is a layer filter and two array slices — no request, no round trip. */
@@ -168,27 +198,12 @@
 		if (map === null) {
 			return;
 		}
-		const stops = visibleCharges.filter(
-			(charge) =>
-				charge.startTs >= ride.startTs && charge.endTs <= ride.endTs && charge.lat !== null
-		);
-		const bounds = new LngLatBounds();
-		let any = false;
-		for (const stop of stops) {
-			bounds.extend([stop.lon as number, stop.lat as number]);
-			any = true;
-		}
-		// With no stop inside the ride there is nothing on the client to frame it by, so the
-		// track filter is narrowed to the ride and the view left where it is rather than flying
-		// somewhere wrong.
 		map.setFilter('track', [
 			'all',
 			['>=', ['get', 'toTs'], ride.startTs],
 			['<=', ['get', 'fromTs'], ride.endTs]
 		]);
-		if (any) {
-			map.fitBounds(bounds, { padding: 80, maxZoom: 12, duration: 700 });
-		}
+		fitTo(ride.startTs, ride.endTs, 80, 14, true);
 		panelOpen = false;
 	}
 </script>
@@ -251,6 +266,10 @@
 				</span>
 			{/each}
 		</div>
+
+		{#if loading !== null}
+			<p class="px-3 py-2 text-xs" style="color: var(--text-dim)">{loading}</p>
+		{/if}
 
 		{#if loadError !== null}
 			<p class="px-3 py-2 text-sm" style="color: #e0523f">

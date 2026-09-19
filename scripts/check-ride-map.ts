@@ -4,7 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { buildMapFixture, DEFAULT_SHAPE, FIXTURE_BASE_MS } from "./map-fixture.ts";
 import { CHARGE_SESSIONS_SQL, RIDES_SQL, TRACK_SQL, WAYPOINTS_SQL } from "../map/src/lib/server/queries.ts";
-import { buildTrackGeoJson, bandOf, GAP_MS, type TrackPoint } from "../map/src/lib/track.ts";
+import { boundsOfRange, buildTrackGeoJson, bandOf, GAP_MS, type TrackPoint } from "../map/src/lib/track.ts";
 
 // The laptop map viewer's SQL and its track builder, against a synthetic ride log.
 //
@@ -70,14 +70,53 @@ function checkTheTrackBuilder(): void {
   const notGapped = pointsAt([0, 1000, GAP_MS - 1000, GAP_MS], 30);
   check("a gap shorter than GAP_MS does not", buildTrackGeoJson(notGapped, []).features.length === 1);
 
-  // A charge session breaks it too, at the last fix before the session starts.
+  // A charge session breaks it too. ⚠️ THE BREAK FALLS BETWEEN TWO POINTS, which is the only
+  // shape that occurs: charge starts come from mains_a/dc_a/fast_dc_target_a rows and track
+  // points from per-second GPS, so on the real archive 0 of 50 charge starts equal a track
+  // timestamp and 48 of 50 land strictly between two. An earlier version of this check handed
+  // the builder a break AT a point's ts — the only case the old exact-match code could catch —
+  // so it passed while the feature never fired on real data.
   const acrossCharge = pointsAt([0, 1000, 2000, 3000], 30);
-  const withCharge = buildTrackGeoJson(acrossCharge, [{ afterTs: 1000, reason: "charge" }]);
-  check("a charge stop splits the line", withCharge.features.length === 2);
+  const between = buildTrackGeoJson(acrossCharge, [{ atTs: 1500, reason: "charge" }]);
+  check("a charge stop BETWEEN two points splits the line", between.features.length === 2);
   check(
-    "and splits it at the named point",
-    withCharge.features[0].geometry.coordinates.length === 2 && withCharge.features[1].geometry.coordinates.length === 2
+    "and splits it there",
+    between.features[0].geometry.coordinates.length === 2 && between.features[1].geometry.coordinates.length === 2
   );
+  const onPoint = buildTrackGeoJson(acrossCharge, [{ atTs: 2000, reason: "charge" }]);
+  check("a break exactly on a point still splits", onPoint.features.length === 2);
+  check(
+    "a break before the first point splits nothing",
+    buildTrackGeoJson(acrossCharge, [{ atTs: -5000, reason: "charge" }]).features.length === 1
+  );
+  check(
+    "a break after the last point splits nothing",
+    buildTrackGeoJson(acrossCharge, [{ atTs: 99999, reason: "charge" }]).features.length === 1
+  );
+  check(
+    "two breaks in one gap split once, not twice",
+    buildTrackGeoJson(acrossCharge, [
+      { atTs: 1200, reason: "charge" },
+      { atTs: 1800, reason: "charge" },
+    ]).features.length === 2
+  );
+
+  // Framing a ride cannot go through charge stops: RIDES_SQL drops fixes logged while plugged
+  // in and starts a new ride at every charge, so rides and sessions are disjoint BY
+  // CONSTRUCTION — 0 of 69 rides on the real archive contain one. The bounds must therefore
+  // come from the track itself, and a ride with no stop in it must still frame.
+  const ridden = buildTrackGeoJson(pointsAt([0, 1000, 2000, 3000, 4000], 30), []);
+  const framed = boundsOfRange(ridden.features, 0, 4000);
+  check("a ride with zero charge stops still yields bounds", framed !== null);
+  check(
+    "and those bounds span the ride's own points",
+    framed !== null && framed[0] < framed[2] && framed[1] < framed[3]
+  );
+  check(
+    "a range with nothing in it yields null rather than a bogus box",
+    boundsOfRange(ridden.features, 10_000_000, 20_000_000) === null
+  );
+  check("a segment straddling the range edge counts", boundsOfRange(ridden.features, 3500, 20_000_000) !== null);
 
   // Crossing a band edge starts a new feature, and the two share the boundary vertex so the
   // drawn line has no hole in it.
@@ -97,7 +136,7 @@ function checkTheTrackBuilder(): void {
   check("an isolated point is dropped rather than emitted as a one-vertex line", isolated.features.length === 0);
   check(
     "no feature ever has fewer than two vertices",
-    [steadyResult, withCharge, banded].every(result =>
+    [steadyResult, between, onPoint, banded].every(result =>
       result.features.every(feature => feature.geometry.coordinates.length >= 2)
     )
   );

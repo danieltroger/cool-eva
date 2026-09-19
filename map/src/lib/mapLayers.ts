@@ -1,5 +1,6 @@
 import { BAND_COLOURS, NO_SPEED_COLOUR } from './format';
 import type { FeatureCollection, Point } from 'geojson';
+import type { TrackGeoJson } from './track';
 import type { Map as MapLibreMap, StyleSpecification } from 'maplibre-gl';
 import type { ChargeSession, Waypoint } from './server/snapshot';
 
@@ -36,9 +37,11 @@ export function blankStyle(background: string): StyleSpecification {
 	};
 }
 
-export function addTrackLayer(map: MapLibreMap, trackUrl: string): void {
-	// A URL, not an object: MapLibre then fetches and parses the 11 MB off the main thread.
-	map.addSource('track', { type: 'geojson', data: trackUrl });
+export function addTrackLayer(map: MapLibreMap, track: TrackGeoJson): void {
+	// The parsed collection, not the URL: the page already holds it so that a ride can be
+	// framed from its own geometry, and fetching it twice to save a structured clone would be
+	// the wrong trade.
+	map.addSource('track', { type: 'geojson', data: track as unknown as FeatureCollection });
 	map.addLayer({
 		id: 'track',
 		type: 'line',

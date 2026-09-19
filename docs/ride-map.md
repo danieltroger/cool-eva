@@ -234,3 +234,19 @@ The full real archive — 17 627 segments over 249 151 points — in the isolate
 Sampled every 30 s during the run: 1 179 → 1 206 → 1 282 → 1 291 MB, then **1 235 MB, and exactly 1 235 MB again after 20 s idle** — it plateaus and gives memory back, so the growth is tile cache rather than a leak. The page's own JS heap is small and stable: **23.8 MB** at first paint and **30.8 MB** after the pan run, during which 14 400 frames were driven.
 
 Attributable to the page: ~294 MB of renderer plus ~291 MB of GPU textures. The rest of the tree — browser process, utility processes, a second renderer — is Chrome's own baseline, there whatever the page does.
+
+## Two features that never fired, caught by reading the diff
+
+Both shipped in the first phase-1 commit, both passed every check, and both were invisible because the failure mode is _nothing happening_.
+
+### Framing a ride by its charge stops cannot work
+
+"Fly to this ride" fitted the camera to the charge stops whose `[startTs, endTs]` lay inside the ride's window. But `RIDES_SQL` drops fixes logged while plugged in **and** starts a new ride at every charge, so **rides and charge sessions are disjoint by construction**. Measured against the real archive: **0 of 69** rides contain a stop. The click changed the track filter and left the camera exactly where it was, every time.
+
+The fix is `boundsOfRange` in `map/src/lib/track.ts` — bounds computed from the track's own segments, those whose `[fromTs, toTs]` _overlaps_ the range rather than being contained by it — which also means a narrow window with no placeable stop in it still frames. That requires the page to hold the parsed GeoJSON rather than handing MapLibre a URL, which costs the same single request.
+
+### An exact-millisecond match that never matched
+
+`buildTrackGeoJson` broke the line where `breakAfter.has(previous.ts)` — an exact match against a point's timestamp. Charge starts come from `mains_a` / `dc_a` / `fast_dc_target_a` rows and track points from per-second GPS, so those two clocks never coincide: **0 of 50** charge starts equalled a `route_track` timestamp, and **48 of 50** fall strictly between two points. The charge break never fired once on real data; the line split on the 30-minute gap rule alone.
+
+⚠️ **The unit check passed because it handed the builder a break at a point's `ts`** — the one case the broken code could catch. A test written against the shape the code expects, rather than the shape the data has, is not a test. The predicate is now "strictly after the previous point, at or before this one", and the check exercises a break between points, on a point, before the first, after the last, and two in one gap. Mutation-tested: restoring the exact-match version turns it red. On the real archive the feature count went 17 627 → **17 654** once it started working.

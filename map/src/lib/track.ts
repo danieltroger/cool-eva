@@ -17,10 +17,17 @@ export interface TrackPoint {
 	speed: number | null;
 }
 
-/** A break in the drawn line, and why it is there. */
+/**
+ * A break in the drawn line, and why it is there.
+ *
+ * ⚠️ `atTs` is an instant, NOT a point's timestamp, and that difference is the whole bug this
+ * replaced. The first version matched against a point's `ts` exactly; charge starts come from
+ * `mains_a`/`dc_a`/`fast_dc_target_a` rows and track points from per-second GPS, so on the real
+ * archive **0 of 50** charge starts equalled a track timestamp and the charge break never fired
+ * once. **48 of 50** fall strictly between two points, which is what is matched now.
+ */
 export interface TrackBreak {
-	/** Timestamp of the last point before the break. */
-	afterTs: number;
+	atTs: number;
 	reason: 'gap' | 'charge';
 }
 
@@ -50,7 +57,8 @@ export function buildTrackGeoJson(points: TrackPoint[], breaks: TrackBreak[]): T
 	if (points.length === 0) {
 		return { type: 'FeatureCollection', features };
 	}
-	const breakAfter = new Set(breaks.map((entry) => entry.afterTs));
+	const breakTimes = breaks.map((entry) => entry.atTs).sort((left, right) => left - right);
+	let nextBreak = 0;
 
 	let coordinates: [number, number][] = [[points[0].lon, points[0].lat]];
 	let band = bandOf(points[0].speed);
@@ -59,7 +67,13 @@ export function buildTrackGeoJson(points: TrackPoint[], breaks: TrackBreak[]): T
 	for (let index = 1; index < points.length; index += 1) {
 		const point = points[index];
 		const previous = points[index - 1];
-		const hardBreak = breakAfter.has(previous.ts) || point.ts - previous.ts > GAP_MS;
+		// A break falls BETWEEN two points: strictly after the previous one, at or before this
+		// one. Both arrays are in time order, so this walks rather than searching.
+		while (nextBreak < breakTimes.length && breakTimes[nextBreak] <= previous.ts) {
+			nextBreak += 1;
+		}
+		const brokenHere = nextBreak < breakTimes.length && breakTimes[nextBreak] <= point.ts;
+		const hardBreak = brokenHere || point.ts - previous.ts > GAP_MS;
 		const nextBand = bandOf(point.speed);
 
 		if (hardBreak) {
@@ -130,4 +144,40 @@ function featureOf(
 		geometry: { type: 'LineString', coordinates },
 		properties: { band, fromTs, toTs }
 	};
+}
+
+/** West, south, east, north — or null when nothing in the range has a position. */
+export type TrackBounds = [number, number, number, number];
+
+/**
+ * The extent of every segment overlapping `[fromTs, toTs]`.
+ *
+ * ⚠️ This exists because framing a ride by its charge stops cannot work: `RIDES_SQL` drops
+ * fixes logged while plugged in and starts a new ride at every charge, so rides and charge
+ * sessions are disjoint BY CONSTRUCTION — measured on the real archive, **0 of 69** rides
+ * contain a stop. The first version of "fly to this ride" fitted bounds to the stops inside it,
+ * found none, and silently left the camera where it was.
+ */
+export function boundsOfRange(
+	features: TrackFeature[],
+	fromTs: number,
+	toTs: number
+): TrackBounds | null {
+	let west = Infinity;
+	let south = Infinity;
+	let east = -Infinity;
+	let north = -Infinity;
+	for (const feature of features) {
+		// Overlap, not containment: a segment straddling either edge is part of what happened.
+		if (feature.properties.toTs < fromTs || feature.properties.fromTs > toTs) {
+			continue;
+		}
+		for (const [lon, lat] of feature.geometry.coordinates) {
+			west = Math.min(west, lon);
+			south = Math.min(south, lat);
+			east = Math.max(east, lon);
+			north = Math.max(north, lat);
+		}
+	}
+	return west === Infinity ? null : [west, south, east, north];
 }
