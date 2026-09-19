@@ -4,7 +4,13 @@ import van from "../vendor/van-1.6.1.js";
 import { GOOD, MUTED, WARN, WATCH } from "../lib/colors.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 import { valueOf } from "../lib/store.js";
-import { applyWriteStatus, ensureWriteStatus, fetchChargeWriteStatus, writesEnabled } from "../lib/charge-write.js";
+import {
+  applyWriteStatus,
+  ensureWriteStatus,
+  fetchChargeWriteStatus,
+  onChargeSessionEnd,
+  writesEnabled,
+} from "../lib/charge-write.js";
 
 const { button, div, input } = van.tags;
 
@@ -33,6 +39,19 @@ const message = van.state("");
 /** Whether the last command was accepted AND read back. Null when nothing has been tried. */
 const lastResult = van.state(/** @type {boolean | null} */ (null));
 
+// ⚠️ A charge ENDING hides this control, which is the opposite of what it is for. The session
+// derive calls applyWriteStatus(null) on the live→dead edge (../lib/charge-write.js), and this
+// control's visibility reads that state — so pressing "Stop the DC charge" on this very tab, or
+// pulling the cable, made the card vanish until the tab was switched away and back. The other
+// three controls use this hook to CLEAR themselves; this one uses it to come back.
+onChargeSessionEnd(() => {
+  // The verdict belonged to the charge that just ended. The typed value does not — this control
+  // is not session-scoped, so a cable coming out is no reason to wipe what someone was typing.
+  message.val = "";
+  lastResult.val = null;
+  void ensureWriteStatus();
+});
+
 export const ARMED_KEY = "charge-soc-limit";
 
 /**
@@ -46,8 +65,14 @@ export const ARMED_KEY = "charge-soc-limit";
  */
 const READ_ARMED_KEY = "charge-soc-limit-read";
 
-/** The highest percentage the command byte carries. Matches MAX_SOC_LIMIT_PCT on the Pi. */
-const MAX_PCT = 100;
+/**
+ * The highest percentage the command byte carries.
+ *
+ * ⚠️ It must equal `MAX_SOC_LIMIT_PCT` in src/can/charge-soc-command.ts, which is the number the
+ * Pi's own builder throws outside — a browser file cannot import a .ts module, so the equality is
+ * asserted by scripts/check-charge-soc-limit.ts rather than claimed here.
+ */
+export const MAX_PCT = 100;
 
 /**
  * The control, or an empty node when it must not be offered.
@@ -79,7 +104,10 @@ function CurrentValue() {
     }
     return div(
       { style: `color:${limit === 0 ? WATCH : GOOD}` },
-      limit === 0 ? "No limit — the bike charges to full." : `Stops charging at ${limit} %.`
+      // ⚠️ "Set to stop at", not "Stops at". Everything else in this feature is careful to say the
+      // VCU STORES the limit rather than that the bike stops there — nobody has observed the limit
+      // being reached — and this is the line a rider reads every time, not just after a command.
+      limit === 0 ? "No limit — the bike charges to full." : `Set to stop at ${limit} %.`
     );
   });
 }

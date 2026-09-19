@@ -28,13 +28,24 @@ const CAPTURED_DASH_WRITES = [
   { at: "2026-09-19 16:56:31.189895", percent: 80, requestHex: "AC FF 50 00 00 00 00 00" },
 ];
 
-/** The 0x121 replies that followed them, plus the two read replies of 2026-09-19 20:52/20:53Z. */
+/**
+ * Every `0x121` reply this bike has been seen to give on this opcode: the three that followed the
+ * dash's own menu confirms, and all SEVEN of 2026-09-19 off the Pi's capture — six answers to
+ * bit-7-clear reads, plus the bike's own answer to our write. Ten in total, and the point of
+ * listing every one is the zero tail: `00 00 00 00 00` in all ten is what the decoder's b3-b7
+ * gate rests on, and §4 below asserts that of the fixture itself before using it as evidence.
+ */
 const CAPTURED_REPLIES = [
   { at: "2026-08-02 21:02:15.800319", percent: 40, hex: "2C FF 28 00 00 00 00 00" },
   { at: "2026-09-19 16:56:23.069038", percent: 0, hex: "2C FF 00 00 00 00 00 00" },
   { at: "2026-09-19 16:56:31.194391", percent: 80, hex: "2C FF 50 00 00 00 00 00" },
-  { at: "2026-09-19T20:52:04.627Z read", percent: 80, hex: "2C FF 50 00 00 00 00 00" },
-  { at: "2026-09-19T20:53:26.726Z read", percent: 90, hex: "2C FF 5A 00 00 00 00 00" },
+  { at: "2026-09-19 22:52:04.616607 read", percent: 80, hex: "2C FF 50 00 00 00 00 00" },
+  { at: "2026-09-19 22:52:05.636818 read", percent: 80, hex: "2C FF 50 00 00 00 00 00" },
+  { at: "2026-09-19 22:53:07.895079 read-before", percent: 80, hex: "2C FF 50 00 00 00 00 00" },
+  { at: "2026-09-19 22:53:07.908354 the bike answering our write", percent: 90, hex: "2C FF 5A 00 00 00 00 00" },
+  { at: "2026-09-19 22:53:07.944784 read-back", percent: 90, hex: "2C FF 5A 00 00 00 00 00" },
+  { at: "2026-09-19 22:53:26.710840 read", percent: 90, hex: "2C FF 5A 00 00 00 00 00" },
+  { at: "2026-09-19 22:53:27.735862 read", percent: 90, hex: "2C FF 5A 00 00 00 00 00" },
 ];
 
 /**
@@ -123,6 +134,11 @@ for (const good of [0, 1, 50, MAX_SOC_LIMIT_PCT]) {
 // ── §4 the decoder reads the bike's replies back ───────────────────────────
 
 for (const reply of CAPTURED_REPLIES) {
+  // The fixture's OWN tail, asserted before it is used as evidence for the gate that reads it: a
+  // fixture edited to carry a non-zero b3 would otherwise quietly weaken §5's whole argument.
+  if (!reply.hex.endsWith("00 00 00 00 00")) {
+    failures.push(`§4 ${reply.at}: the fixture's own b3-b7 tail is not zero ("${reply.hex}")`);
+  }
   const decoded = decodeChargeSocLimitFrame(bytesOf(reply.hex));
   const value = decoded.find(entry => entry.key === "charge_soc_limit_pct")?.value;
   if (value !== reply.percent) {

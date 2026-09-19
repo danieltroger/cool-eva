@@ -44,7 +44,7 @@ The request carries `b2 = 0` and the reply comes back with the stored percentage
 
 `0x18` answers `3c 01 4b`, which reads equally well as _value 60, min 1, max 75_ or as _value, limit-in-force, ceiling_ — the repo says both, in [dash-command-channel.md](dash-command-channel.md) and `src/can/charge-setpoint.ts`, and **the archive cannot separate them**: all 105 archived current-limit replies carry `b3 = 0x01`, which both readings predict.
 
-`0x2C` needs no answer to that question. Its replies are `2C FF <pct> 00 00 00 00 00` — b3 through b7 zero in all three archived frames and all four live replies — so it states no range at all, and the control is bounded by a declared 0–100 rather than by anything the bike says.
+`0x2C` needs no answer to that question. Its replies are `2C FF <pct> 00 00 00 00 00` — b3 through b7 zero in **all ten observations**: the three archived dash frames, and the seven replies of 2026-09-19 (six answers to bit-7-clear reads, plus the bike's answer to the write). So it states no range at all, and the control is bounded by a declared 0–100 rather than by anything the bike says.
 
 ## One frame, not the pair — the `0x121` is the bike's answer
 
@@ -65,13 +65,13 @@ So `0x120` carries every request and `0x121` carries every reply, and injecting 
 
 ### Reply latency, and where the slow first read actually was
 
-The bike answers in **1.3–7.7 ms** — inside the 4.217–10.122 ms window the dash's own exchanges occupy, and never slow. The probe that reported a "99 ms cold read" was measuring **its own send path**: it stamped 20:52:04.528Z before `channel.send`, and the kernel put the frame on the wire at 22:52:04.611064 CEST — 83 ms later, on a Pi Zero 2 W with a cold code path. The bike then answered in 5.54 ms. Measure this channel's latency from the capture, not from the sender.
+The bike answers in **1.310–7.664 ms**, mean 3.672 — the seven exchanges of 2026-09-19, measured request-to-reply off the capture: 5.543, 3.319, 1.586, 7.664, 3.252, 1.310, 3.033 ms. Never slow, and straddling the 4.217–10.122 ms window the dash's own exchanges occupy. The probe that reported a "99 ms cold read" was measuring **its own send path**: it stamped 20:52:04.528Z before `channel.send`, and the kernel put the frame on the wire at 22:52:04.611064 CEST — 83 ms later, on a Pi Zero 2 W with a cold code path. The bike then answered in 5.54 ms. Measure this channel's latency from the capture, not from the sender.
 
 ## What is proven, and what is not
 
 ✅ The VCU **stores** the value. Written 90, read back 90 by two independent programs, the second 18 s later — well past the 40 ms settle, so not a pending display value.
 
-❌ That the bike **stops** at that percentage is **not proven**, and nothing in this repo has ever observed the limit being reached: the 2026-08-02 capture ends 7 s after SOC reached its 40 % limit and the following capture is a different boot with a stepped clock. Only a charge that gets there settles it. Every message the dashboard shows says so rather than implying a guarantee.
+❌ That the bike **stops** at that percentage is **not proven**, and nothing in this repo has ever observed the limit being reached: the 2026-08-02 capture ends **6.125 s** after SOC reached its 40 % limit (39 → 40 at 21:07:52.970126, the last `0x300` still `charger_enabled = 1` at 21:07:59.095608) and the following capture is a different boot with a stepped clock. Only a charge that gets there settles it. Every message the dashboard shows says so rather than implying a guarantee.
 
 ## The signal, and its three sources
 
@@ -85,7 +85,7 @@ Nothing in the first version consumes it as rider intent, so the third is harmle
 
 ## Gating
 
-`charge-soc-limit` and `charge-soc-limit-read` take the **bike-state gate** (`serviceActionPolicy` in `src/vcu/write-runner.ts`), unlike charge-current and charge-stop, which are exempt. The exemption exists because an automatic controller issues charge-current mid-charge and a flapping refusal would break its loop; these two are one-off human presses, where a transient refusal costs a second press. And the gate is the coverage they want: `scripts/check-service-gate-charging.ts` has it passing both a stationary unplugged bike and a stationary AC-charging one, and refusing while the bike moves — which the exemption would not.
+`charge-soc-limit` and `charge-soc-limit-read` take the **bike-state gate** (`serviceActionPolicy` in `src/vcu/write-runner.ts`), unlike charge-current and charge-stop, which are exempt. The exemption exists because an automatic controller issues charge-current mid-charge and a flapping refusal would break its loop; these two are one-off human presses, where a transient refusal costs a second press. And the gate is the coverage they want: `scripts/check-service-gate-charging.ts` has it passing a stationary bike with the **drive down**, unplugged, and a stationary AC-charging one, and refusing while the bike moves — which the exemption would not. ⚠️ A stationary but ENERGIZED bike with the drive up is refused too, so "unplugged" alone overstates it.
 
 The limit is a **stored** setting. Dash-command writes persist past the sender exiting, and the 80 % set at 16:56 was still in force hours later, so "unplug and it forgets" — charge-current's safety floor — is not available here. What is available, and what no other write action has, is the read-back. That is the argument for it being confirmed-and-reversible rather than behind the red fold; it is written out beside `REVERSIBLE_CONFIRMED` in `scripts/check-irreversible-actions.ts`.
 

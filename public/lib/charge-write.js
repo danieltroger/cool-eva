@@ -126,6 +126,8 @@ let statusAskedAt = /** @type {number | null} */ (null);
 /** ⚠️ Paced from the START of a request, so without this a request that HANGS stacks another every
  * STATUS_RETRY_MS — twelve a minute at the far end of a garage. `fetch` has no timeout of its own. */
 let statusInFlight = false;
+/** The mount fetch's own in-flight flag. ⚠️ Deliberately NOT the derive's — see ensureWriteStatus. */
+let mountFetchInFlight = false;
 van.derive(() => {
   const type = liveChargeType();
   const live = type !== null;
@@ -240,20 +242,28 @@ export function applyWriteStatus(payload) {
  * gate, which passes a parked unplugged bike). Without this, that control could only ever appear
  * while charging, which is the one time you are least likely to be setting it.
  *
- * ⚠️ NOT a poll, and it must not become one: at most one request per mount of the Charge tab, and
- * only when no status is held. ⚠️ It also stands down while anything is ARMED, because
- * fetchChargeWriteStatus() clears `armed` — a fetch landing mid-gesture would silently disarm
- * another control's primed button. The next mount tries again.
+ * ⚠️ NOT a poll, and it must not become one: at most one request per mount of the Charge tab and
+ * per charge ending, and only when no status is held. Unlike the derive it has no STATUS_RETRY_MS
+ * pacing, so against a Pi that is not answering every Charge-tab visit costs one more request —
+ * serialised by `statusInFlight`, never concurrent, and bounded by how often a thumb can switch
+ * tabs. ⚠️ It also stands down while anything is ARMED, because fetchChargeWriteStatus() clears
+ * `armed` and a fetch landing mid-gesture would silently disarm another control's primed button.
+ *
+ * ⚠️ It READS the derive's `statusInFlight` and never writes it, which is the whole reason it keeps
+ * a flag of its own. A session ending force-clears that flag, so a mount fetch settling afterwards
+ * would clear it out from under the derive's next live request — the concurrent-request failure the
+ * derive's own `statusAskedAt === mark` guard exists to prevent. The two flags mean the two paths
+ * can overlap at most once, in the window where a tab is opened exactly as a charge begins.
  */
 export async function ensureWriteStatus() {
-  if (writeStatus.rawVal !== null || statusInFlight || armed.rawVal !== "") {
+  if (writeStatus.rawVal !== null || statusInFlight || mountFetchInFlight || armed.rawVal !== "") {
     return;
   }
-  statusInFlight = true;
+  mountFetchInFlight = true;
   try {
     await fetchChargeWriteStatus();
   } finally {
-    statusInFlight = false;
+    mountFetchInFlight = false;
   }
 }
 

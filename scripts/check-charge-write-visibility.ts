@@ -116,7 +116,11 @@ const viewsDirectory = join(dirname(fileURLToPath(import.meta.url)), "..", "publ
 /** Each view read once; §3, §4 and §5 all index this rather than re-reading it five times. */
 const viewSources = new Map(
   await Promise.all(
-    ["charge-current.js", "charge-stop.js"].map(
+    // ⚠️ THE THIRD CONTROL BELONGS HERE. charge-soc-limit.js rides the same charge-write.js
+    // machinery on the same tab; left out, §3, §4 and §5 went green on it by absence. It passes
+    // all three today, which is exactly why adding it is free — and why a later edit that broke
+    // one of them would have shipped silently.
+    ["charge-current.js", "charge-soc-limit.js", "charge-stop.js"].map(
       async view => [view, await readFile(join(viewsDirectory, view), "utf-8")] as const
     )
   )

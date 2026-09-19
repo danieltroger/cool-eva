@@ -621,8 +621,9 @@ export function serviceActionPolicy(kind: ServiceWriteRequest["kind"]): ServiceA
     // rather than inherited. The exemption above exists because an AUTOMATIC controller issues
     // charge-current mid-charge and a flapping refusal breaks its loop; the SOC limit is a one-off
     // human press, where a transient refusal costs a second press. And the gate is exactly the
-    // coverage this needs: scripts/check-service-gate-charging.ts has it passing both
-    // stationary-unplugged and stationary-AC-charging, and refusing while the bike moves — which
+    // coverage this needs: scripts/check-service-gate-charging.ts has it passing
+    // stationary-DRIVE-DOWN-unplugged and stationary-AC-charging, and refusing while the bike moves
+    // — and refusing a stationary ENERGIZED bike with the drive up, which "unplugged" overstates —
     // `bikeStateGateApplies: false` would not. It is the read-service-stamp row for that reason.
     case "charge-soc-limit":
     case "charge-soc-limit-read":

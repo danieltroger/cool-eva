@@ -32,8 +32,8 @@ export function decodeChargeSocLimitFrame(data: Buffer): DecodedValue[] {
   if (data.length !== 8 || data[0] !== CHARGE_SOC_LIMIT_OPCODE || data[1] !== SEPARATOR_BYTE) {
     return [];
   }
-  // ⚠️ b3-b7 are gated to zero on MEASUREMENT, not on the analogy with 0x18. The three archived
-  // dash frames and the four live replies read on 2026-09-19 all carry `2C FF <pct> 00 00 00 00 00`
+  // ⚠️ b3-b7 are gated to zero on MEASUREMENT, not on the analogy with 0x18. All TEN observations
+  // — three archived dash frames and seven replies on 2026-09-19 — carry `2C FF <pct> 00 00 00 00 00`
   // — so unlike 0x18's `3c 01 4b` (which reads as value/min/max, or as flag/ceiling; the archive
   // cannot separate the two), 0x2C states no range at all. A tail in use would mark a different
   // layout on a command id that carries nine opcodes, and showing a fabricated percentage next to

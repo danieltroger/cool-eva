@@ -172,6 +172,11 @@ check(
 // in `literalKeys` above, and taking it from both lists would be one control counted twice.
 const ALL_KEYS = [
   CHARGE_CURRENT_KEY,
+  CHARGE_SOC_LIMIT_KEY,
+  // ⚠️ The SOC control's READ button is a second control in the same file with a key of its own,
+  // spelled out because it is a module-local const rather than an export — the same reason the
+  // read-service-stamp line below is spelled out. §5 counts CONTROLS, and this file has two.
+  "charge-soc-limit-read",
   CHARGE_STOP_KEY,
   ...literalKeys,
   // The read-only action, spelled out because nothing exports it — it is the one ActionButton

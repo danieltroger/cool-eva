@@ -32,7 +32,14 @@ export interface ChargeSocLimitRequest {
  */
 const WRITE_SETTLE_MS = 40;
 
-/** How long to wait for the VCU's reply before giving up. It answered in 5 ms warm, 99 ms cold. */
+/**
+ * How long to wait for the VCU's reply before giving up.
+ *
+ * ⚠️ The bike answers in single-digit milliseconds — 1.586, 3.252 and 7.664 ms in the capture of
+ * this Pi's own exchanges. The 500 is for the SEND path, not the reply: the probe's first
+ * `channel.send` took 83 ms to reach the wire on this Zero 2 W. A "99 ms cold reply" measured
+ * from the sender was that send, and docs/dash-command-0x2c-charge-limit.md says so.
+ */
 const READ_TIMEOUT_MS = 500;
 
 /** How often to look for the reply while waiting. */
@@ -76,33 +83,64 @@ export async function performChargeSocLimit(
   }
   await delay(WRITE_SETTLE_MS);
   const after = await readSocLimit(channel);
-  const took = after === request.percent;
+  // ⚠️ THREE outcomes, not two. A read that TIMED OUT says nothing about the write — the frame went
+  // out and the READ got no answer — so calling it a mismatch would assert the opposite of what is
+  // known, in the one sentence a person standing at the bike acts on. Same distinction this whole
+  // feature keeps between "the VCU stores it" and "the bike stops there".
+  const outcome: SocLimitOutcome =
+    after === null ? "unverified" : after === request.percent ? "written" : "read-back-mismatch";
   await recordAttempt(
     context,
     "charge-soc-limit",
-    took ? "written" : "read-back-mismatch",
+    outcome,
     request.percent,
     before,
     after,
-    took
-      ? `${request.percent} % on 0x120 (${sent.hex}); read back from the VCU's store as ${after} %`
-      : `asked for ${request.percent} %, the VCU's store reads ${describe(after)} afterwards`
+    NOTE[outcome](request.percent, before, after, sent.hex)
   );
   return {
     ok: true,
     result: {
       action: "charge-soc-limit",
-      status: took ? "written" : "read-back-mismatch",
-      message: took
-        ? `The bike will now stop charging at ${request.percent} % (was ${describe(before)}). ` +
-          "Read back from the VCU's own store, not an echo. ⚠️ That it STORES the limit is not proof it " +
-          "stops there — nothing here has watched the limit be reached — so check the dash and the next full charge."
-        : `Asked for ${request.percent} %, but the VCU's store reads ${describe(after)}. Nothing was changed as asked; ` +
-          "the bike may have clamped or ignored the value. Do not retry blind — read it on the bike's own screen first.",
-      succeeded: took,
+      status: outcome,
+      message: MESSAGE[outcome](request.percent, before, after),
+      succeeded: outcome === "written",
     },
   };
 }
+
+/**
+ * What a write turned out to be. ⚠️ TOTAL over the two tables below, so a fourth outcome is a type
+ * error rather than a missing sentence discovered on the bike.
+ */
+type SocLimitOutcome = "written" | "read-back-mismatch" | "unverified";
+
+/** The three outcomes, as the audit note each one earns. */
+const NOTE: Record<
+  SocLimitOutcome,
+  (percent: number, before: number | null, after: number | null, hex: string) => string
+> = {
+  written: (percent, _before, after, hex) =>
+    `${percent} % on 0x120 (${hex}); read back from the VCU's store as ${after} %`,
+  "read-back-mismatch": (percent, _before, after) =>
+    `asked for ${percent} %, the VCU's store reads ${describe(after)} afterwards`,
+  unverified: (percent, _before, _after, hex) =>
+    `${percent} % on 0x120 (${hex}); the write went out and the read-back got NO answer within ${READ_TIMEOUT_MS} ms — unknown, not failed`,
+};
+
+/** The same three, phrased for the page. */
+const MESSAGE: Record<SocLimitOutcome, (percent: number, before: number | null, after: number | null) => string> = {
+  written: (percent, before) =>
+    `The bike will now stop charging at ${percent} % (was ${describe(before)}). ` +
+    "Read back from the VCU's own store, not an echo. ⚠️ That it STORES the limit is not proof it " +
+    "stops there — nothing here has watched the limit be reached — so check the dash and the next full charge.",
+  "read-back-mismatch": (percent, _before, after) =>
+    `Asked for ${percent} %, but the VCU's store reads ${describe(after)}. Nothing was changed as asked; ` +
+    "the bike may have clamped or ignored the value. Do not retry blind — read it on the bike's own screen first.",
+  unverified: percent =>
+    `The ${percent} % command went out, but the read-back got no answer. ⚠️ This does NOT mean it failed — ` +
+    "the write and the read are separate frames and only the read went unanswered. Read it again, or check the bike's own screen.",
+};
 
 /**
  * Reads the SOC charge limit without changing it. Bit 7 clear, one frame.

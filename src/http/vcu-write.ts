@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "http";
+import { MAX_SOC_LIMIT_PCT } from "../can/charge-soc-command.ts";
 import type {
   ServiceWriteRequest,
   ServiceWriteResult,
@@ -256,6 +257,14 @@ export function parseWriteRequest(
       const percent = parseNumber(params.get("pct"));
       if (percent === null) {
         return { ok: false, reason: `pct must be a whole number, not ${params.get("pct") ?? "(nothing)"}` };
+      }
+      // ⚠️ Range-checked HERE, unlike charge-current, and the difference is that this action reads
+      // the bike BEFORE it writes: without this, `pct=200` parses, the runner puts a read frame on
+      // the bus and waits half a second, and only then does the pure builder throw. A request that
+      // can never succeed must not cost a frame. And it is a 400 by this file's own rule above —
+      // the request itself is wrong and re-sending it unchanged will always be wrong.
+      if (percent < 0 || percent > MAX_SOC_LIMIT_PCT) {
+        return { ok: false, reason: `pct must be between 0 and ${MAX_SOC_LIMIT_PCT}, not ${percent}` };
       }
       // ⚠️ 0 is "no limit" and REMOVES the bike's battery protection rather than moving it, so it
       // gets its own word instead of being one keystroke away on the numeric path. Every other

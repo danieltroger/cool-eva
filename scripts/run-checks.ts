@@ -250,6 +250,20 @@ const CHECKS: SelfCheck[] = [
       "percentage, with 0 needing a word of its own",
   },
   {
+    script: "scripts/check-charge-soc-limit-runner.ts",
+    covers:
+      "the SOC charge-limit ACTIONS against a stand-in bike — the round trip the pure check cannot reach. " +
+      "⚠️ Its §2 is the one that matters: the read-back's monotonic mark is taken immediately before the READ " +
+      "transmit, never before the write, because the bike answers a write with a 0x121 of its own a few " +
+      "milliseconds later and a mark taken earlier is satisfied by that answer — a read-back that cannot " +
+      "fail. The stand-in answers the write synchronously inside send(), earlier than any real bus could, so " +
+      "a mark in the wrong place fails with certainty rather than under load. Also: a matching reply reads " +
+      "`written`, a different one `read-back-mismatch`, and NO reply reads `unverified` rather than claiming " +
+      "nothing changed — the write went out and only the read went unanswered; both actions refuse a bike " +
+      "that is not awake without transmitting anything; and the dashboard's own percentage ceiling equals " +
+      "the Pi's, which no build step can enforce across a .js/.ts boundary",
+  },
+  {
     script: "scripts/check-freeze-frame-values.ts",
     covers:
       "the whole-bike freeze-frame read and what is shown from it: that a 0x18 list carrying padding, a component " +

@@ -434,11 +434,42 @@ check(
   seqBounds !== null && afterMany !== null && afterMany >= seqBounds[0] && afterMany <= seqBounds[1]
 );
 
+// ── §7 the mount fetch: one request, and only when there is nothing to show ───────────
+//
+// ⚠️ The SOC-limit control does not ride the charge-session edge — the Pi gates it on the
+// bike-state gate, which passes a parked unplugged bike — so it asks for the status itself when
+// the Charge tab mounts. That is the one call in this module allowed to fetch off a session edge,
+// and it must stay a fetch rather than becoming a poll: this section is the whole specification.
+const { ensureWriteStatus, applyWriteStatus } = await import("../public/lib/charge-write.js");
+const { armed } = await import("../public/lib/arming.js");
+
+applyWriteStatus(null);
+armed.val = "";
+const beforeMount = fetches;
+await ensureWriteStatus();
+check("§7 a mount with no status held fetches once", fetches === beforeMount + 1);
+await ensureWriteStatus();
+await ensureWriteStatus();
+check("§7 and mounting again while a status IS held costs nothing", fetches === beforeMount + 1);
+
+applyWriteStatus(null);
+armed.val = "charge-stop";
+await ensureWriteStatus();
+check(
+  "§7 ⚠️  a mount while another control is ARMED does not fetch — fetchChargeWriteStatus clears `armed`, " +
+    "so it would disarm a primed button mid-gesture",
+  fetches === beforeMount + 1
+);
+armed.val = "";
+await ensureWriteStatus();
+check("§7 …and it fetches once the gesture is over", fetches === beforeMount + 2);
+
 if (failures.length > 0) {
   console.error(`\nFAILED: ${failures.length} assertion(s)`);
   process.exit(1);
 }
 console.log(
   "\n✓ the charge tab fetches once per settled verdict and never per heartbeat, notices a settle it " +
-    "did not command, survives the byte wrap, and retries a failed session-start status once per heartbeat"
+    "did not command, survives the byte wrap, retries a failed session-start status once per heartbeat, " +
+    "and the SOC-limit control's mount fetch asks once, never while a status is held, and never mid-gesture"
 );
