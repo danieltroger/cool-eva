@@ -68,12 +68,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
 const PORT = 80;
 const CAN_IFACE = "can0";
-const WIFI_IFACE = process.env.WIFI_IFACE ?? "wlan0";
-// The phone hotspot's SSID, which is what `wifi_hotspot_seen` and `wifi_network` are
-// measured against. Named here rather than in src/wifi/ so a different phone is one
-// environment variable, not an edit. docs/wifi.md.
-const WIFI_HOTSPOT_SSID = process.env.WIFI_HOTSPOT_SSID ?? "orange-juice";
-const WIFI_ENABLED = process.env.WIFI_ENABLED !== "0";
+
 // Where the menu's "Update" button runs `git pull`: this checkout, wherever it is.
 // ROOT is derived from the running file's own path, so it is the right directory
 // whatever the checkout is named or wherever it was moved to.
@@ -83,6 +78,8 @@ const UPDATE_DIR = process.env.UPDATE_DIR ?? ROOT;
 //   COOLANT_ENABLED=0 → skip the MAX31865 probes (a bike with no watercooling loop)
 //   FAN_ENABLED=1 → ⚠️ OPT IN. Drive the IBT-2 cooling fan and route /fan (docs/fan-control.md)
 //   CAN_ENABLED=0 → skip CAN entirely (coolant only)
+//   WIFI_ENABLED=0 → skip the wifi poller and its fault dumps (docs/wifi.md)
+//   WIFI_IFACE / WIFI_HOTSPOT_SSID → which radio, and which SSID counts as "the hotspot"
 //   OBD_ENABLED=0 → passive/listen-only: decode broadcasts but don't TX OBD polls
 //   ELOCK_ENABLED=0 → skip the one-shot keys-paired read from the E-LOCK ECU
 //   BLE_ENABLED=0 / BLE_MAC=… → skip the Connectivity Hub link, or pin its address
@@ -105,6 +102,11 @@ const RIDE_LOG_DIR = process.env.RIDE_LOG_DIR ?? join(ROOT, "ride-logs");
 const CUSTOM_BMS_CONFIG = process.env.CUSTOM_BMS_CONFIG === "1";
 const VCU_PARAM_DIR = process.env.VCU_PARAM_DIR ?? join(ROOT, "vcu-params");
 const SERVICE_MODE_ENABLED = process.env.SERVICE_MODE_ENABLED !== "0";
+const WIFI_ENABLED = process.env.WIFI_ENABLED !== "0";
+const WIFI_IFACE = process.env.WIFI_IFACE ?? "wlan0";
+// What `wifi_hotspot_seen` and `wifi_network` are measured against. An environment
+// variable rather than a constant in src/wifi/ so a different phone is not an edit.
+const WIFI_HOTSPOT_SSID = process.env.WIFI_HOTSPOT_SSID ?? "orange-juice";
 // ⚠️ OPT IN, NOT OPT OUT — `=== "1"`, not `!== "0"`, and the asymmetry is deliberate:
 // every flag above except FAN_ENABLED turns something off, these two turn something on,
 // so a Pi nobody has told about it cannot change a motorcycle's EEPROM. Separate

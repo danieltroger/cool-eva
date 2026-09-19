@@ -33,6 +33,8 @@ export interface WifiListReading {
   signalPercent: number | null;
   /** Whether the hotspot's SSID appears in the list at all, active or not. */
   hotspotSeen: boolean;
+  /** Which of the three networks the active row is. */
+  network: WifiNetwork;
 }
 
 /**
@@ -75,7 +77,12 @@ export function parseDeviceState(terse: string): WifiLinkState {
  * half says it alone.
  */
 export function parseWifiList(terse: string, hotspotSsid: string): WifiListReading {
-  const reading: WifiListReading = { activeSsid: null, signalPercent: null, hotspotSeen: false };
+  const reading: WifiListReading = {
+    activeSsid: null,
+    signalPercent: null,
+    hotspotSeen: false,
+    network: WIFI_NETWORK.NONE,
+  };
   for (const line of terse.split("\n")) {
     if (line.trim() === "") {
       continue;
@@ -90,6 +97,7 @@ export function parseWifiList(terse: string, hotspotSsid: string): WifiListReadi
     }
     if (active === "yes" && reading.activeSsid === null) {
       reading.activeSsid = ssid;
+      reading.network = ssid === hotspotSsid ? WIFI_NETWORK.HOTSPOT : WIFI_NETWORK.OTHER;
       const percent = Number.parseInt(signal, 10);
       reading.signalPercent = Number.isFinite(percent) ? percent : null;
     }
@@ -118,14 +126,6 @@ export function parseWifiProfileNames(terse: string): string[] {
     }
   }
   return names;
-}
-
-/** Which of the three networks the active SSID is, or NONE. */
-export function classifyNetwork(activeSsid: string | null, hotspotSsid: string): WifiNetwork {
-  if (activeSsid === null) {
-    return WIFI_NETWORK.NONE;
-  }
-  return activeSsid === hotspotSsid ? WIFI_NETWORK.HOTSPOT : WIFI_NETWORK.OTHER;
 }
 
 /**
@@ -163,7 +163,7 @@ function fieldAfter(terse: string, key: string): string | null {
   for (const line of terse.split("\n")) {
     const fields = splitTerseFields(line);
     if (fields.length >= 2 && fields[0] === key) {
-      return fields.slice(1).join(":");
+      return fields[1];
     }
   }
   return null;

@@ -3,14 +3,7 @@ import { record } from "../can/signals.ts";
 import { monotonicNow, since } from "../monotonic.ts";
 import { NMCLI, runCommand } from "./nmcli.ts";
 import { writeWifiDump } from "./dump.ts";
-import {
-  WIFI_LINK_STATE,
-  classifyNetwork,
-  parseDeviceState,
-  parseWifiList,
-  type WifiLinkState,
-  type WifiListReading,
-} from "./parse.ts";
+import { WIFI_LINK_STATE, parseDeviceState, parseWifiList, type WifiLinkState, type WifiListReading } from "./parse.ts";
 
 // Publishes what the wifi is doing as `wifi_*` signals. Not a bus signal — nothing on
 // can0 reports it — so it cannot ride in on a frame; it is `nmcli` state read on a timer,
@@ -31,8 +24,15 @@ import {
  */
 export const WIFI_POLL_MS = 8_000;
 
-/** Per-call ceiling. Short, because a hung nmcli must not stack polls on top of each other. */
-const POLL_TIMEOUT_MS = 5_000;
+/**
+ * Per-call ceiling, and it has to clear an arithmetic bar rather than just be "short".
+ *
+ * ⚠️ TWO of these run per cycle, sequentially, so 2 × this must stay INSIDE WIFI_POLL_MS.
+ * At 5 s — what this was — a worst cycle is 10 s against an 8 s interval, the guard below
+ * skips a tick, and two skipped ticks compound into a 16 s hole. At 3 s a timing-out cycle
+ * still cannot skip one. A healthy cycle is ~282 ms. docs/wifi.md §2 has the rest.
+ */
+export const WIFI_POLL_TIMEOUT_MS = 3_000;
 
 /**
  * How long "disconnected, with the hotspot in range" must hold before a dump is taken.
@@ -62,7 +62,7 @@ export interface WifiMonitor {
 export function startWifiMonitor(
   iface: string,
   hotspotSsid: string,
-  dumpDirectory: string | null,
+  dumpDirectory: string,
   intervalMs = WIFI_POLL_MS
 ): WifiMonitor {
   let lastReported: string | null = null;
@@ -71,6 +71,11 @@ export function startWifiMonitor(
   // the fault timer or make it fire instantly. ../monotonic.ts.
   let faultSince: number | null = null;
   let lastDumpAt: number | null = null;
+  // ⚠️ Its OWN flag, and the dump is never awaited by the poll. A dump runs a dozen
+  // children and can take a minute; held inside `polling` it would skip poll after poll
+  // and leave the group reading dark on /status through exactly the fault it is dumping —
+  // defeating WIFI_POLL_MS's contract by a path no check can see.
+  let dumping = false;
 
   const poll = async (): Promise<void> => {
     if (polling) {
@@ -90,20 +95,26 @@ export function startWifiMonitor(
       if (!inFault) {
         faultSince = null;
       } else {
-        if (faultSince === null) {
-          faultSince = monotonicNow();
-        }
-        if (
-          dumpDirectory !== null &&
-          shouldDumpNow(since(faultSince), lastDumpAt === null ? null : since(lastDumpAt))
-        ) {
+        faultSince ??= monotonicNow();
+        if (!dumping && shouldDumpNow(since(faultSince), lastDumpAt === null ? null : since(lastDumpAt))) {
           lastDumpAt = monotonicNow();
-          const outcome = await writeWifiDump(dumpDirectory, iface, uptime());
-          console.log(
-            outcome.path === null
-              ? "wifi-diag: the fault dump could not be written — see the warning above"
-              : `wifi-diag: wrote ${outcome.path} (${outcome.problems} command(s) unhappy)`
-          );
+          dumping = true;
+          void writeWifiDump(dumpDirectory, iface, uptime())
+            .then(written => {
+              console.log(
+                written === null
+                  ? "wifi-diag: the fault dump could not be written — see the warning above"
+                  : `wifi-diag: wrote ${written}`
+              );
+            })
+            .catch(error => {
+              // writeWifiDump does not throw by design; if it ever does, an escaped
+              // rejection ends the process and takes the CAN logging with it.
+              console.warn("wifi-diag: the fault dump threw:", error);
+            })
+            .finally(() => {
+              dumping = false;
+            });
         }
       }
     } catch (error) {
@@ -129,18 +140,14 @@ export function startWifiMonitor(
  * means, and the one claim the 2026-09-19 diagnosis turns on. An unrecorded signal goes
  * stale and its group reads dark, which is the honest answer to "we cannot say".
  */
-export function signalsToRecord(
-  linkState: WifiLinkState | null,
-  reading: WifiListReading | null,
-  hotspotSsid: string
-): [string, number][] {
+export function signalsToRecord(linkState: WifiLinkState | null, reading: WifiListReading | null): [string, number][] {
   const signals: [string, number][] = [];
   if (linkState !== null) {
     signals.push(["wifi_link_state", linkState]);
   }
   if (reading !== null) {
     signals.push(["wifi_hotspot_seen", reading.hotspotSeen ? 1 : 0]);
-    signals.push(["wifi_network", classifyNetwork(reading.activeSsid, hotspotSsid)]);
+    signals.push(["wifi_network", reading.network]);
   }
   return signals;
 }
@@ -163,26 +170,25 @@ export function shouldDumpNow(faultHeldMs: number, msSinceLastDump: number | nul
  * hotspot is sitting in the scan list.
  */
 async function pollOnce(iface: string, hotspotSsid: string, report: (line: string) => void): Promise<boolean> {
-  const device = await runCommand(NMCLI, ["-t", "-f", "GENERAL.STATE", "device", "show", iface], POLL_TIMEOUT_MS);
+  const device = await runCommand(NMCLI, ["-t", "-f", "GENERAL.STATE", "device", "show", iface], WIFI_POLL_TIMEOUT_MS);
   const list = await runCommand(
     NMCLI,
     ["-t", "-f", "ACTIVE,SSID,SIGNAL", "device", "wifi", "list", "--rescan", "no"],
-    POLL_TIMEOUT_MS
+    WIFI_POLL_TIMEOUT_MS
   );
 
-  if (device.exitCode !== 0) {
-    // Not fatal and not silent. A missing nmcli, a stopped NetworkManager and an
-    // interface that does not exist all land here, and all three mean the same thing to
-    // a reader of the ride log: we cannot say, so do not claim.
-    console.warn(`wifi: ${device.command} exited ${device.exitCode}: ${device.stderr.trim()}`);
-  }
-  if (list.exitCode !== 0) {
-    console.warn(`wifi: ${list.command} exited ${list.exitCode}: ${list.stderr.trim()}`);
+  for (const result of [device, list]) {
+    if (result.exitCode !== 0) {
+      // Not fatal and not silent. A missing nmcli, a stopped NetworkManager and an
+      // interface that does not exist all land here, and all three mean the same to a
+      // reader of the ride log: we cannot say, so do not claim.
+      console.warn(`wifi: ${result.command} exited ${result.exitCode}: ${result.stderr.trim()}`);
+    }
   }
 
   const linkState = device.exitCode === 0 ? parseDeviceState(device.stdout) : null;
   const reading = list.exitCode === 0 ? parseWifiList(list.stdout, hotspotSsid) : null;
-  for (const [key, value] of signalsToRecord(linkState, reading, hotspotSsid)) {
+  for (const [key, value] of signalsToRecord(linkState, reading)) {
     record(key, value);
   }
 

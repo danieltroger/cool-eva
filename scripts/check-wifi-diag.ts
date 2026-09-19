@@ -6,16 +6,21 @@
 // src/wifi/diag.ts are pure, and that is the whole reason they are separate from
 // src/wifi/nmcli.ts and src/wifi/collect.ts.
 
+import { mkdtemp, readFile, rm } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
 import { SIGNALS } from "../src/can/registry.ts";
+import { durabilityCounters } from "../src/storage/durable.ts";
 import { FRESH_MS } from "../src/http/status.ts";
 import { REDACTED, buildWifiDump, redactSecrets } from "../src/wifi/diag.ts";
 import { JOURNAL_MAX_LINES, readOnlyCommands } from "../src/wifi/collect.ts";
 import { MAX_OUTPUT_BYTES, runCommand } from "../src/wifi/nmcli.ts";
-import { WIFI_DIAG_KEEP, dumpFilename, dumpsToRemove } from "../src/wifi/dump.ts";
+import { WIFI_DIAG_KEEP, dumpFilename, dumpsToRemove, writeDumpText } from "../src/wifi/dump.ts";
 import {
   WIFI_DUMP_MIN_GAP_MS,
   WIFI_FAULT_DUMP_AFTER_MS,
   WIFI_POLL_MS,
+  WIFI_POLL_TIMEOUT_MS,
   describeState,
   shouldDumpNow,
   signalsToRecord,
@@ -23,7 +28,6 @@ import {
 import {
   WIFI_LINK_STATE,
   WIFI_NETWORK,
-  classifyNetwork,
   parseDeviceState,
   parseWifiList,
   parseWifiProfileNames,
@@ -107,10 +111,7 @@ const onHome = parseWifiList(REAL_WIFI_LIST, "orange-juice");
 check("the active row's SSID is read", onHome.activeSsid === "Martin Router King");
 check("…and its signal", onHome.signalPercent === 54);
 check("the hotspot is correctly absent from the home list", onHome.hotspotSeen === false);
-check(
-  "on another network, wifi_network is OTHER",
-  classifyNetwork(onHome.activeSsid, "orange-juice") === WIFI_NETWORK.OTHER
-);
+check("on another network, wifi_network is OTHER", onHome.network === WIFI_NETWORK.OTHER);
 
 // The pathological reading: the hotspot IS in range and we are NOT on it. This is the
 // shape of the 2026-09-19 failure and the reason `wifi_hotspot_seen` exists at all.
@@ -121,13 +122,10 @@ const strandedList = [
 const stranded = parseWifiList(strandedList, "orange-juice");
 check("stranded: the hotspot is seen", stranded.hotspotSeen === true);
 check("stranded: nothing is active", stranded.activeSsid === null);
-check("stranded: wifi_network is NONE", classifyNetwork(stranded.activeSsid, "orange-juice") === WIFI_NETWORK.NONE);
+check("stranded: wifi_network is NONE", stranded.network === WIFI_NETWORK.NONE);
 
 const onHotspot = parseWifiList("yes:orange-juice:88:2437 MHz", "orange-juice");
-check(
-  "on the hotspot, wifi_network is HOTSPOT",
-  classifyNetwork(onHotspot.activeSsid, "orange-juice") === WIFI_NETWORK.HOTSPOT
-);
+check("on the hotspot, wifi_network is HOTSPOT", onHotspot.network === WIFI_NETWORK.HOTSPOT);
 check("…and hotspot_seen is set by the active row too", onHotspot.hotspotSeen === true);
 check("an empty list says nothing rather than something", parseWifiList("", "orange-juice").hotspotSeen === false);
 
@@ -315,11 +313,19 @@ console.log("\n6. bounds, resolved the way the dashboard resolves them");
 
 // ⚠️ No `wifi_signal_pct`: see src/can/registry.ts. A percent key has no honest value
 // while disconnected, so it would drag this group's /status liveness through the fault.
-const WIFI_KEYS = ["wifi_link_state", "wifi_network", "wifi_hotspot_seen"];
-for (const key of WIFI_KEYS) {
-  // ⚠️ unit and group come from the REGISTRY ENTRY and are never written out here. A
-  // check that spells `boundsFor(key, "", "wifi")` stays green after the registry moves
-  // the key into `diag` — which is the single mutation it exists to catch.
+//
+// ⚠️ THE RAIL IS `fallbackBoundsFor`, NOT `boundsFor`. boundsFor() consults the generated
+// per-key table FIRST, so once a key has an entry there the group argument is inert —
+// `boundsFor("wifi_link_state", "", "diag")` still answers [0, 3]. What the `wifi` group
+// actually buys is that these keys reach NO fallback rule, which is what makes
+// generate-signal-bounds.ts refuse an undeclared one. Resolved from the registry entry so
+// a group move turns this red rather than only turning the generator red.
+const WIFI_KEYS: [key: string, topCode: number][] = [
+  ["wifi_link_state", 3],
+  ["wifi_network", 2],
+  ["wifi_hotspot_seen", 1],
+];
+for (const [key, topCode] of WIFI_KEYS) {
   const signal = SIGNALS.find(entry => entry.key === key);
   check(`${key} is registered`, signal !== undefined);
   if (signal === undefined) {
@@ -327,35 +333,16 @@ for (const key of WIFI_KEYS) {
   }
   check(`…in a group of its own, not a BOOLEAN_GROUP`, signal.group === "wifi");
   check(`…and polled`, signal.source === "poll");
-}
-
-// ⚠️ THE RAIL IS `fallbackBoundsFor`, NOT `boundsFor`. boundsFor() consults the
-// generated per-key table FIRST, so once a key has an entry there the group argument is
-// inert — `boundsFor("wifi_link_state", "", "diag")` still answers [0, 3]. What the
-// `wifi` group actually buys is that these keys reach NO fallback rule, which is what
-// makes generate-signal-bounds.ts refuse an undeclared one. Asserted from the registry
-// entry so a group move turns it red here rather than only in the generator.
-for (const key of WIFI_KEYS) {
-  const signal = SIGNALS.find(entry => entry.key === key);
   check(
-    `${key}'s group reaches no fallback rule, so the generator must refuse it undeclared`,
-    signal !== undefined && fallbackBoundsFor(signal.key, signal.unit, signal.group) === null
+    `…whose group reaches no fallback rule, so the generator must refuse it undeclared`,
+    fallbackBoundsFor(signal.key, signal.unit, signal.group) === null
   );
+  // The consequence: the whole range each code can take is plausible. `wifi_link_state`
+  // reaching 3 is an ordinary connected bike; under `diag`'s [0, 1] gate with its bounds
+  // dropped, the dashboard would draw it as a dead sensor.
+  check(`…and ${key} = ${topCode} is plausible`, isPlausible(signal.key, topCode, signal.unit, signal.group));
 }
 
-// And the consequence, stated separately: the whole range each code can take is plausible.
-// `wifi_link_state` reaching 3 is an ordinary connected bike; under `diag`'s [0, 1] gate
-// the dashboard would draw it as a dead sensor.
-const linkStateSignal = SIGNALS.find(entry => entry.key === "wifi_link_state");
-check(
-  "wifi_link_state = 3 (connected) is plausible",
-  linkStateSignal !== undefined && isPlausible(linkStateSignal.key, 3, linkStateSignal.unit, linkStateSignal.group)
-);
-const networkSignal = SIGNALS.find(entry => entry.key === "wifi_network");
-check(
-  "wifi_network = 2 (some other network) is plausible",
-  networkSignal !== undefined && isPlausible(networkSignal.key, 2, networkSignal.unit, networkSignal.group)
-);
 check(
   "no percent signal joined the group, which would read dark through the fault",
   SIGNALS.every(entry => entry.group !== "wifi" || entry.unit === "")
@@ -375,10 +362,17 @@ console.log("\n7. the poll interval against FRESH_MS");
 // previous shape of this idea in check-hold-gestures.ts was green for every value of
 // either number until it was made to read the real one.
 check(`the wifi poll (${WIFI_POLL_MS} ms) is faster than FRESH_MS (${FRESH_MS} ms)`, WIFI_POLL_MS < FRESH_MS);
-// A margin, not just an inequality: one cycle costs ~282 ms of wall time on the Pi and a
-// cold nmcli is slower still, so a poll that only just clears the window would read dark
-// whenever the machine is busy.
-check("…with at least a second of margin for a slow cycle", FRESH_MS - WIFI_POLL_MS >= 1000);
+// ⚠️ THE SECOND HALF, and the one that was missing. Two nmcli calls run per cycle, so a
+// cycle can last 2 × the per-call ceiling; if that exceeds the interval the re-entrancy
+// guard skips a tick, and two skipped ticks compound into a hole past FRESH_MS. At the
+// 5 s ceiling this file shipped with, the worst gap was 16 s against a 10 s window.
+check(
+  `a timing-out cycle (2 × ${WIFI_POLL_TIMEOUT_MS} ms) still cannot skip a tick`,
+  2 * WIFI_POLL_TIMEOUT_MS < WIFI_POLL_MS
+);
+// And a margin over the HEALTHY cycle, which is what the contract is really about. A
+// cycle that times out is allowed to read dark: then we genuinely cannot say.
+check("…with a second of margin over the healthy cycle", FRESH_MS - WIFI_POLL_MS >= 1000);
 
 // --- 8. The dump directory cannot grow without end -----------------------------------
 
@@ -424,27 +418,24 @@ console.log("\n10. a failed read claims nothing");
 
 // ⚠️ The rule the whole diagnosis turns on. `wifi_hotspot_seen = 0` means "the hotspot is
 // not in range"; a failed nmcli means "we cannot say", and those are opposite claims.
-const goodRead = { activeSsid: null, signalPercent: null, hotspotSeen: true };
-check(
-  "a good read records all three",
-  signalsToRecord(WIFI_LINK_STATE.DISCONNECTED, goodRead, "orange-juice").length === 3
-);
+const goodRead = { activeSsid: null, signalPercent: null, hotspotSeen: true, network: WIFI_NETWORK.NONE };
+check("a good read records all three", signalsToRecord(WIFI_LINK_STATE.DISCONNECTED, goodRead).length === 3);
 check(
   "a failed LIST read records neither hotspot_seen nor network",
-  signalsToRecord(WIFI_LINK_STATE.DISCONNECTED, null, "orange-juice").every(([key]) => key === "wifi_link_state")
+  signalsToRecord(WIFI_LINK_STATE.DISCONNECTED, null).every(([key]) => key === "wifi_link_state")
 );
 check(
   "…and specifically never writes a 0 for hotspot_seen",
-  !signalsToRecord(WIFI_LINK_STATE.DISCONNECTED, null, "orange-juice").some(([key]) => key === "wifi_hotspot_seen")
+  !signalsToRecord(WIFI_LINK_STATE.DISCONNECTED, null).some(([key]) => key === "wifi_hotspot_seen")
 );
 check(
   "a failed DEVICE read records no link state",
-  !signalsToRecord(null, goodRead, "orange-juice").some(([key]) => key === "wifi_link_state")
+  !signalsToRecord(null, goodRead).some(([key]) => key === "wifi_link_state")
 );
-check("both reads failing records nothing at all", signalsToRecord(null, null, "orange-juice").length === 0);
+check("both reads failing records nothing at all", signalsToRecord(null, null).length === 0);
 check(
   "every key it emits is one the registry declares",
-  signalsToRecord(WIFI_LINK_STATE.CONNECTED, goodRead, "orange-juice").every(([key]) =>
+  signalsToRecord(WIFI_LINK_STATE.CONNECTED, goodRead).every(([key]) =>
     SIGNALS.some(entry => entry.key === key && entry.group === "wifi")
   )
 );
@@ -465,9 +456,34 @@ check(
 );
 check(
   "the sentence worth having",
-  describeState(WIFI_LINK_STATE.DISCONNECTED, { activeSsid: null, signalPercent: null, hotspotSeen: true }) ===
-    "NOT connected, and the hotspot IS in range"
+  describeState(WIFI_LINK_STATE.DISCONNECTED, goodRead) === "NOT connected, and the hotspot IS in range"
 );
+
+console.log("\n12. the dump survives a key-off cut");
+
+// ⚠️ The reason this file is under the checkout and not in /tmp is that the bike cuts
+// 12 V at key-off. A plain writeFile leaves up to 30 s of ext4 delalloc in which i_size
+// says the bytes are there and the blocks read NUL (docs/power-cuts.md) — so the one
+// failure this location was chosen to survive would be the one its write path does not.
+// Driven through writeDumpText, the real call site, for the reason
+// check-power-cut-durability.ts §4 gives: calling the helper directly would only assert
+// that the helper calls itself.
+const durabilityDir = await mkdtemp(join(tmpdir(), "wifi-diag-check-"));
+const beforeWrite = durabilityCounters();
+const writtenPath = await writeDumpText(durabilityDir, Date.UTC(2026, 8, 19, 10, 48, 52), "a dump");
+const afterWrite = durabilityCounters();
+check("the dump is written", writtenPath !== null);
+check("…through the durable path, flushing the file", afterWrite.flushes - beforeWrite.flushes === 1);
+check("…and the directory that now holds it", afterWrite.directorySyncs - beforeWrite.directorySyncs === 1);
+check("…and it reads back", writtenPath !== null && (await readFile(writtenPath, "utf8")) === "a dump");
+
+// replaceFileDurably renames from `<name>.txt.tmp`, which does not end in `.txt` — so
+// without the orphan arm a cut between write and rename leaves a file the prune can
+// never reap, for the life of the card.
+check("a `.txt.tmp` orphan is reaped", dumpsToRemove(["a.txt", "b.txt.tmp"], 20).includes("b.txt.tmp"));
+check("…even when nothing else is over the cap", dumpsToRemove(["b.txt.tmp"], 20).length === 1);
+check("…and a real dump under the cap still is not", !dumpsToRemove(["a.txt", "b.txt.tmp"], 20).includes("a.txt"));
+await rm(durabilityDir, { recursive: true, force: true });
 
 console.log("");
 if (failures > 0) {

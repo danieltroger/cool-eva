@@ -66,14 +66,13 @@ export const SIGNALS: SignalDef[] = [
   // What the wifi is doing, polled from `nmcli` (src/wifi/status.ts, docs/wifi.md). Same
   // shape as `can_link` above and a DIFFERENT group on purpose.
   //
-  // ⚠️ `wifi` and not `diag`, for two independent reasons. (1) public/lib/bounds-rules.js
-  // has `BOOLEAN_GROUPS = new Set(["controls", "diag", "buttons"])`, so a code signal in
-  // `diag` with a blank unit is silently gated to [0, 1] and `wifi_link_state = 3` would
-  // render as a DEAD SENSOR. In a group with no fallback rule, scripts/generate-signal-bounds.ts
-  // instead REFUSES a key that declares neither `bounds` nor `unbounded` — it fails closed,
-  // so a future wifi_* cannot arrive ungated. (2) A group of its own keeps a Pi with no
-  // NetworkManager from dragging `diag`'s liveness down, the argument the `fan` group above
-  // already makes for itself.
+  // ⚠️ `wifi` and not `diag`, for two reasons — and NOT for the one that looks obvious.
+  // `diag` is a BOOLEAN_GROUP in public/lib/bounds-rules.js, but a declared `bounds` beats
+  // that gate (boundsFor consults the generated per-key table first), and `abs_warning_lamp`
+  // below is a 0-3 code living in `diag` on exactly that basis. What the group really buys:
+  // (1) it reaches no fallback rule at all, so generate-signal-bounds.ts REFUSES a future
+  // wifi_* declaring neither `bounds` nor `unbounded` — it fails closed rather than gating
+  // wrongly; (2) a Pi with no NetworkManager cannot drag `diag`'s /status liveness down.
   { key: "wifi_link_state", unit: "", group: "wifi", source: "poll", bounds: [0, 3] },
   { key: "wifi_network", unit: "", group: "wifi", source: "poll", bounds: [0, 2] },
   // The decisive one: "the hotspot is in range AND we are not on it" is the shape of the

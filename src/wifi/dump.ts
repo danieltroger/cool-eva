@@ -1,5 +1,6 @@
-import { mkdir, readdir, unlink, writeFile } from "fs/promises";
+import { mkdir, readdir, unlink } from "fs/promises";
 import { join } from "path";
+import { replaceFileDurably } from "../storage/durable.ts";
 import { collectWifiState } from "./collect.ts";
 import { buildWifiDump } from "./diag.ts";
 
@@ -14,39 +15,42 @@ import { buildWifiDump } from "./diag.ts";
  */
 export const WIFI_DIAG_DIRNAME = "wifi-diag";
 
-/** How many dumps survive. A stuck gesture must not be able to fill the card. */
+/** How many dumps survive. A fault that never clears must not fill the card. */
 export const WIFI_DIAG_KEEP = 20;
 
-export interface WifiDumpOutcome {
-  path: string | null;
-  /** Commands that exited non-zero, timed out or were truncated. */
-  problems: number;
-  error: Error | null;
+/**
+ * Takes a dump and writes it. Answers with where it went, or null if it could not.
+ *
+ * ⚠️ The failure is LOGGED as well as returned: the caller is a fault timer with nobody
+ * watching a terminal, and a diagnostic that fails silently is worse than none. The
+ * dump's own header already lists which commands went wrong, so nothing counts them twice.
+ */
+export async function writeWifiDump(directory: string, iface: string, uptimeSeconds: number): Promise<string | null> {
+  const results = await collectWifiState(iface);
+  const at = Date.now();
+  return writeDumpText(directory, at, buildWifiDump({ at, uptimeSeconds, results }));
 }
 
 /**
- * Takes a dump and writes it. Answers with where it went rather than throwing.
+ * The write itself, separate so a check can drive it with no radio and no `nmcli`.
  *
- * ⚠️ A failure to WRITE is still reported through the return value and logged, never
- * swallowed: the caller is a handlebar gesture with nobody watching a terminal, and the
- * only other way the rider learns anything is the signal the caller records afterwards.
+ * ⚠️ `replaceFileDurably` and NOT `writeFile`, which is what this used to be. The reason
+ * the file lives under the checkout rather than in /tmp is that the bike cuts 12 V at
+ * key-off — and ext4's `delalloc` leaves up to 30 s in which `i_size` says the bytes are
+ * there and the blocks read NUL (docs/power-cuts.md). A plain write would have made the
+ * one failure this location was chosen to survive the one its write path does not.
  */
-export async function writeWifiDump(directory: string, iface: string, uptimeSeconds: number): Promise<WifiDumpOutcome> {
-  const results = await collectWifiState(iface);
-  const problems = results.filter(result => result.exitCode !== 0 || result.timedOut || result.truncated).length;
-  const at = Date.now();
-  const text = buildWifiDump({ at, uptimeSeconds, results });
+export async function writeDumpText(directory: string, at: number, text: string): Promise<string | null> {
   const path = join(directory, `${dumpFilename(at)}.txt`);
   try {
     await mkdir(directory, { recursive: true });
-    await writeFile(path, text, "utf8");
+    await replaceFileDurably(path, text);
   } catch (error) {
-    const failure = error instanceof Error ? error : new Error(String(error));
-    console.warn(`wifi-diag: could not write ${path}:`, failure.message);
-    return { path: null, problems, error: failure };
+    console.warn(`wifi-diag: could not write ${path}:`, error instanceof Error ? error.message : error);
+    return null;
   }
   await pruneOldDumps(directory);
-  return { path, problems, error: null };
+  return path;
 }
 
 /**
@@ -70,8 +74,12 @@ export function dumpFilename(at: number): string {
  * chronological one — no `stat()` per file and no clock read to decide what is old.
  */
 export function dumpsToRemove(names: readonly string[], keep: number): string[] {
+  // ⚠️ `.tmp` first, unconditionally. replaceFileDurably writes `<name>.txt.tmp` and
+  // renames; a cut between the two leaves one behind, and it does not end in `.txt` — so
+  // without this line the orphans are the one thing the prune can never reap.
+  const orphans = names.filter(name => name.endsWith(".tmp"));
   const dumps = names.filter(name => name.endsWith(".txt")).sort();
-  return dumps.slice(0, Math.max(0, dumps.length - keep));
+  return [...orphans, ...dumps.slice(0, Math.max(0, dumps.length - keep))];
 }
 
 /** Keeps the newest WIFI_DIAG_KEEP dumps and removes the rest. */

@@ -268,6 +268,9 @@ Not in the unit file — `scripts/setup-service.ts` rewrites that every time it 
 | `CAN_ENABLED` | on | `0` skips CAN altogether — coolant probes only. |
 | `OBD_ENABLED` | on | `0` makes the bus **listen-only**: broadcasts are decoded, nothing is ever transmitted. Costs you the OBD-II PIDs and the trouble-code list. |
 | `ELOCK_ENABLED` | on | `0` skips the one-shot keys-paired read from the E-LOCK ECU at startup. |
+| `WIFI_ENABLED` | on | `0` skips the wifi poller and the diagnostic dumps it writes. The poller records what the radio is doing as `wifi_*` signals and, after two minutes of _disconnected while the hotspot is in range_, writes a full state dump to `wifi-diag/` — because the Pi can only be asked about its wifi over the wifi that is failing. See [`docs/wifi.md`](docs/wifi.md). |
+| `WIFI_IFACE` | `wlan0` | Which radio the poller watches. |
+| `WIFI_HOTSPOT_SSID` | `orange-juice` | The SSID that counts as _the_ hotspot, which is what `wifi_hotspot_seen` and `wifi_network` are measured against. Change it for a different phone. |
 | `BLE_ENABLED` | on | `0` skips the Bluetooth link to the Connectivity Hub (torque/power, odometer, vehicle state). GPS also arrives over CAN, so you keep position either way. |
 | `BLE_MAC` | discover | Pin the hub's address instead of finding it by advertised name. |
 | `GPS_TIME_SYNC` | on | `0` never steps the system clock from satellite time. The Pi has no RTC, so leave it on unless you have another time source. A step needs five consecutive satellite readings that agree — see [Clock](#clock). |

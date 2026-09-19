@@ -114,7 +114,7 @@ Every activation failure logged on 2026-09-19, and whether NetworkManager retrie
 
 ## 2. What is recorded now
 
-`src/wifi/status.ts` polls `nmcli` and publishes four signals. They are log-on-change, so a healthy boot writes a handful of rows and then nothing.
+`src/wifi/status.ts` polls `nmcli` and publishes three signals. They are log-on-change, so a healthy boot writes a handful of rows and then nothing.
 
 | signal              | meaning                                                             |
 | ------------------- | ------------------------------------------------------------------- |
@@ -138,7 +138,11 @@ It is readable during the silence, which is not obvious — a blocked profile mi
 
 `src/http/status.ts` counts a signal live only if it arrived within `FRESH_MS` = 10 s, and `live === 0` is what a reader of that summary filters on to find a dead source. **A `source: "poll"` signal polled slower than that window reads as dark on a healthy Pi.** `can_link` already does this at 15 s and gets away with it only because it sits in a `diag` group of three dozen other signals that dilute the fraction; a three-signal group has nothing to hide behind. So the poll is faster than the window rather than an exception to it, and `FRESH_MS` is exported so the check can pin the two together.
 
-Measured on this Pi Zero 2 W (quad-core): ten sequential cycles of the two `nmcli` calls cost 1.289 s user + 0.560 s sys, i.e. **~185 ms of CPU per cycle — 2.3 % of one core, ~0.6 % of the machine.** ⚠️ That is a **floor**: a `/proc/stat` delta over the same run showed 3.72 CPU-seconds, which includes NetworkManager's own D-Bus work and the service's 100 Hz baseline and was not separated out.
+⚠️ **The per-call timeout is part of that same contract, which is not obvious.** Two `nmcli` calls run per cycle, sequentially — so a cycle can last twice the per-call ceiling, and if that exceeds the poll interval the re-entrancy guard skips a tick. Two skipped ticks compound into a gap past `FRESH_MS`. At the 5 s ceiling this shipped with, the worst gap was **16 s against a 10 s window**: the module would have defeated its own contract by a path no check could see. It is 3 s, `2 × 3 < 8` is asserted, and a cycle that genuinely times out is _allowed_ to read dark — then we cannot say, and saying so is right.
+
+⚠️ **The dump is never awaited by the poll either**, for the same reason one level up: a dump runs a dozen children and can take a minute, and held inside the poll's in-flight flag it would skip poll after poll during exactly the fault it is dumping.
+
+Measured on this Pi Zero 2 W (quad-core): ten sequential cycles of the two `nmcli` calls cost 1.289 s user + 0.560 s sys, i.e. **~185 ms of CPU per cycle — 2.3 % of one core, ~0.6 % of the machine**, or about 33 minutes of CPU and 21 600 `nmcli` executions a day. Almost all of it is fork+exec: `nmcli` links libnm, glib and D-Bus, so the two calls cost about the same and dropping either would halve the feature. ⚠️ That is a **floor**: a `/proc/stat` delta over the same run showed 3.72 CPU-seconds, which includes NetworkManager's own D-Bus work and the service's 100 Hz baseline and was not separated out.
 
 ## 3. The dump
 
@@ -146,7 +150,7 @@ Measured on this Pi Zero 2 W (quad-core): ten sequential cycles of the two `nmcl
 
 `src/wifi/dump.ts` writes the whole picture — `nmcli` device and connection state, the scan list, `iw link` / `scan dump` / `reg get`, `rfkill`, addresses and routes, and **the last 20 minutes of NetworkManager and wpa_supplicant** — to `/home/pi/cool-eva/wifi-diag/<timestamp>.txt`.
 
-- ⚠️ **Not `/tmp`.** That is tmpfs here and the bike cuts 12 V at key-off, so a dump taken at a charger would be gone before anyone could read it.
+- ⚠️ **Not `/tmp`, and not a plain `writeFile`.** `/tmp` is tmpfs here and the bike cuts 12 V at key-off, so a dump taken at a charger would be gone before anyone could read it. The same cut is why the write goes through `replaceFileDurably`: ext4's `delalloc` leaves up to 30 s in which `i_size` says the bytes are there and the blocks read NUL (`docs/power-cuts.md`), so a plain write would have made the one failure this location was chosen to survive the one its write path does not. The rename leaves a `<name>.txt.tmp` if a cut lands between write and rename, and the prune reaps those first — they do not end in `.txt`, so nothing else ever would.
 - ⚠️ **`wifi-diag/` is in `.gitignore`.** A dump carries SSIDs and BSSIDs — the networks this bike and its owner have been near — which is the same class of thing as the coordinate rule in `docs/route-map.md`, in a form that looks innocuous.
 - ⚠️ **A profile is addressed by NAME, never by SSID.** NetworkManager 1.52.1's `nmc_find_connection()` matches uuid, id, path and filename and has no SSID arm — and on this Pi the hotspot's profile is called **`Wi-Fi connection 2`** while its SSID is `orange-juice`. So `nmcli connection show orange-juice` can only ever answer "unknown connection", and the per-profile detail carrying `autoconnect-priority`, `seen-bssids` and any pinned `bssid` — which is where the 2026-09-19 answer lives — would have been missing from every dump. The names are looked up first, with one extra read whose own result stays in the dump.
 - **Every collected command is a read.** No `connection up`, no `device disconnect`, no forced rescan (`--rescan no` on the list, `scan dump` rather than `scan`, because a forced scan costs airtime and can disturb an association). A dump must be safe to take mid-charge on a healthy link.
