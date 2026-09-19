@@ -19,7 +19,9 @@ Unbiased, with half the dispersion, and it needs no ring, no listener, no new si
 
 ## What a SOC point costs
 
-**~190 Wh**, by integrating `pack_kw` across the archive's charging runs: DC n=31 median **196 Wh** (p10 184, p90 229), AC n=5 median **185**.
+**~199 Wh**, by integrating `pack_kw` across the archive's charging runs. Two independent passes: **AC n=10 median 198.8, DC n=34 median 199.7**, measured between SOC _transition instants_ so no level-differencing enters; and an earlier per-run pass at DC n=31 median 196, AC n=5 median 185. The shipped constant is **199**.
+
+⚠️ **It is a compromise, and the residual bias is SOC-dependent.** Per band, DC rises monotonically 188.6 Wh (20–29 %) → **208.1 (80–89 %)**, so 199 runs ~4 % optimistic exactly where a charge limit sits. The tile is good to roughly ±5 % — minutes on AC, seconds on DC. A per-band table would buy that back and is not worth the fit.
 
 ⚠️ **It is not `residual_energy_wh ÷ (soc/100)`.** That field is **discharge-side**: it says what the pack will give back, and charging a point costs more than discharging one returns. It implies 16.0 kWh — 160 Wh a point — and using it makes the ETA ~18 % optimistic before any taper. `soh` reads 100.0 in all 320 archive rows, so the gap is charge/discharge accounting, not degradation.
 
@@ -27,7 +29,7 @@ Unbiased, with half the dispersion, and it needs no ring, no listener, no new si
 
 The constant is stated **per point** rather than as a capacity on purpose: calling it a capacity is what invited both of those errors, and it invites the next reader to "improve" it by recomputing `remainingWh() / soc` live — which reintroduces a SOC-dependent bias for nothing. For the record, that ratio drifts 15.29 → 16.22 kWh from empty to full (6.1 %, and flat at the top).
 
-**Corroboration:** 190 Wh ÷ 230 W (1 A at 230 V) = 50 min a point, and the archive's slowest real charge runs **38.4 min/point at `pack_kw` 0.3**. The arithmetic and the bike agree.
+**Corroboration:** 199 Wh ÷ 230 W (1 A at 230 V) = 52 min a point, and the archive's slowest real charge runs **38.4 min/point at `pack_kw` 0.3**, which the same arithmetic puts at 40. They agree to a couple of minutes a point.
 
 ⚠️ **`bms_remaining_energy_wh` reads 0.0 in all 317 archive rows on this bike.** `remainingWh()` in `public/lib/derive.js` prefers it and falls through to `residual_energy_wh` because `positiveOrNull` rejects a zero. Any statement about "the pack's own remaining-energy field" on this bike is about the second one.
 
@@ -45,7 +47,9 @@ Predicted ÷ actual, **indexed by the target asked for**:
 | 99 %      | 0.68      | 0.92      |
 | **100 %** | **0.39**  | **0.78**  |
 
-One discontinuity, between 99 and 100. So every target up to 99 gets a **point estimate**, and only 100 gets a **lower bound** — "not before HH:MM". The 99 → 100 step alone measures DC 7.5 and 24.1 min and AC 3.4 / 19.1 / 51.7 / 63.2 / 70.9 / 76.9 min (n=8), against AC run-medians of 4–11 min a point: the last point is 5–15× a normal step and is not predictable from here.
+One discontinuity, between 99 and 100. So every target up to 99 gets a **point estimate**, and only 100 gets a **lower bound** — "not before HH:MM".
+
+⚠️ **The 99 → 100 step itself is thin evidence, and an earlier draft of this file overstated it.** Re-derived: **7 up-steps exist archive-wide, all AC, none DC** — 0.2, 0.8, 1.0, 3.3, 14.7, 15.6 and 78.5 min, three of them not charging at the time. Charging-only the median is ~14.7 min against 98 → 99's ~6.9, i.e. **about 2×**, not the "5–15×" this file used to claim — and the "DC 7.5 and 24.1 min" it cited **do not exist**: there are no DC 99 → 100 transitions in the archive at all. The bound is still right, because the predicted/actual table above is computed over the whole approach to each target and drops from 0.92 to 0.78 on AC at 100. The last step's own durations are simply too few to carry the weight the earlier wording put on them.
 
 ⚠️ **This is not `SOC_RATE_TRUSTED_BELOW` (88).** That constant is in `src/charge/soc.ts` and says in its own comment that it was measured for a **trailing-rate DC controller**. Borrowing it would refuse a real time for targets 90–99 — exactly the range `charge_soc_limit_pct` sets. A different instrument measures its own boundary.
 

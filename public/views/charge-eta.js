@@ -2,7 +2,8 @@
 
 import van from "../vendor/van-1.6.1.js";
 import { GOOD, MUTED, WATCH } from "../lib/colors.js";
-import { chartTick, peek, valueOf } from "../lib/store.js";
+import { chartTick, isStale, valueOf } from "../lib/store.js";
+import { chargeMode } from "../lib/charge-mode.js";
 import { monotonicNow } from "../lib/clock.js";
 import { BOUND_AT_OR_ABOVE, chargeEta, smoothedChargeKw } from "../lib/charge-eta.js";
 
@@ -14,8 +15,15 @@ const { div } = van.tags;
 //
 // ⚠️ Read-only. It renders on any phone, writes enabled or not, because it commands nothing.
 
-/** The target when no limit is set: the bike charges to full. */
+/** The target when the bike is explicitly set to no limit: it charges to full. */
 const FULL = 100;
+
+/**
+ * How old `soc` may be before there is nothing to project from. The same 5 s the Pi's own
+ * `SOC_MAX_AGE_MS` uses, and for the same reason: it rides a 20 Hz frame, so this means the BMS
+ * has gone quiet rather than that the value is merely old.
+ */
+const SOC_MAX_AGE_MS = 5_000;
 
 /**
  * The ETA tile, or an empty node when there is nothing honest to say.
@@ -27,10 +35,28 @@ const FULL = 100;
 export function ChargeEtaTile() {
   return div(() => {
     chartTick.val;
+    // ⚠️ A CHARGE HAS TO BE LIVE. Without this the tile renders off any positive `pack_kw`: the
+    // preview's parked fixture carries exactly 0.1 kW and produced "FULL · not before 79h 48m"
+    // under "plug in to see delivery", and regen puts a ride above the floor in 3.1 % of minute
+    // windows. `chargeMode` is the same predicate the delivery tile above uses, so the two cannot
+    // disagree about whether the bike is charging.
+    if (chargeMode(valueOf, isStale) === "none") {
+      return div();
+    }
     const socPct = valueOf("soc");
+    // ⚠️ A stale `soc` is not a slow one — 0x200 is 20 Hz, so this means the BMS went quiet.
+    if (isStale("soc", SOC_MAX_AGE_MS)) {
+      return div();
+    }
     const limitPct = valueOf("charge_soc_limit_pct");
-    // 0 means "no limit" and an absent reading means "nobody has asked"; both charge to full.
-    const targetPct = limitPct === null || limitPct === 0 ? FULL : limitPct;
+    // ⚠️ ABSENT IS NOT "NO LIMIT". Nothing rebroadcasts this signal, so a value we have not seen
+    // means "not asked and not touched" — docs/dash-command-0x2c-charge-limit.md says exactly that.
+    // Reading null as 100 made "not before 29m" the DEFAULT render on a fresh page load, on a bike
+    // that was in fact going to stop at 90 in 21 minutes. Only an explicit 0 means no limit.
+    if (limitPct === null) {
+      return div();
+    }
+    const targetPct = limitPct === 0 ? FULL : limitPct;
     const eta = chargeEta({ socPct, targetPct, kw: smoothedChargeKw(monotonicNow()) });
     if (eta.kind === "none") {
       return div();

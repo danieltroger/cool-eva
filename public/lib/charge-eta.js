@@ -15,16 +15,23 @@ import { monotonicNow } from "./clock.js";
 // Every figure below is measured, and docs/charge-eta.md has the tables and the method.
 
 /**
- * What the pack ABSORBS per SOC point, from integrating `pack_kw` across the archive's charging
- * runs: DC n=31 median 196 Wh (p10 184, p90 229), AC n=5 median 185.
+ * What the pack ABSORBS per SOC point, integrated from `pack_kw` across the archive's own charging
+ * runs. Two independent integrations: **AC n=10 median 198.8, DC n=34 median 199.7** (measured
+ * between SOC transition instants, so no level-differencing), and an earlier pass at DC 196 / AC
+ * 185. 199 is the figure the better method gives for both modes.
  *
- * ⚠️ NOT `residual_energy_wh ÷ soc`, which implies 160 Wh and is ~18 % optimistic because that
- * field is DISCHARGE-side — charging a point costs more than discharging one returns, and `soh`
- * reads 100.0 across the archive so it is accounting, not degradation. NOT the 21.5 kWh nameplate
- * either. Stated per-point rather than as a "capacity" because calling it a capacity is what
- * invited both of those errors.
+ * ⚠️ It is a compromise, not a constant of nature: per SOC band, DC rises monotonically from 188.6
+ * (20-29 %) to 208.1 (80-89 %), so 199 runs ~4 % optimistic exactly where a charge limit sits. The
+ * honest reading is that this tile is good to roughly ±5 %, which is minutes on AC and seconds on
+ * DC. A band table would buy that back and is not worth the fit.
+ *
+ * ⚠️ NOT `residual_energy_wh ÷ (soc/100)`, which implies 160 Wh and is ~20 % optimistic because
+ * that field is DISCHARGE-side — charging a point costs more than discharging one returns, and
+ * `soh` reads 100.0 across the archive so it is accounting, not degradation. NOT the 21.5 kWh
+ * nameplate either. Stated per-point rather than as a "capacity" because calling it a capacity is
+ * what produced both of those wrong values before this one.
  */
-export const WH_PER_SOC_POINT = 190;
+export const WH_PER_SOC_POINT = 199;
 
 /**
  * The power below which there is no answer worth giving.

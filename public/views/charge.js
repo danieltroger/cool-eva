@@ -38,10 +38,10 @@ const { div, span } = van.tags;
 
 // The charging screen.
 //
-// No time-to-full estimate here on purpose. Without the pack's taper curve any ETA
-// is a straight-line extrapolation of a curve that is anything but, and the bike's
-// own dash already shows one of those. Amps, volts and kilowatts are what actually
-// tell you whether the charge is going the way it should.
+// ⚠️ There IS a time-to-target estimate now (./charge-eta.js), and the objection this comment
+// used to raise still stands where it applies: a straight-line extrapolation of the pack's taper
+// is worthless at the top. That is why the tile gives a point estimate only up to target 99 and a
+// LOWER BOUND at 100, which is the one place the taper measurably bites. docs/charge-eta.md.
 //
 // Verified against a real 48-minute AC session captured 2026-08-02 18:55→19:43
 // (`0x201` byte 0 held `02` = Charge for 18 400 frames, with `0x305`/`0x306`

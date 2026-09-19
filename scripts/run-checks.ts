@@ -252,7 +252,7 @@ const CHECKS: SelfCheck[] = [
   {
     script: "scripts/check-charge-eta.ts",
     covers:
-      "the Charge tab's ETA: that it prices an SOC point at the 190 Wh the pack actually ABSORBS — measured by " +
+      "the Charge tab's ETA: that it prices an SOC point at the 199 Wh the pack actually ABSORBS — measured by " +
       "integrating pack_kw, not the 160 Wh that residual_energy_wh implies, because that field is discharge-side " +
       "and makes the answer 18 % optimistic — and divides by measured power, so one point at 190 W takes exactly " +
       "an hour; that it says nothing at all when there is no SOC, no target, the target is already passed, or " +

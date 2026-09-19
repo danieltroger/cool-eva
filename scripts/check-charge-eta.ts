@@ -1,4 +1,4 @@
-import { Ring } from "../public/lib/ring.js";
+import { ringFor } from "../public/lib/ring.js";
 import {
   BOUND_AT_OR_ABOVE,
   MIN_CHARGE_KW,
@@ -6,6 +6,7 @@ import {
   SMOOTH_MS,
   WH_PER_SOC_POINT,
   chargeEta,
+  smoothedChargeKw,
 } from "../public/lib/charge-eta.js";
 
 // The charge ETA's arithmetic and its refusals, on a laptop, with no bike and no browser.
@@ -23,9 +24,9 @@ const failures: string[] = [];
 // ── §1 the arithmetic, against figures worked by hand ─────────────────────
 
 const CASES = [
-  { what: "60 → 80 % at 2 kW", socPct: 60, targetPct: 80, kw: 2, minutes: 114 },
-  { what: "an 8 kW DC charge, 40 → 80 %", socPct: 40, targetPct: 80, kw: 8, minutes: 57 },
-  { what: "one point at 1 kW", socPct: 79, targetPct: 80, kw: 1, minutes: 11.4 },
+  { what: "60 → 80 % at 2 kW", socPct: 60, targetPct: 80, kw: 2, minutes: 119.4 },
+  { what: "an 8 kW DC charge, 40 → 80 %", socPct: 40, targetPct: 80, kw: 8, minutes: 59.7 },
+  { what: "one point at 1 kW", socPct: 79, targetPct: 80, kw: 1, minutes: 11.9 },
 ];
 for (const c of CASES) {
   const eta = chargeEta(c);
@@ -92,33 +93,54 @@ if (BOUND_AT_OR_ABOVE !== 100) {
   );
 }
 
-// ── §4 the smoothing, including the window that is legitimately empty ─────
+// ── §4 the smoothing, through the function that ships ─────────────────────
+//
+// ⚠️ THIS SECTION USED TO BE UNFALSIFIABLE and it is worth saying how. It built a window of sixty
+// identical 2 kW samples and pushed one 40 kW spike — but `Ring.push` DROPS anything arriving
+// within MIN_INTERVAL_MS (500 ms) of the newest entry, so the spike never landed, the window was
+// sixty identical values, and mean == median. Mutating `median()` to a mean SURVIVED while the
+// success line claimed "a median that one spike cannot move". The fixture now spaces its samples,
+// and the distribution is SKEWED so the two statistics genuinely differ.
+//
+// It also never called the shipped `smoothedChargeKw`, so the thin-window fallback — the live path
+// for roughly one AC minute in five — was untested. It is exercised here through the store's own
+// ring, which is the same instance the browser uses.
 
+const packRing = ringFor("pack_kw");
 const now = 10_000_000;
-const full = new Ring();
-for (let age = SMOOTH_MS - 1000; age >= 0; age -= 1000) {
-  full.push(now - age, 2);
+// Nine samples 1 s apart: eight at 2 kW and one at 40. Median 2, mean 6.2 — a mean would be
+// unusable as a charging power and this is what separates them.
+for (let index = 0; index < 8; index += 1) {
+  packRing.push(now - 9000 + index * 1000, 2);
 }
-full.push(now - 500, 40); // one spike, which a median must ignore and a mean would not
-if (medianOf(full) !== 2) {
-  failures.push(`§4 a single 40 kW spike moved the median to ${medianOf(full)} — it must not`);
+packRing.push(now - 500, 40);
+const smoothed = smoothedChargeKw(now);
+if (smoothed !== 2) {
+  failures.push(
+    `§4 smoothedChargeKw returned ${smoothed} over eight 2 kW samples and one 40 — a median is 2, a mean 6.2`
+  );
 }
-const thin = new Ring();
-thin.push(now - 5000, 7);
-if (thin.length >= MIN_SMOOTH_SAMPLES) {
-  failures.push("§4 the thin fixture is not thin — it must have fewer samples than the smoothing needs");
+if (packRing.since(SMOOTH_MS, now).values.length < MIN_SMOOTH_SAMPLES) {
+  failures.push("§4 the fixture did not land enough samples to have a median — Ring.push drops bursts under 500 ms");
 }
-if (thin.latest() !== 7) {
-  failures.push("§4 a window too thin to have a median must fall back to the newest reading");
+
+// ⚠️ The thin window is NOT an error case: AC's p10 is 0.5 rows/min, so a 60 s window holding
+// nothing is normal, and the newest reading is the right answer because silence on a
+// log-on-change signal means unchanged.
+const thinRing = ringFor("check-charge-eta-thin");
+thinRing.push(now - 5000, 7);
+if (thinRing.since(SMOOTH_MS, now).values.length >= MIN_SMOOTH_SAMPLES) {
+  failures.push("§4 the thin fixture is not thin");
 }
-// ⚠️ The case that is NOT an error: AC's p10 is 0.5 rows/min, so a 60 s window holding NOTHING is
-// normal. Silence on a log-on-change signal means unchanged, so the newest reading is the answer.
-const stale = new Ring();
-stale.push(now - SMOOTH_MS * 10, 1.9);
-if (stale.since(SMOOTH_MS, now).values.length !== 0) {
+if (thinRing.latest() !== 7) {
+  failures.push("§4 a window too thin for a median must fall back to the newest reading");
+}
+const staleRing = ringFor("check-charge-eta-stale");
+staleRing.push(now - SMOOTH_MS * 10, 1.9);
+if (staleRing.since(SMOOTH_MS, now).values.length !== 0) {
   failures.push("§4 the stale fixture should have an empty window");
 }
-if (stale.latest() !== 1.9) {
+if (staleRing.latest() !== 1.9) {
   failures.push("§4 an empty window must still yield the newest reading rather than nothing");
 }
 
@@ -136,10 +158,3 @@ console.log(
     `lower bound only at ${BOUND_AT_OR_ABOVE}, and smooths power with a median that one spike cannot move — ` +
     "falling back to the newest reading when the window is thin, which on AC it often legitimately is"
 );
-
-/** The median of a ring's whole window, the way smoothedChargeKw computes it. */
-function medianOf(ring: Ring): number {
-  const sorted = [...ring.since(SMOOTH_MS, now).values].sort((a, b) => a - b);
-  const middle = sorted.length >> 1;
-  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
-}
