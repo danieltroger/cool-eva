@@ -250,6 +250,20 @@ const CHECKS: SelfCheck[] = [
       "percentage, with 0 needing a word of its own",
   },
   {
+    script: "scripts/check-charge-eta.ts",
+    covers:
+      "the Charge tab's ETA: that it prices an SOC point at the 190 Wh the pack actually ABSORBS — measured by " +
+      "integrating pack_kw, not the 160 Wh that residual_energy_wh implies, because that field is discharge-side " +
+      "and makes the answer 18 % optimistic — and divides by measured power, so one point at 190 W takes exactly " +
+      "an hour; that it says nothing at all when there is no SOC, no target, the target is already passed, or " +
+      "pack_kw is below the 0.1 kW floor, which is ONE rule for not-charging, a stalled charge and a discharging " +
+      "pack and is a floor rather than a zero test because 0.02 kW returns a forty-day ETA; ⚠️ that the boundary " +
+      "between a point estimate and a 'not before' lower bound sits at target 100 and NOWHERE ELSE — measured " +
+      "predicted/actual is 0.95 AC at target 88 and 0.92 at 99 but 0.78 at 100, so a boundary at 88 would refuse " +
+      "a real time for exactly the range the charge limit sets; and that the power median cannot be moved by one " +
+      "spike and falls back to the newest reading when the window is thin, which on AC it legitimately often is",
+  },
+  {
     script: "scripts/check-charge-soc-limit-runner.ts",
     covers:
       "the SOC charge-limit ACTIONS against a stand-in bike — the round trip the pure check cannot reach. " +

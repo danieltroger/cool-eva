@@ -20,6 +20,7 @@ import { chargeMode } from "../lib/charge-mode.js";
 import { ChargeCurrentControl } from "./charge-current.js";
 import { ChargeStopControl } from "./charge-stop.js";
 import { ChargeSocLimitControl } from "./charge-soc-limit.js";
+import { ChargeEtaTile } from "./charge-eta.js";
 import { ChargeAutoControl } from "./charge-auto.js";
 import {
   CELL_COUNT,
@@ -74,6 +75,7 @@ export function ChargeView() {
     // and Charge stays read-only. The first three also need a LIVE charge; the SOC limit does not
     // (a stored setting, gated on the bike-state gate) and shows its value on any phone.
     // All four share the session/status machinery in ../lib/charge-write.js.
+    ChargeEtaTile(),
     ChargeAutoControl(),
     ChargeCurrentControl(),
     ChargeSocLimitControl(),
