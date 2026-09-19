@@ -273,3 +273,9 @@ evidence/*.ts
 # costs is `git add -f` for a NEW excerpt meant to be committed — the .txt provenance files
 # docs/can-0x101.md and docs/charge-auto.md cite are added that way from here on.
 evidence/
+
+# Wifi diagnostic dumps written by src/wifi/dump.ts. They carry SSIDs and BSSIDs — the
+# networks this bike and its owner have been near — which is the same class of thing as
+# the GPS rule above, in a form that looks innocuous. They live on the Pi; the findings
+# go in docs/wifi.md. No trailing slash, same reason as node_modules above.
+wifi-diag

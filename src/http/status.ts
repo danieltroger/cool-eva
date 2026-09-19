@@ -22,8 +22,17 @@ import { waypointEventsOf, waypointLog, type WaypointEvent } from "../gps/waypoi
 
 const SEGMENT_EXTENSION = ".celog";
 
-/** A signal seen this recently counts as live. Slowest CAN frames here are 1 Hz. */
-const FRESH_MS = 10_000;
+/**
+ * A signal seen this recently counts as live. Slowest CAN frames here are 1 Hz.
+ *
+ * ⚠️ EXPORTED so a poller can be pinned faster than it. A `source: "poll"` signal whose
+ * interval exceeds this reads as dark on a healthy Pi, and `live === 0` is exactly what a
+ * reader of this summary filters on to find a dead source — so the two numbers are a
+ * contract rather than two independent choices. scripts/check-wifi-diag.ts asserts
+ * `WIFI_POLL_MS < FRESH_MS`; nothing yet asserts it for `can_link`, which polls at 15 s
+ * and is diluted by three dozen other `diag` signals. docs/wifi.md.
+ */
+export const FRESH_MS = 10_000;
 
 /** Hoisted out of summariseGroups(): SIGNALS is fixed at import, so the answer is too. */
 const ON_DEMAND_ONLY = onDemandOnlyGroups(SIGNALS);

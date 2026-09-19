@@ -45,6 +45,7 @@ import { startHoldGestures } from "./gestures/runner.ts";
 import { startWaypointFixTracking, waypointHoldGesture } from "./gps/waypoint.ts";
 import { bringUpCan, openChannel } from "./can/socket.ts";
 import { startCanLinkMonitor } from "./can/link-status.ts";
+import { startWifiMonitor } from "./wifi/status.ts";
 import { decodeFrame, STREAM_IDS } from "./can/decode.ts";
 import { frameArrival } from "./can/frame-arrival.ts";
 import { configurePackTemperature, resolvePackTemperatures } from "./can/pack-temperature.ts";
@@ -66,6 +67,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
 const PORT = 80;
 const CAN_IFACE = "can0";
+const WIFI_IFACE = process.env.WIFI_IFACE ?? "wlan0";
+// The phone hotspot's SSID, which is what `wifi_hotspot_seen` and `wifi_network` are
+// measured against. Named here rather than in src/wifi/ so a different phone is one
+// environment variable, not an edit. docs/wifi.md.
+const WIFI_HOTSPOT_SSID = process.env.WIFI_HOTSPOT_SSID ?? "orange-juice";
+const WIFI_ENABLED = process.env.WIFI_ENABLED !== "0";
 // Where the menu's "Update" button runs `git pull`: this checkout, wherever it is.
 // ROOT is derived from the running file's own path, so it is the right directory
 // whatever the checkout is named or wherever it was moved to.
@@ -424,6 +431,13 @@ if (CAN_ENABLED) {
 // no such device — both surface as red).
 const canLinkMonitor = startCanLinkMonitor(CAN_IFACE);
 
+// Polled for the same reason can0 is, and for one this project paid for on 2026-09-19:
+// the Pi can only be asked what its wifi is doing while its wifi is working. Started
+// HERE rather than at module scope in src/wifi/status.ts, exactly as the line above is,
+// so importing that module in a check on a laptop does not shell out to an nmcli that
+// is not there. docs/wifi.md.
+const wifiMonitor = WIFI_ENABLED ? startWifiMonitor(WIFI_IFACE, WIFI_HOTSPOT_SSID) : null;
+
 // --- Bluetooth: Connectivity Hub (torque/power, odometer, vehicle state, GPS) ---
 let bleClient: BleClient | undefined;
 
@@ -644,6 +658,7 @@ async function shutdown(): Promise<void> {
   console.log("\nShutting down…");
   stopObd?.();
   canLinkMonitor.stop();
+  wifiMonitor?.stop();
   void bleClient?.stop();
   // A sweep in flight is stopped rather than left to be killed with the process:
   // aborting settles the request in flight, stops the client transmitting, and

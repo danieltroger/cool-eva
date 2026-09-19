@@ -63,6 +63,26 @@ export const SIGNALS: SignalDef[] = [
   // [0, 1] as a BOOLEAN_GROUP — so no per-key bound is needed.
   { key: "can_link", unit: "", group: "diag", source: "poll" },
 
+  // What the wifi is doing, polled from `nmcli` (src/wifi/status.ts, docs/wifi.md). Same
+  // shape as `can_link` above and a DIFFERENT group on purpose.
+  //
+  // ⚠️ `wifi` and not `diag`, for two independent reasons. (1) public/lib/bounds-rules.js
+  // has `BOOLEAN_GROUPS = new Set(["controls", "diag", "buttons"])`, so a code signal in
+  // `diag` with a blank unit is silently gated to [0, 1] and `wifi_link_state = 3` would
+  // render as a DEAD SENSOR. In a group with no fallback rule, scripts/generate-signal-bounds.ts
+  // instead REFUSES a key that declares neither `bounds` nor `unbounded` — it fails closed,
+  // so a future wifi_* cannot arrive ungated. (2) A group of its own keeps a Pi with no
+  // NetworkManager from dragging `diag`'s liveness down, the argument the `fan` group above
+  // already makes for itself.
+  { key: "wifi_link_state", unit: "", group: "wifi", source: "poll", bounds: [0, 3] },
+  { key: "wifi_network", unit: "", group: "wifi", source: "poll", bounds: [0, 2] },
+  // The decisive one: "the hotspot is in range AND we are not on it" is the shape of the
+  // 2026-09-19 failure, and neither half says it alone.
+  { key: "wifi_hotspot_seen", unit: "", group: "wifi", source: "poll", bounds: [0, 1] },
+  // Deadbanded because the number wanders a few percent while nothing is happening; the
+  // `%` unit reaches bounds-rules.js's own [0, 100], so it declares none.
+  { key: "wifi_signal_pct", unit: "%", group: "wifi", source: "poll", deadband: 5 },
+
   // 0x200 / 0x660 — BMS
   // batt_temp_lo/hi always mean the TRUE pack temperature, whichever frame supplies
   // them (see pack-temperature.ts), so the history stays one continuous series. That

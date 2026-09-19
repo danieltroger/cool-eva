@@ -423,6 +423,13 @@ async function checkADeadBusIsNotReportedAsHealthy(): Promise<StatusPayload | nu
     "gps",
     "imu",
     "obd",
+    // Added with the wifi poller (#290). A DELIBERATE edit, which is the whole point of
+    // this list being written down rather than derived: the alternative that also turns
+    // this check green is marking every wifi_* signal `onDemand`, which would exclude the
+    // group from liveness altogether — the exact blind spot the comment above records the
+    // coolant probes falling into. src/wifi/status.ts polls faster than FRESH_MS so the
+    // group is genuinely live, rather than excused.
+    "wifi",
     "powertrain",
     "security",
     "vcu",
