@@ -1,6 +1,6 @@
 import { createBluetooth, type Adapter, type GattCharacteristic } from "node-ble";
 import { ensureBluetoothAdapterUp, resetBluetoothAdapter } from "./adapter.ts";
-import { ADAPTER_BUSY_MESSAGE, BleRetryPolicy, RECONNECT_DELAY_MS, describeKnownHub } from "./recovery.ts";
+import { BleRetryPolicy, RECONNECT_DELAY_MS, describeKnownHub, isAdapterBusy } from "./recovery.ts";
 import { monotonicNow, since } from "../monotonic.ts";
 import { syncSystemClockFromGps } from "../gps/clock.ts";
 import { DiagnosticListAssembler, isDiagnosticsInfoMessage, isDiagnosticsMessage } from "../diagnostics/decode.ts";
@@ -59,6 +59,9 @@ const UNAUTHORISED_HINT_AFTER_MS = 20_000;
 // find its own bike rather than needing a hard-coded address.
 const HUB_NAME_PATTERN = /energica/i;
 const DISCOVERY_TIMEOUT_MS = 40_000;
+
+/** Ceiling on the journal probe. dbus-next has no call timeout of its own (lib/bus.js). */
+const HUB_PROBE_TIMEOUT_MS = 5_000;
 
 // How many unanswered handshakes before we also try the hub's own address (see
 // nextEnrolmentAddress — that write is destructive to an existing pairing).
@@ -135,15 +138,23 @@ export function startBleClient(options: BleClientOptions): BleClient {
           await adapter.startDiscovery();
         }
       } catch (error) {
-        // Observation only, for the journal: when the adapter is wedged, does BlueZ
-        // still hold the hub's object? Rethrown unchanged, so what reaches the retry
-        // policy stays the busy reply it gates on. docs/ble-adapter-wedge.md.
-        if ((error as Error).message === ADAPTER_BUSY_MESSAGE) {
-          hubObjectNote = await describeKnownHub(
-            () => adapter.devices(),
-            async address => (await adapter.getDevice(address)).getName(),
-            HUB_NAME_PATTERN
-          );
+        // Observation only, for the journal: when the adapter is wedged, does BlueZ still
+        // hold the hub's object? Rethrown unchanged, so what reaches the retry policy stays
+        // the busy reply it gates on. docs/ble-adapter-wedge.md.
+        //
+        // ⚠️ ONCE per wedge, and bounded. The note is printed only on the first failure of a
+        // run, so probing every failure cost ~1 400 D-Bus walks an episode for one line; and
+        // dbus-next installs no call timeout at all, so an unbounded walk here would hang the
+        // reconnect loop against the very daemon we have just decided is misbehaving.
+        if (isAdapterBusy(error) && hubObjectNote === null) {
+          hubObjectNote = await Promise.race([
+            describeKnownHub(
+              () => adapter.devices(),
+              async address => (await adapter.getDevice(address)).getName(),
+              HUB_NAME_PATTERN
+            ),
+            delay(HUB_PROBE_TIMEOUT_MS).then(() => "BlueZ did not answer in time when asked what it still holds"),
+          ]);
         }
         throw error;
       }
@@ -155,6 +166,7 @@ export function startBleClient(options: BleClientOptions): BleClient {
       // adapter works, and that is what clears the power-cycle cooldown. stopDiscovery()
       // and the GATT reads below can fail for reasons a power-cycle would not fix.
       logAll(retryPolicy.onSessionConnected(monotonicNow()));
+      hubObjectNote = null;
       // Scanning for the whole session burns power and can degrade the very link
       // we just established. Each reconnect builds a fresh createBluetooth(), so
       // the isDiscovering() check above would otherwise just observe a scan that
@@ -337,24 +349,21 @@ export function startBleClient(options: BleClientOptions): BleClient {
 
   void (async () => {
     while (!stopped) {
+      // A clean end — the 30 s silence timeout — is not a failure: it is how every normal
+      // ride reconnects, so it keeps the flat delay and earns no backoff.
+      let delayMs = RECONNECT_DELAY_MS;
       try {
         await runSession();
       } catch (error) {
         const plan = retryPolicy.onFailure((error as Error).message, monotonicNow(), hubObjectNote);
-        hubObjectNote = null;
         logAll(plan.logLines);
         if (plan.resetAdapter) {
           await resetBluetoothAdapter();
         }
-        if (!stopped) {
-          await delay(plan.delayMs);
-        }
-        continue;
+        delayMs = plan.delayMs;
       }
-      // A clean end — the 30 s silence timeout — is not a failure: it is how every
-      // normal ride reconnects, so it keeps the flat delay and earns no backoff.
       if (!stopped) {
-        await delay(RECONNECT_DELAY_MS);
+        await delay(delayMs);
       }
     }
   })();

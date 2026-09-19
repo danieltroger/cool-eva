@@ -1,10 +1,12 @@
 import { readFile } from "fs/promises";
+import { withoutCommentLines } from "./source-blocks.ts";
 import {
   ADAPTER_BUSY_MESSAGE,
   ADAPTER_RESET_AFTER_BUSY_FAILURES,
   ADAPTER_RESET_MIN_INTERVAL_MS,
   BleRetryPolicy,
   ESCALATE_AFTER_RESETS,
+  isAdapterBusy,
   LOG_REPEAT_INTERVAL_MS,
   MAX_RECONNECT_DELAY_MS,
   RECONNECT_DELAY_MS,
@@ -59,7 +61,7 @@ function driveWedge(
 }
 
 /** Failures at a fixed spacing, for the case where the window always elapses. */
-function driveWedgeAtFixedSpacing(spacingMs: number, count: number): { printed: Printed[] } {
+function driveWedgeAtFixedSpacing(spacingMs: number, count: number): Printed[] {
   const policy = new BleRetryPolicy();
   const printed: Printed[] = [];
   for (let i = 0; i < count; i += 1) {
@@ -69,7 +71,7 @@ function driveWedgeAtFixedSpacing(spacingMs: number, count: number): { printed: 
       }
     }
   }
-  return { printed };
+  return printed;
 }
 
 /** Every `×N more` the policy printed, so suppressed failures can be conserved. */
@@ -130,19 +132,20 @@ if (!printed2.at(-1)?.includes("×9 more")) {
 // --- §3 the long episode: bounded volume, and nothing lost -------------------------
 const long = driveWedge(LONGEST_EPISODE_MS, ADAPTER_BUSY_MESSAGE);
 const messageLines = long.printed.filter(entry => entry.line.includes("session failed"));
-const accountedFor = messageLines.length + countedInLines(long.printed) + countedInLines(long.tail);
+const printedCounts = countedInLines(long.printed);
+const tailCounts = countedInLines(long.tail);
+const accountedFor = messageLines.length + printedCounts + tailCounts;
 if (accountedFor !== long.failureCount) {
   failures.push(
     `§3 conservation: ${long.failureCount} failures, ${accountedFor} accounted for ` +
-      `(${messageLines.length} printed + ${countedInLines(long.printed)} counted + ` +
-      `${countedInLines(long.tail)} in the stop flush) — the difference was swallowed`
+      `(${messageLines.length} printed + ${printedCounts} counted + ${tailCounts} in the stop flush)`
   );
 }
 // A window that elapses with nothing suppressed must still print: a session slower to
 // fail than the window is wide would otherwise report nothing at all, silently.
 const slow = driveWedgeAtFixedSpacing(LOG_REPEAT_INTERVAL_MS * 2, 5);
-if (slow.printed.length !== 5) {
-  failures.push(`§3 five failures spaced wider than the window should print 5 lines, got ${slow.printed.length}`);
+if (slow.length !== 5) {
+  failures.push(`§3 five failures spaced wider than the window should print 5 lines, got ${slow.length}`);
 }
 // Independent of the implementation: a rate limiter promising one line per window cannot
 // print more than one per window, plus the first.
@@ -324,9 +327,12 @@ for (let round = 0; round < 4; round += 1) {
     }
   }
 }
-if (escalations.length !== 4 - ESCALATE_AFTER_RESETS + 1) {
+// ⚠️ The literal 2, not `4 - ESCALATE_AFTER_RESETS + 1`: four unrelieved bounces escalating
+// from the 3rd gives two lines. Phrased in the constant, mutating it to 2 makes the loop emit
+// three and the expression expect three, and the mutant lives. Same trap as §1 and §5.
+if (escalations.length !== 2) {
   failures.push(
-    `§10 four unrelieved bounces should escalate on the 3rd and 4th, got ${escalations.length} escalation line(s)`
+    `§10 four unrelieved bounces should escalate on the 3rd and 4th — two lines, got ${escalations.length}`
   );
 }
 const policy10b = new BleRetryPolicy();
@@ -335,6 +341,36 @@ policy10b.onFailure(ADAPTER_BUSY_MESSAGE, 1_000);
 const onConnect = policy10b.onSessionConnected(2_000);
 if (!onConnect.some(line => line.includes("more in the last"))) {
   failures.push(`§10 a connect must flush the window it ends, got ${JSON.stringify(onConnect)}`);
+}
+
+// --- §11 an InProgress whose text we do not know is loud, not silently "not busy" -----
+// The gate discriminates on the TEXT, because btd_error_busy() and btd_error_in_progress()
+// share the NAME. A BlueZ that reworded it would otherwise disarm the power-cycle for ever
+// with this suite still green, so it must not pass quietly.
+const warned: string[] = [];
+const realWarn = console.warn;
+console.warn = (...args: unknown[]) => {
+  warned.push(args.join(" "));
+};
+const unknownInProgress = Object.assign(new Error("Operation currently in progress"), {
+  type: "org.bluez.Error.InProgress",
+});
+const busyByUnknownText = isAdapterBusy(unknownInProgress);
+console.warn = realWarn;
+if (!isAdapterBusy(new Error(ADAPTER_BUSY_MESSAGE))) {
+  failures.push("§11 the known busy text must gate the power-cycle");
+}
+if (isAdapterBusy(new Error("le-connection-abort-by-local"))) {
+  failures.push("§11 an unrelated failure must not read as the wedge");
+}
+if (busyByUnknownText) {
+  failures.push("§11 an unrecognised InProgress text must NOT be treated as the wedge");
+}
+if (!warned.some(line => line.includes("does not recognise"))) {
+  failures.push(`§11 an unrecognised InProgress must say so loudly, logged: ${JSON.stringify(warned)}`);
+}
+if (isAdapterBusy(null) || isAdapterBusy("a string")) {
+  failures.push("§11 a non-Error rejection must not read as the wedge");
 }
 
 // --- §9 the caller passes the MONOTONIC clock -------------------------------------
@@ -354,8 +390,8 @@ const WIRING = [
     why: "without it every line this whole feature computes is discarded, silently, with the suite green",
   },
   {
-    needle: "retryPolicy.onSessionConnected(monotonicNow())",
-    why: "a connect clears the cooldown, and must stamp it monotonically",
+    needle: "logAll(retryPolicy.onSessionConnected(monotonicNow()))",
+    why: "a connect clears the cooldown and flushes the window it ends — unwrapped, that tail is computed and dropped",
   },
   { needle: "logAll(retryPolicy.flush(monotonicNow()))", why: "stop()'s flush prints an elapsed time" },
   {
@@ -368,7 +404,11 @@ for (const { needle, why } of WIRING) {
     failures.push(`§9 src/ble/client.ts no longer contains \`${needle}\` — ${why}`);
   }
 }
-const wallClock = clientSource.split("\n").filter(line => !line.trim().startsWith("//") && line.includes("Date.now()"));
+// withoutCommentLines() rather than a third inline `//` filter: it also drops ` * ` and
+// `/*` lines, so a JSDoc sentence explaining why Date.now() is wrong cannot turn this red.
+const wallClock = withoutCommentLines(clientSource)
+  .split("\n")
+  .filter(line => line.includes("Date.now()"));
 if (wallClock.length > 0) {
   failures.push(`§9 src/ble/client.ts measures with Date.now(): ${wallClock.map(line => line.trim()).join(" / ")}`);
 }

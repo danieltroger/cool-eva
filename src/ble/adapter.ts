@@ -72,30 +72,32 @@ export async function ensureBluetoothAdapterUp(): Promise<void> {
  * on. Never throws: BLE is already dead when this runs. docs/ble-adapter-wedge.md.
  */
 export async function resetBluetoothAdapter(): Promise<void> {
+  // ⚠️ No `bluetoothctl show` read-back between these two. It used to sit here, justified by
+  // a race with ensureBluetoothAdapterUp() — but that race cannot happen in the shipped
+  // wiring: the reconnect loop is serialised and ensureBluetoothAdapterUp() only runs inside
+  // runSession(). What the 2026-09-19 transcript actually caught was the SERVICE racing a
+  // hand-run experiment, which is a note for whoever bounces the adapter by hand (stop the
+  // service first) and not a thing to spend a spawn on. It also sat inside the gap, so its
+  // own timeout could hold the radio down for 11 s in the one function contracted never to
+  // leave it off. Whether the bounce worked is answered by the next session, loudly, through
+  // ESCALATE_AFTER_RESETS in ./recovery.ts.
   await runBluetoothctl(["power", "off"]);
-  // Read it back rather than trusting the command: on 2026-09-19 the service's own
-  // `power on` beat the experiment's by a second, so "we ran it" is not "it went down".
-  console.warn(`ble: adapter reset — between off and on, ${await readAdapterPowered()}`);
   await delay(POWER_CYCLE_GAP_MS);
   await runBluetoothctl(["power", "on"]);
 }
 
+/** Never throws, always bounded. The timeout lives here once, not at each call site. */
 async function runBluetoothctl(args: string[]): Promise<void> {
+  const what = `\`bluetoothctl ${args.join(" ")}\``;
   try {
     const { stdout } = await runCommand("bluetoothctl", args, { timeout: BLUETOOTHCTL_TIMEOUT_MS });
-    const lastLine = stdout.trim().split("\n").pop();
-    console.warn(`ble: adapter reset — \`bluetoothctl ${args.join(" ")}\`: ${lastLine || "(no output)"}`);
+    console.warn(`ble: adapter reset — ${what}: ${stdout.trim().split("\n").pop() || "(no output)"}`);
   } catch (error) {
-    console.warn(`ble: adapter reset — \`bluetoothctl ${args.join(" ")}\` failed:`, (error as Error).message);
-  }
-}
-
-async function readAdapterPowered(): Promise<string> {
-  try {
-    const { stdout } = await runCommand("bluetoothctl", ["show"], { timeout: BLUETOOTHCTL_TIMEOUT_MS });
-    const powered = stdout.split("\n").find(line => line.includes("Powered:"));
-    return powered ? powered.trim() : "Powered: (not reported by `bluetoothctl show`)";
-  } catch (error) {
-    return `Powered: (unreadable: ${(error as Error).message})`;
+    // `killed` without a maxBuffer overflow IS the timeout firing — measured and written
+    // down in src/wifi/nmcli.ts, whose runCommand() returns it as data. Without naming it
+    // here a 10 s hang reads exactly like bluetoothd refusing the command.
+    const killed = (error as { killed?: boolean }).killed === true;
+    const why = killed ? `no answer in ${BLUETOOTHCTL_TIMEOUT_MS} ms, killed` : (error as Error).message;
+    console.warn(`ble: adapter reset — ${what} failed: ${why}`);
   }
 }

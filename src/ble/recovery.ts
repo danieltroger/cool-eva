@@ -12,8 +12,41 @@
 // docs/ble-adapter-wedge.md has the evidence, the kernel citations and the
 // experiment that established the power-cycle.
 
-/** BlueZ btd_error_busy()'s text, relayed by node-ble as the Error message. */
+/**
+ * BlueZ btd_error_busy()'s text, relayed by node-ble as the Error message.
+ *
+ * ⚠️ The TEXT and not the D-Bus error NAME, and that is not laziness. `btd_error_busy()`
+ * and `btd_error_in_progress()` both raise `org.bluez.Error.InProgress`; only the text
+ * separates a wedged adapter from a pending `Device1.Connect()`, so the name cannot gate
+ * this. docs/ble-adapter-wedge.md § "It is not the hub, and not a pending `Connect()`".
+ */
 export const ADAPTER_BUSY_MESSAGE = "Operation already in progress";
+
+/** The D-Bus error name both of those share — used only to notice a text we do not know. */
+const IN_PROGRESS_ERROR_NAME = "org.bluez.Error.InProgress";
+
+/**
+ * Is this the wedged adapter? dbus-next rejects with a DBusError carrying `.type`, and
+ * node-ble re-rejects it unwrapped, so the name survives to here.
+ *
+ * ⚠️ An `InProgress` we cannot classify is reported LOUDLY rather than treated as "not
+ * busy". Silence there is the whole fix disarming itself on a BlueZ that reworded the
+ * string, with every check still green — exactly what the never-swallow rule is for.
+ */
+export function isAdapterBusy(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message === ADAPTER_BUSY_MESSAGE) {
+    return true;
+  }
+  const name = (error as { type?: unknown } | null)?.type;
+  if (name === IN_PROGRESS_ERROR_NAME) {
+    console.warn(
+      `ble: ${IN_PROGRESS_ERROR_NAME} with text this build does not recognise: "${message}". ` +
+        "The adapter power-cycle is gated on the text and will NOT fire — docs/ble-adapter-wedge.md."
+    );
+  }
+  return false;
+}
 
 /** First retry spacing, and the ceiling the backoff doubles up to: 5, 10, 20, 30, 30 … */
 export const RECONNECT_DELAY_MS = 5_000;
@@ -52,7 +85,7 @@ export class BleRetryPolicy {
   private consecutiveFailures = 0;
   private consecutiveBusyFailures = 0;
   private resetsSinceConnect = 0;
-  private lastResetAtMs: number | null = null;
+  private lastResetAtMs = -Infinity;
   private repeatingMessage: string | null = null;
   private repeatCount = 0;
   private windowStartedAtMs = 0;
@@ -63,7 +96,7 @@ export class BleRetryPolicy {
     this.consecutiveFailures = 0;
     this.consecutiveBusyFailures = 0;
     this.resetsSinceConnect = 0;
-    this.lastResetAtMs = null;
+    this.lastResetAtMs = -Infinity;
     return lines;
   }
 
@@ -77,23 +110,22 @@ export class BleRetryPolicy {
     this.consecutiveBusyFailures = isBusy ? this.consecutiveBusyFailures + 1 : 0;
 
     const logLines: string[] = [];
-    if (message !== this.repeatingMessage) {
-      logLines.push(...this.flush(nowMs));
-      this.repeatingMessage = message;
-      this.repeatCount = 0;
-      this.windowStartedAtMs = nowMs;
-      logLines.push(`ble: session failed: ${message}${hubObjectNote ? ` — ${hubObjectNote}` : ""}`);
-    } else if (nowMs - this.windowStartedAtMs >= LOG_REPEAT_INTERVAL_MS) {
-      // The flush carries the suppressed ones AND stands as this failure's own line. If
-      // nothing was suppressed it returns nothing, and then this failure would be neither
-      // printed nor counted — which is how a session that takes longer to fail than the
-      // window is wide goes completely silent. So fall back to printing it plainly.
-      const flushed = this.flush(nowMs);
-      this.repeatingMessage = message;
-      this.windowStartedAtMs = nowMs;
-      logLines.push(...(flushed.length > 0 ? flushed : [`ble: session failed: ${message}`]));
-    } else {
+    const messageChanged = message !== this.repeatingMessage;
+    if (!messageChanged && nowMs - this.windowStartedAtMs < LOG_REPEAT_INTERVAL_MS) {
       this.repeatCount += 1;
+    } else {
+      const flushed = this.flush(nowMs);
+      logLines.push(...flushed);
+      // A count line stands in for this failure's own line only while the message is
+      // unchanged. A new message must always print, and a window that elapsed with nothing
+      // suppressed would otherwise go completely silent — which is how a session slower to
+      // fail than the window is wide reports nothing at all.
+      if (messageChanged || flushed.length === 0) {
+        const note = messageChanged && hubObjectNote ? ` — ${hubObjectNote}` : "";
+        logLines.push(`ble: session failed: ${message}${note}`);
+      }
+      this.repeatingMessage = message;
+      this.windowStartedAtMs = nowMs;
     }
 
     const resetAdapter = this.shouldResetAdapter(nowMs);
@@ -114,31 +146,27 @@ export class BleRetryPolicy {
 
   /** Emit any counted-but-unprinted repeat. Called on connect, on stop, and before a new message. */
   flush(nowMs: number): string[] {
-    if (this.repeatingMessage === null || this.repeatCount === 0) {
-      this.repeatingMessage = null;
-      this.repeatCount = 0;
+    const message = this.repeatingMessage;
+    const count = this.repeatCount;
+    this.repeatingMessage = null;
+    this.repeatCount = 0;
+    if (count === 0) {
       return [];
     }
     const seconds = Math.round((nowMs - this.windowStartedAtMs) / 1000);
-    const line = `ble: session failed: ${this.repeatingMessage} (×${this.repeatCount} more in the last ${seconds} s)`;
-    this.repeatingMessage = null;
-    this.repeatCount = 0;
-    return [line];
+    return [`ble: session failed: ${message} (×${count} more in the last ${seconds} s)`];
   }
 
   private shouldResetAdapter(nowMs: number): boolean {
-    if (this.consecutiveBusyFailures < ADAPTER_RESET_AFTER_BUSY_FAILURES) {
-      return false;
-    }
-    // Cleared by onSessionConnected(), so the floor only ever spaces out bounces that did
-    // NOT work. A bounce followed by a connect did its job, and the next wedge is a fresh
-    // event rather than a retry of a failed remedy. Testing resetsSinceConnect here as
+    // Reset to -Infinity by onSessionConnected(), so the floor only ever spaces out bounces
+    // that did NOT work. A bounce followed by a connect did its job, and the next wedge is a
+    // fresh event rather than a retry of a failed remedy. Testing resetsSinceConnect here as
     // well used to say the same thing twice, which made deleting either an equivalent
     // mutant — two mechanisms where the rule needs one.
-    if (this.lastResetAtMs === null) {
-      return true;
-    }
-    return nowMs - this.lastResetAtMs >= ADAPTER_RESET_MIN_INTERVAL_MS;
+    return (
+      this.consecutiveBusyFailures >= ADAPTER_RESET_AFTER_BUSY_FAILURES &&
+      nowMs - this.lastResetAtMs >= ADAPTER_RESET_MIN_INTERVAL_MS
+    );
   }
 
   private nextDelayMs(): number {
