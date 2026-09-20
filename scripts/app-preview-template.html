@@ -92,20 +92,8 @@ __CSS__
        * stored-code lines — render NOTHING off a parked bike, and a design gate blind to the panel
        * it is gating is not a gate.
        */
-      const SCENES = {
-        parked: { signals: {} },
-        dc: {
-          // ⚠️ NOTHING from the onboard charger is here — no `charger_enabled`, no `charger_max_dc_*`,
-          // no mains or dc_v/dc_a. lib/charge-mode.js records that every one of them logged exactly
-          // zero readings across a measured 40-minute DC session, so a fixture broadcasting them as
-          // permanently fresh describes a bike this software does not serve.
-          //
-          // ⚠️ `charge_manager_state` alone is NOT a DC session. It drives the AC/DC label and the
-          // write controls' visibility (lib/charge-write.js), while lib/charge-mode.js — which the
-          // delivery tile and the power bar's "claim nothing while charging" rule both read —
-          // keys on `fast_dc_contactor`. Setting one without the other renders the set-current
-          // control above a tile still saying "plug in to see delivery".
-          signals: {
+      // Shared by the `dc` and `dcFull` scenes, which differ only in the charge limit.
+      const DC_SIGNALS = {
             "soc": [62, "%", "battery"],
             "pack_v": [358.4, "V", "battery"],
             "pack_a": [42.1, "A", "battery"],
@@ -196,7 +184,22 @@ __CSS__
             "lmu11_bat1_c": [43, "°C", "battery"],
             "lmu11_pcb1_c": [29, "°C", "battery"],
             "lmu11_pcb2_c": [29, "°C", "battery"],
-          },
+          };
+
+      const SCENES = {
+        parked: { signals: {} },
+        dc: {
+          // ⚠️ NOTHING from the onboard charger is here — no `charger_enabled`, no `charger_max_dc_*`,
+          // no mains or dc_v/dc_a. lib/charge-mode.js records that every one of them logged exactly
+          // zero readings across a measured 40-minute DC session, so a fixture broadcasting them as
+          // permanently fresh describes a bike this software does not serve.
+          //
+          // ⚠️ `charge_manager_state` alone is NOT a DC session. It drives the AC/DC label and the
+          // write controls' visibility (lib/charge-write.js), while lib/charge-mode.js — which the
+          // delivery tile and the power bar's "claim nothing while charging" rule both read —
+          // keys on `fast_dc_contactor`. Setting one without the other renders the set-current
+          // control above a tile still saying "plug in to see delivery".
+          signals: DC_SIGNALS,
           // The stand-down #176 is about: the controller is still on, and standing back because
           // the rider set a current themselves. Its reason code and its sentence both come from
           // the Pi's own table rather than being written again here.
@@ -216,6 +219,13 @@ __CSS__
           // 100 % for the whole of a DC session, whatever the pack temperature — src/fan/curve.ts.
           fan: { dutyPercent: 100, targetPercent: 100, driverEnabled: true, phase: "running" },
           fanAuto: { reason: SERVER.fanReason.DC_SESSION, temperatureInput: SERVER.fanTemperatureInput.LIVE, temperatureC: 47, temperatureAgeMs: 310 },
+        },
+        // The same DC charge with NO limit set, which is what `charge_soc_limit_pct = 0` means. It
+        // exists for one tile: the ETA then targets 100 %, and past 99 the arithmetic is only a
+        // LOWER bound — predicted/actual drops 0.92 to 0.78 on AC between target 99 and 100.
+        // Different words, different colour, and no check can look at either. docs/charge-eta.md.
+        dcFull: {
+          signals: { ...DC_SIGNALS, "charge_soc_limit_pct": [0, "%", "charge"] },
         },
         // Episode E0 (docs/vcu-parameters.md §12): the charge manager is on the bus with an
         // empty inlet, so the settled 0x02 is NOT believed. The two blockers are what
