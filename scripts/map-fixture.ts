@@ -65,12 +65,28 @@ export function buildMapFixture(path: string, shape: FixtureShape = DEFAULT_SHAP
 
   const plan = db.transaction(() => {
     let ts = FIXTURE_BASE_MS;
+
     let lat = ORIGIN_LAT;
     let lon = ORIGIN_LON;
     let odometer = 1000;
     let energyWh = 12000;
     let stateOfCharge = 80;
     let waypointsWritten = 0;
+
+    // ⚠️ A CHARGE BEFORE ANY GPS EVER LOGGED, so it has no position to inherit and cannot be
+    // drawn. The real archive has 2 of 50 like this — the hub sleeps while charging, and two
+    // sessions predate GPS logging entirely. Without one here the fixture never exercises the
+    // `lat IS NULL` path: not in the query, not in the list's disabled row, and not in a
+    // screenshot.
+    for (let minute = 0; minute < 12; minute += 1) {
+      insertReading.run(ts, signalId.get("mains_a"), 10, sessionId);
+      insertReading.run(ts, signalId.get("residual_energy_wh"), energyWh + minute * 150, sessionId);
+      insertReading.run(ts, signalId.get("soc"), stateOfCharge + minute * 0.2, sessionId);
+      ts += 60 * 1000;
+    }
+    energyWh += 12 * 150;
+    stateOfCharge += 12 * 0.2;
+    ts += 45 * 60 * 1000;
 
     for (let ride = 0; ride < shape.rides; ride += 1) {
       for (let step = 0; step < shape.fixesPerRide; step += 1) {

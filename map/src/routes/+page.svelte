@@ -11,22 +11,17 @@
 		basemapStyle,
 		chargeGeoJson,
 		setLayerVisible,
+		setTrackFilter,
 		waypointGeoJson
 	} from '$lib/mapLayers';
 	import { needsMaptilerLogo, type BasemapKind } from '$lib/basemap';
-	import { chargeFacts, chargeFlyZoom } from '$lib/chargeFacts';
-	import { BAND_EDGES_KMH, boundsOfRange, type TrackGeoJson } from '$lib/track';
-	import { bandLabel, BAND_COLOURS, NO_SPEED_COLOUR } from '$lib/format';
+	import { chargeFlyZoom } from '$lib/chargeFacts';
+	import { boundsOfRange, type TrackGeoJson } from '$lib/track';
 	import type { ChargeSession, Ride, Waypoint } from '$lib/server/snapshot';
 	import type { RideSummary } from '$lib/wire';
+	import ChargeTooltip from '$lib/ChargeTooltip.svelte';
+	import MapHeader from '$lib/MapHeader.svelte';
 	import RideList from '$lib/RideList.svelte';
-
-	const RANGES = [
-		{ label: 'All', days: null },
-		{ label: '90 d', days: 90 },
-		{ label: '30 d', days: 30 },
-		{ label: '7 d', days: 7 }
-	];
 
 	let container: HTMLDivElement;
 	let map: MapLibreMap | null = null;
@@ -43,8 +38,10 @@
 	let basemapKind = $state<BasemapKind>('map');
 	let showCharges = $state(true);
 	let showWaypoints = $state(true);
+	let selectedRide = $state<Ride | null>(null);
 	let hovered = $state<ChargeSession | null>(null);
 	let hoverAt = $state<{ x: number; y: number } | null>(null);
+	let mapSize = $state({ width: 390, height: 600 });
 	// ⚠️ `$env/dynamic/public`, not `$env/static/public`: the static module only exports what
 	// exists at BUILD time, and map.yml builds with no .env — a static import of a missing key
 	// fails the build rather than the page. Read once; it never changes at runtime.
@@ -114,7 +111,11 @@
 			style: basemapStyle(basemapKind, darkMode.matches, maptilerKey),
 			center: [0, 20],
 			zoom: 1,
-			attributionControl: { compact: true }
+			// ⚠️ MapTiler requires attribution "always visible and readable", with an explicit
+			// allowance for a one-tap popup on small screens — so compact ONLY there. MapLibre
+			// collapses a compact control on the first drag at any width, which on a desktop
+			// would be hiding it rather than adapting to a phone.
+			attributionControl: { compact: window.innerWidth < 640 }
 		});
 		map.addControl(new NavigationControl({ showCompass: false }), 'top-right');
 		map.addControl(new ScaleControl({ unit: 'metric' }), 'bottom-left');
@@ -129,7 +130,13 @@
 		// blank background. Its own ResizeObserver does eventually fire, but not before the first
 		// paint — which is exactly what a screenshot catches. Observing the container ourselves
 		// makes the first frame right rather than the second.
-		const resizeObserver = new ResizeObserver(() => map?.resize());
+		const resizeObserver = new ResizeObserver((entries) => {
+			map?.resize();
+			const box = entries[0]?.contentRect;
+			if (box !== undefined) {
+				mapSize = { width: box.width, height: box.height };
+			}
+		});
 		resizeObserver.observe(container);
 		resizeObservers.push(resizeObserver);
 
@@ -178,7 +185,13 @@
 		});
 	}
 
-	/** Everything `setStyle` destroys, rebuilt in one place. */
+	/**
+	 * Everything `setStyle` destroys, rebuilt in one place.
+	 *
+	 * ⚠️ Including the SELECTED RIDE. An earlier version said "everything" and restored the
+	 * window filter only, so flipping to satellite while looking at one ride silently widened
+	 * the track back to the whole range.
+	 */
 	function applyMapState() {
 		if (map === null || track === null) {
 			return;
@@ -215,6 +228,10 @@
 
 	/** A stop's pin is an inherited position, so the zoom matches how old it is. */
 	function flyToCharge(charge: ChargeSession) {
+		// A stop or a waypoint is a point, not a range. Leaving a per-ride track filter in
+		// place would fly to a pin sitting on an empty basemap.
+		selectedRide = null;
+		applyRange();
 		if (map === null || charge.lat === null || charge.lon === null) {
 			return;
 		}
@@ -223,6 +240,10 @@
 	}
 
 	function flyToWaypoint(point: Waypoint) {
+		// A stop or a waypoint is a point, not a range. Leaving a per-ride track filter in
+		// place would fly to a pin sitting on an empty basemap.
+		selectedRide = null;
+		applyRange();
 		// Only corroborated waypoints have a position the map will draw; the rest are listed
 		// precisely because nothing vouches for where they claim to be.
 		if (map === null || point.lat === null || point.lon === null || point.verdict !== 'on track') {
@@ -272,7 +293,13 @@
 		if (map === null || map.getLayer('track') === undefined) {
 			return;
 		}
-		map.setFilter('track', ['>=', ['get', 'toTs'], fromTs]);
+		const ride = selectedRide;
+		setTrackFilter(
+			map,
+			ride === null
+				? ['>=', ['get', 'toTs'], fromTs]
+				: ['all', ['>=', ['get', 'toTs'], ride.startTs], ['<=', ['get', 'fromTs'], ride.endTs]]
+		);
 		const chargeSource = map.getSource('charges') as GeoJSONSource | undefined;
 		const waypointSource = map.getSource('waypoints') as GeoJSONSource | undefined;
 		chargeSource?.setData(chargeGeoJson(visibleCharges));
@@ -281,6 +308,8 @@
 
 	function selectRange(days: number | null) {
 		rangeDays = days;
+		// Picking a window is stepping back out of one ride.
+		selectedRide = null;
 		applyRange();
 		fitToData();
 	}
@@ -289,11 +318,8 @@
 		if (map === null) {
 			return;
 		}
-		map.setFilter('track', [
-			'all',
-			['>=', ['get', 'toTs'], ride.startTs],
-			['<=', ['get', 'fromTs'], ride.endTs]
-		]);
+		selectedRide = ride;
+		applyRange();
 		fitTo(ride.startTs, ride.endTs, 80, 14, true);
 		panelOpen = false;
 	}
@@ -308,87 +334,21 @@
 		class:max-md:h-[62vh]={panelOpen}
 		class:max-md:h-13={!panelOpen}
 	>
-		<!-- flex-wrap, not overflow-hidden: three more chips do not fit on one 390 px row, and
-		     clipping them would hide a control rather than move it. -->
-		<header class="flex flex-wrap items-center gap-2 px-3 py-2" style="border-color: var(--border)">
-			<button
-				class="rounded px-2 py-1 text-sm md:hidden"
-				style="background: var(--surface-sunken)"
-				onclick={() => (panelOpen = !panelOpen)}
-				aria-expanded={panelOpen}
-			>
-				{panelOpen ? '▾' : '▴'}
-			</button>
-			<h1 class="text-sm font-semibold">Ride map</h1>
-			<div class="ml-auto flex gap-1">
-				{#each RANGES as range (range.label)}
-					<button
-						class="rounded px-2 py-1 text-xs"
-						style="background: {rangeDays === range.days
-							? 'var(--accent)'
-							: 'var(--surface-sunken)'}; color: {rangeDays === range.days
-							? '#fff'
-							: 'var(--text)'}"
-						onclick={() => selectRange(range.days)}>{range.label}</button
-					>
-				{/each}
-			</div>
-			<div class="flex w-full flex-wrap gap-1">
-				<button
-					class="rounded px-2 py-1 text-xs"
-					style="background: {basemapKind === 'satellite'
-						? 'var(--accent)'
-						: 'var(--surface-sunken)'}; color: {basemapKind === 'satellite'
-						? '#fff'
-						: 'var(--text)'}"
-					aria-pressed={basemapKind === 'satellite'}
-					onclick={() => setBasemap(basemapKind === 'satellite' ? 'map' : 'satellite')}
-					>Satellite</button
-				>
-				<button
-					class="rounded px-2 py-1 text-xs"
-					style="background: var(--surface-sunken); opacity: {showCharges ? 1 : 0.45}"
-					aria-pressed={showCharges}
-					onclick={toggleCharges}>Charges</button
-				>
-				<button
-					class="rounded px-2 py-1 text-xs"
-					style="background: var(--surface-sunken); opacity: {showWaypoints ? 1 : 0.45}"
-					aria-pressed={showWaypoints}
-					onclick={toggleWaypoints}>Waypoints</button
-				>
-			</div>
-		</header>
-
-		<div class="grid grid-cols-3 gap-px px-3 pb-2 text-center">
-			<div>
-				<div class="text-lg font-semibold">{distanceKm.toFixed(0)}</div>
-				<div class="text-xs" style="color: var(--text-dim)">km</div>
-			</div>
-			<div>
-				<div class="text-lg font-semibold">{visibleCharges.length}</div>
-				<div class="text-xs" style="color: var(--text-dim)">charge stops</div>
-			</div>
-			<div>
-				<div class="text-lg font-semibold">{energyKwh.toFixed(1)}</div>
-				<div class="text-xs" style="color: var(--text-dim)">kWh charged</div>
-			</div>
-		</div>
-
-		<div class="flex flex-wrap gap-2 px-3 pb-2 text-[10px]" style="color: var(--text-dim)">
-			{#each BAND_COLOURS as colour, band (band)}
-				<span class="flex items-center gap-1">
-					<span class="inline-block h-2 w-4 rounded" style="background: {colour}"></span>
-					{bandLabel(band, BAND_EDGES_KMH)}
-				</span>
-			{/each}
-			<!-- Band -1 is drawn too, in grey: an out-of-range speed becomes NULL upstream rather
-			     than a clamped value, and a legend that omits it leaves grey track unexplained. -->
-			<span class="flex items-center gap-1">
-				<span class="inline-block h-2 w-4 rounded" style="background: {NO_SPEED_COLOUR}"></span>
-				{bandLabel(-1, BAND_EDGES_KMH)}
-			</span>
-		</div>
+		<MapHeader
+			{rangeDays}
+			{basemapKind}
+			{showCharges}
+			{showWaypoints}
+			{distanceKm}
+			chargeCount={visibleCharges.length}
+			{energyKwh}
+			onRange={selectRange}
+			onBasemap={setBasemap}
+			onToggleCharges={toggleCharges}
+			onToggleWaypoints={toggleWaypoints}
+			onTogglePanel={() => (panelOpen = !panelOpen)}
+			{panelOpen}
+		/>
 
 		{#if loadError !== null}
 			<p class="px-3 py-2 text-sm" style="color: #e0523f">
@@ -414,32 +374,15 @@
 	     the map blank. Sizing it as a plain flex child has nothing to override. -->
 	<div class="relative min-h-0 flex-1">
 		<div bind:this={container} class="h-full w-full"></div>
-		{#if hovered !== null && hoverAt !== null}
-			{@const facts = chargeFacts(hovered)}
-			<div
-				class="pointer-events-none absolute z-20 rounded px-2.5 py-1.5 text-xs shadow-lg"
-				style="left: {Math.min(hoverAt.x + 14, 240)}px; top: {hoverAt.y +
-					14}px; background: var(--surface-raised); color: var(--text); border: 1px solid var(--border)"
-			>
-				<div class="flex items-center gap-1.5 font-semibold">
-					<span class="inline-block h-2 w-2 rounded-full" style="background: {facts.colour}"></span>
-					{facts.startedAt}
-				</div>
-				<div style="color: var(--text-dim)">
-					{facts.chargeType} · {facts.duration} · {facts.kwh}{facts.socDelta === null
-						? ''
-						: ` · ${facts.socDelta}`}
-				</div>
-				<div style="color: var(--text-dim)">{facts.fixAge}</div>
-			</div>
-		{/if}
+
+		<ChargeTooltip charge={hovered} at={hoverAt} within={mapSize} />
 
 		{#if needsMaptilerLogo(basemapKind, maptilerKey)}
 			<!-- ⚠️ Required, and MapLibre will not do it: a FREE MapTiler account must display the
 			     LOGO, not just the text, and MapLibre renders no TileJSON `logo` — its own
 			     LogoControl is the MapLibre mark. -->
 			<a
-				class="absolute bottom-2 left-2 z-20 rounded bg-white/85 px-1.5 py-0.5"
+				class="absolute right-2 bottom-8 z-20 rounded bg-white/85 px-1.5 py-0.5"
 				href="https://www.maptiler.com/"
 				target="_blank"
 				rel="noopener"

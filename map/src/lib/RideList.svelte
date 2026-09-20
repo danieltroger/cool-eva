@@ -70,12 +70,17 @@
 			     at all — the hub sleeps while charging — and a row that flies nowhere when clicked
 			     reads as broken rather than as honest. The same six fields as the map tooltip,
 			     from the same chargeFacts(). -->
+			<!-- ⚠️ `aria-disabled`, NOT `disabled`. Measured in Chrome: a disabled button cannot take
+			     focus — `.focus()` leaves `activeElement` unchanged and Tab skips it — so a
+			     keyboard user could never reach the row OR the explanation of why it is inert.
+			     `aria-disabled` announces the state and keeps the row reachable; the handler
+			     guards itself. -->
 			<button
-				class="mb-1 block w-full rounded px-2 py-1.5 text-left enabled:hover:opacity-80"
-				style="background: var(--surface-sunken)"
-				disabled={!facts.placeable}
+				class="mb-1 block w-full rounded px-2 py-1.5 text-left aria-enabled:hover:opacity-80"
+				style="background: var(--surface-sunken); opacity: {facts.placeable ? 1 : 0.62}"
+				aria-disabled={!facts.placeable}
 				title={facts.placeable ? 'Show on the map' : 'No position was logged for this stop'}
-				onclick={() => onSelectCharge(charge)}
+				onclick={() => facts.placeable && onSelectCharge(charge)}
 			>
 				<div class="flex justify-between gap-2">
 					<span>{facts.startedAt}</span>
@@ -95,14 +100,12 @@
 	{:else}
 		{#each waypointsNewestFirst as point (point.ts)}
 			{@const drawn = point.verdict === 'on track' && point.lat !== null && point.lon !== null}
-			<!-- A disabled button rather than a div: "this row cannot be actioned" is exactly what
-			     `disabled` means, and screen readers and keyboard focus get it for free. -->
 			<button
-				class="mb-1 block w-full rounded px-2 py-1.5 text-left enabled:hover:opacity-80"
-				style="background: var(--surface-sunken)"
-				disabled={!drawn}
+				class="mb-1 block w-full rounded px-2 py-1.5 text-left aria-enabled:hover:opacity-80"
+				style="background: var(--surface-sunken); opacity: {drawn ? 1 : 0.62}"
+				aria-disabled={!drawn}
 				title={drawn ? 'Show on the map' : 'Not drawn: the surrounding track does not back this up'}
-				onclick={() => onSelectWaypoint(point)}
+				onclick={() => drawn && onSelectWaypoint(point)}
 			>
 				<div class="flex justify-between gap-2">
 					<span>#{point.seq} · {formatDateTime(point.ts)}</span>

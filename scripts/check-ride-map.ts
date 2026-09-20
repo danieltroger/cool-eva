@@ -6,7 +6,7 @@ import { buildMapFixture, DEFAULT_SHAPE, FIXTURE_BASE_MS } from "./map-fixture.t
 import { CHARGE_SESSIONS_SQL, RIDES_SQL, TRACK_SQL, WAYPOINTS_SQL } from "../map/src/lib/server/queries.ts";
 import { boundsOfRange, buildTrackGeoJson, bandOf, GAP_MS, type TrackPoint } from "../map/src/lib/track.ts";
 import { chargeFacts, chargeFlyZoom } from "../map/src/lib/chargeFacts.ts";
-import { needsMaptilerLogo, satelliteBasemap, EOX_TILES } from "../map/src/lib/basemap.ts";
+import { needsMaptilerLogo, satelliteBasemap } from "../map/src/lib/basemap.ts";
 
 // The laptop map viewer's SQL and its track builder, against a synthetic ride log.
 //
@@ -195,23 +195,28 @@ function checkTheQueries(db: Database.Database): void {
     chargeType: string;
     fixTs: number | null;
   }[];
-  check(`finds all ${DEFAULT_SHAPE.charges} charge stops`, charges.length === DEFAULT_SHAPE.charges);
+  // One more than `charges`: the fixture opens with a stop that predates every GPS row.
+  check(`finds all ${DEFAULT_SHAPE.charges + 1} charge stops`, charges.length === DEFAULT_SHAPE.charges + 1);
   check(
     "each has energy added",
     charges.every(charge => charge.whAdded > 0)
   );
   check(
     "AC and DC are told apart by fast_dc_target_a",
-    charges.filter(c => c.chargeType === "DC").length === 1 && charges.filter(c => c.chargeType === "AC").length === 2
+    charges.filter(c => c.chargeType === "DC").length === 1 && charges.filter(c => c.chargeType === "AC").length === 3
   );
-  // The bike logs no GPS while charging, so every stop's position is inherited from before it.
+  // The bike logs no GPS while charging, so a stop's position is inherited from before it —
+  // and a stop with nothing before it has none at all, which the map must not draw and the list
+  // must not offer as a button. The real archive has 2 of 50 like that.
+  const placeable = charges.filter(charge => charge.lat !== null);
+  check("all but the pre-GPS stop inherit a position", placeable.length === charges.length - 1);
   check(
-    "every stop inherits a position from before it",
-    charges.every(charge => charge.lat !== null)
+    "each of those reports how old that fix was",
+    placeable.every(charge => charge.fixTs !== null && charge.fixTs < charge.startTs)
   );
   check(
-    "and reports how old that fix was",
-    charges.every(charge => charge.fixTs !== null && charge.fixTs < charge.startTs)
+    "and the pre-GPS stop reports no position rather than a wrong one",
+    charges.filter(charge => charge.lat === null && charge.fixTs === null).length === 1
   );
 
   const rides = db.prepare(RIDES_SQL).all() as { startTs: number; km: number | null; fixes: number }[];
@@ -507,19 +512,43 @@ function checkTheChargeFacts(): void {
 function checkTheSatelliteChoice(): void {
   console.log("the satellite basemap");
   const keyless = satelliteBasemap(null);
-  check("with no key the imagery is EOX", keyless.styleOrTiles === EOX_TILES);
+  // ⚠️ NOT `=== EOX_TILES`. That compares the function to the constant it returns, so it
+  // survives any change to the constant — host, layer, axis order, extension — which is the
+  // whole set of facts this check exists to hold. Each is asserted on its own.
+  check("with no key the imagery comes from EOX", keyless.tiles.startsWith("https://tiles.maps.eox.at/"));
+  check("from the WMTS endpoint", keyless.tiles.includes("/wmts/1.0.0/"));
+  check("naming the 3857 cloudless layer", keyless.tiles.includes("s2cloudless-2024_3857"));
+  // WMTS RESTful is {TileMatrix}/{TileRow}/{TileCol} — z then ROW then COL. MapLibre substitutes
+  // {y} for the row, so a {z}/{x}/{y} template silently fetches a mirrored world.
+  check("with the WMTS axis order, row before column", keyless.tiles.endsWith("/{z}/{y}/{x}.jpg"));
+  check("EOX stops at z18, measured", keyless.maxzoom === 18);
   check(
-    "and carries its CC BY-NC-SA attribution",
-    keyless.attribution !== undefined && keyless.attribution.includes("by-nc-sa")
+    "and its attribution names the licence in full",
+    keyless.attribution.includes("Attribution-NonCommercial-ShareAlike 4.0 International")
   );
-  const keyed = satelliteBasemap("test-key");
-  check("with a key it is MapTiler instead", keyed.styleOrTiles.includes("api.maptiler.com"));
-  check("and the key reaches the URL", keyed.styleOrTiles.includes("key=test-key"));
   check(
-    "whose attribution names MapTiler and OpenStreetMap",
-    keyed.attribution !== undefined &&
-      keyed.attribution.includes("MapTiler") &&
-      keyed.attribution.includes("OpenStreetMap")
+    "credits EOX and the Copernicus source",
+    keyless.attribution.includes("EOX IT Services GmbH") && keyless.attribution.includes("modified Copernicus Sentinel")
+  );
+  check(
+    "and carries the links ows:AccessConstraints asks for",
+    keyless.attribution.includes("maps.eox.at/#data") && keyless.attribution.includes("https://eox.at")
+  );
+
+  const keyed = satelliteBasemap("te st&key");
+  check("with a key it is MapTiler instead", keyed.tiles.startsWith("https://api.maptiler.com/tiles/"));
+  check("the satellite-v2 tileset", keyed.tiles.includes("/satellite-v2/"));
+  // A key with a space or an ampersand must not break the query string or leak into it raw.
+  check("the key is URL-encoded, not pasted in raw", keyed.tiles.includes("key=te%20st%26key"));
+  check("MapTiler goes deeper than EOX", keyed.maxzoom === 22 && keyed.maxzoom > keyless.maxzoom);
+  check(
+    "its attribution links MapTiler's copyright page, which their terms require",
+    keyed.attribution.includes("maptiler.com/copyright/")
+  );
+  check(
+    "and credits OpenStreetMap",
+    keyed.attribution.includes("openstreetmap.org/copyright") &&
+      keyed.attribution.includes("OpenStreetMap contributors")
   );
   check("the MapTiler logo is required only on the keyed satellite path", needsMaptilerLogo("satellite", "k"));
   check("not on keyless satellite", !needsMaptilerLogo("satellite", null));

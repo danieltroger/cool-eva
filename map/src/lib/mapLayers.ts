@@ -1,7 +1,8 @@
-import { BAND_COLOURS, fixAgeClass, FIX_AGE_COLOURS, NO_SPEED_COLOUR } from './format';
+import { chargeFacts } from './chargeFacts';
+import { BAND_COLOURS, NO_SPEED_COLOUR } from './format';
 import type { FeatureCollection, Point } from 'geojson';
 import type { TrackGeoJson } from './track';
-import type { Map as MapLibreMap, StyleSpecification } from 'maplibre-gl';
+import type { FilterSpecification, Map as MapLibreMap, StyleSpecification } from 'maplibre-gl';
 import { satelliteBasemap, vectorStyleUrl, type BasemapKind } from './basemap';
 import type { ChargeSession, Waypoint } from './server/snapshot';
 
@@ -34,8 +35,10 @@ export function basemapStyle(
 		sources: {
 			imagery: {
 				type: 'raster',
-				tiles: [imagery.styleOrTiles],
+				tiles: [imagery.tiles],
 				tileSize: 256,
+				// See Basemap.maxzoom: without this MapLibre asks for z19+ that EOX 404s.
+				maxzoom: imagery.maxzoom,
 				// Attribution MapLibre cannot read from a bare tile template. Required by both
 				// providers; see basemap.ts for the sentence each one demands.
 				attribution: imagery.attribution
@@ -107,8 +110,20 @@ export function addTrackLayer(map: MapLibreMap, track: TrackGeoJson, overImagery
 	});
 }
 
-/** The two marker layers the toggles hide. `track` is deliberately not one of them. */
-export const TOGGLEABLE_LAYERS = { charges: 'charges', waypoints: 'waypoints' } as const;
+/**
+ * Filter the track AND its casing together.
+ *
+ * ⚠️ They share a source and must share a filter. The casing had none: on satellite it drew
+ * all 249 483 vertices underneath a 90-day coloured track, which is invisible in a fixture
+ * whose rides all fall inside the window and obvious on the real archive.
+ */
+export function setTrackFilter(map: MapLibreMap, filter: FilterSpecification | null): void {
+	for (const id of ['track', 'track-casing']) {
+		if (map.getLayer(id) !== undefined) {
+			map.setFilter(id, filter);
+		}
+	}
+}
 
 /**
  * Show or hide a marker layer.
@@ -171,7 +186,7 @@ export function chargeGeoJson(charges: ChargeSession[]): FeatureCollection {
 			properties: {
 				startTs: charge.startTs,
 				kwh: charge.whAdded / 1000,
-				colour: chargeColour(charge)
+				colour: chargeFacts(charge).colour
 			}
 		}));
 	return { type: 'FeatureCollection', features };
@@ -191,11 +206,4 @@ export function waypointGeoJson(waypoints: Waypoint[]): FeatureCollection {
 			properties: { seq: point.seq, ts: point.ts, provenance: point.provenance }
 		}));
 	return { type: 'FeatureCollection', features };
-}
-
-function chargeColour(charge: ChargeSession): string {
-	// ⚠️ The SAME function the list dots use. This was a second copy of the 30-minute and
-	// 6-hour thresholds, so a map pin and its row could have disagreed about how stale one
-	// position was, silently and in two colours.
-	return FIX_AGE_COLOURS[fixAgeClass(charge.startTs, charge.fixTs)];
 }

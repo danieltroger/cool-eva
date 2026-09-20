@@ -9,11 +9,18 @@
 export type BasemapKind = 'map' | 'satellite';
 
 export interface Basemap {
-	styleOrTiles: string;
-	/** Attribution MapLibre cannot derive for itself, as plain text. */
-	attribution?: string;
-	/** True when the imagery is coarse enough that the track needs a casing under it. */
-	imagery: boolean;
+	tiles: string;
+	/** Attribution MapLibre cannot derive from a bare tile template. */
+	attribution: string;
+	/**
+	 * The deepest zoom the service actually has tiles for.
+	 *
+	 * ⚠️ Not decoration, and not the same for both. MapLibre defaults a raster source to 22 and
+	 * EOX serves to **18** — measured, z18 → 200 and z19 → 404 — so without this, zooming past
+	 * 18 leaves holes in the imagery and logs a failed request per tile per pan. Its
+	 * capabilities advertise more matrices than it will serve. MapTiler's satellite goes to 22.
+	 */
+	maxzoom: number;
 }
 
 /**
@@ -41,27 +48,37 @@ export function vectorStyleUrl(dark: boolean): string {
 export const EOX_TILES =
 	'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2024_3857/default/g/{z}/{y}/{x}.jpg';
 
-/** The attribution the capabilities document publishes for that layer, carried verbatim. */
+/**
+ * The attribution EOX publishes for this layer.
+ *
+ * ⚠️ Carried whole, including the commercial-use sentence and both required links. An earlier
+ * version called itself "verbatim" while abbreviating the licence name and dropping
+ * "For commercial usage please see…" — and `ows:AccessConstraints` asks for links to
+ * `maps.eox.at/#data` and `eox.at`, which that version did not carry either. Attribution is a
+ * licence obligation, so the shortest safe edit is none.
+ */
 export const EOX_ATTRIBUTION =
-	'<a href="https://cloudless.eox.at">EOxCloudless</a> by EOX IT Services GmbH ' +
-	'(Contains modified Copernicus Sentinel data 2024) released under ' +
-	'<a rel="license" href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC BY-NC-SA 4.0</a>';
+	'<a href="https://cloudless.eox.at">EOxCloudless</a> by ' +
+	'<a href="https://eox.at">EOX IT Services GmbH</a> (Contains modified Copernicus Sentinel ' +
+	'data 2024) released under <a rel="license" ' +
+	'href="https://creativecommons.org/licenses/by-nc-sa/4.0/">Creative Commons ' +
+	'Attribution-NonCommercial-ShareAlike 4.0 International</a>. For commercial usage please ' +
+	'see <a href="https://cloudless.eox.at">cloudless.eox.at</a>. Data ' +
+	'<a href="https://maps.eox.at/#data">&copy; EOX and others</a>.';
+
+/** EOX serves z0–z18. Measured: z18 → 200, z19 → 404, whatever the capabilities advertise. */
+export const EOX_MAXZOOM = 18;
+
+/** MapTiler's satellite tileset goes to 22, per their tileset page. */
+export const MAPTILER_MAXZOOM = 22;
 
 /**
- * MapTiler satellite, used INSTEAD of EOX when a key is present, because it keeps resolving
- * where Sentinel-2 stops.
+ * MapTiler satellite, used INSTEAD of EOX when a key is present, because Sentinel-2 stops
+ * resolving where this keeps going.
  *
- * Their terms, read: a free account may use the service *"up to the quota allowed under the
- * free tiers"*, the free plan is *"Suitable for testing, personal or non-commercial use"*, and
- * overrun degrades rather than bills — *"service will pause until the next month"*.
- *
- * ⚠️ Raster is quota-hungry by their own figure — *"10-16 requests for raster tiles with 256px
- * size"* per map view, against 4 for vector — which is why satellite is opt-in and is not
- * remembered across reloads.
- *
- * ⚠️ A FREE account must show the MapTiler LOGO, not just the text: *"the Customer is required
- * to add '© MapTiler' (with Free Account the MapTiler logo)"*. MapLibre renders no TileJSON
- * logo, so the page adds that element itself when this path is in use.
+ * ⚠️ A FREE account must show the MapTiler LOGO, not only the text, and MapLibre renders no
+ * TileJSON `logo` — the page adds that element itself. Quota, attribution wording and why
+ * raster costs several times a vector view: docs/ride-map.md §"The satellite terms".
  */
 export function maptilerTiles(key: string): string {
 	return `https://api.maptiler.com/tiles/satellite-v2/{z}/{x}/{y}.jpg?key=${encodeURIComponent(key)}`;
@@ -75,12 +92,12 @@ export const MAPTILER_ATTRIBUTION =
 export function satelliteBasemap(maptilerKey: string | null): Basemap {
 	if (maptilerKey !== null && maptilerKey !== '') {
 		return {
-			styleOrTiles: maptilerTiles(maptilerKey),
+			tiles: maptilerTiles(maptilerKey),
 			attribution: MAPTILER_ATTRIBUTION,
-			imagery: true
+			maxzoom: MAPTILER_MAXZOOM
 		};
 	}
-	return { styleOrTiles: EOX_TILES, attribution: EOX_ATTRIBUTION, imagery: true };
+	return { tiles: EOX_TILES, attribution: EOX_ATTRIBUTION, maxzoom: EOX_MAXZOOM };
 }
 
 /** True when the MapTiler logo has to be on screen. */
