@@ -83,7 +83,7 @@ for (const target of [100, 101]) {
   const eta = chargeEta({ socPct: 40, targetPct: target, kw: 2 });
   if (eta.kind !== "bound") {
     failures.push(
-      `§3 target ${target} % gave "${eta.kind}", expected a lower bound — the last point alone runs 3.4-76.9 min on AC`
+      `§3 target ${target} % gave "${eta.kind}", expected a lower bound — predicted/actual drops 0.92 to 0.78 on AC between 99 and 100`
     );
   }
 }
@@ -124,24 +124,21 @@ if (packRing.since(SMOOTH_MS, now).values.length < MIN_SMOOTH_SAMPLES) {
   failures.push("§4 the fixture did not land enough samples to have a median — Ring.push drops bursts under 500 ms");
 }
 
-// ⚠️ The thin window is NOT an error case: AC's p10 is 0.5 rows/min, so a 60 s window holding
-// nothing is normal, and the newest reading is the right answer because silence on a
-// log-on-change signal means unchanged.
-const thinRing = ringFor("check-charge-eta-thin");
-thinRing.push(now - 5000, 7);
-if (thinRing.since(SMOOTH_MS, now).values.length >= MIN_SMOOTH_SAMPLES) {
-  failures.push("§4 the thin fixture is not thin");
+// ⚠️ THE FALLBACK, THROUGH THE SAME RING. The previous version built `thinRing`/`staleRing` under
+// their own keys — which `smoothedChargeKw` can never read, because it reads `ringFor("pack_kw")`
+// — so the branch went untested while a comment said otherwise. Two mutants proved it: returning
+// `null` instead of `latest()`, and `< MIN_SMOOTH_SAMPLES` → `< 0`, both SURVIVED.
+//
+// Asking far enough in the future empties the window without touching the ring, so the only value
+// that can come back is the newest: 40, the spike the median above deliberately ignored. One
+// number distinguishes the two paths.
+const farFuture = now + SMOOTH_MS * 10;
+if (packRing.since(SMOOTH_MS, farFuture).values.length !== 0) {
+  failures.push("§4 the far-future window is not empty, so it cannot exercise the fallback");
 }
-if (thinRing.latest() !== 7) {
-  failures.push("§4 a window too thin for a median must fall back to the newest reading");
-}
-const staleRing = ringFor("check-charge-eta-stale");
-staleRing.push(now - SMOOTH_MS * 10, 1.9);
-if (staleRing.since(SMOOTH_MS, now).values.length !== 0) {
-  failures.push("§4 the stale fixture should have an empty window");
-}
-if (staleRing.latest() !== 1.9) {
-  failures.push("§4 an empty window must still yield the newest reading rather than nothing");
+const fallback = smoothedChargeKw(farFuture);
+if (fallback !== 40) {
+  failures.push(`§4 an empty window returned ${fallback}; it must fall back to the newest reading (40)`);
 }
 
 if (failures.length > 0) {

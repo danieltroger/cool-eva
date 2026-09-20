@@ -2,12 +2,22 @@
 
 import van from "../vendor/van-1.6.1.js";
 import { GOOD, MUTED, WATCH } from "../lib/colors.js";
-import { chartTick, isStale, valueOf } from "../lib/store.js";
+import { chartTick, isStale, isStaleSampled, valueOf } from "../lib/store.js";
 import { chargeMode } from "../lib/charge-mode.js";
 import { monotonicNow } from "../lib/clock.js";
 import { BOUND_AT_OR_ABOVE, chargeEta, smoothedChargeKw } from "../lib/charge-eta.js";
 
 const { div } = van.tags;
+
+/**
+ * Whether the bike is charging at all, as a STATE.
+ *
+ * ⚠️ A `van.derive`, the way `charge.js` wraps the same call, because `chargeMode` reads `isStale`
+ * and `isStale` subscribes to `serverTime` — which `apply()` writes on every message. Calling it
+ * inside the tile's own binding paced the tile at the full message rate and rebuilt its DOM node
+ * ~10 Hz on a charging bike. Cheap per tick: a handful of Map lookups.
+ */
+const charging = van.derive(() => chargeMode(valueOf, isStale) !== "none");
 
 // When the charge gets there. Reads `soc`, `charge_soc_limit_pct` and a smoothed `pack_kw` — all
 // already on the wire — so there is nothing new on the Pi for this. The arithmetic and every
@@ -19,18 +29,25 @@ const { div } = van.tags;
 const FULL = 100;
 
 /**
- * How old `soc` may be before there is nothing to project from. The same 5 s the Pi's own
- * `SOC_MAX_AGE_MS` uses, and for the same reason: it rides a 20 Hz frame, so this means the BMS
- * has gone quiet rather than that the value is merely old.
+ * How old `soc` may be before there is nothing to project from.
+ *
+ * ⚠️ 12 s, NOT the Pi's `SOC_MAX_AGE_MS` of 5 s, and this is the same borrowed-constant error the
+ * boundary made before it: the Pi refreshes `LiveValue.ts` on every arrival, so 5 s there is a
+ * hundredfold margin — but the browser learns an age only from a `soc` CHANGE, which on a trickle
+ * is minutes apart, or from ws.ts's 5 s snapshot heartbeat. Against a 5 s threshold that sawtooths
+ * to 5049 ms and the tile blinks out on every late heartbeat. `charge-mode.js`'s
+ * CONTACTOR_LIVE_MS and `charge-write.js`'s CHARGE_SESSION_MAX_AGE_MS are both 12 s for exactly
+ * this, and this is the third file to need it.
  */
-const SOC_MAX_AGE_MS = 5_000;
+const SOC_MAX_AGE_MS = 12_000;
 
 /**
  * The ETA tile, or an empty node when there is nothing honest to say.
  *
  * ⚠️ The binding depends on `chartTick` deliberately — the clock time it prints moves with the
- * wall clock and nothing arrives to mark that. `pack_kw` is SAMPLED through `peek`/the ring rather
- * than subscribed, so the tile is paced by the tick and not by the message rate.
+ * wall clock and nothing arrives to mark that. Everything else it needs is either a plain signal
+ * state or SAMPLED (`isStaleSampled`, the ring), so the tick is what paces it and not the ~10 Hz
+ * message rate. `charging` above is a derive for the same reason.
  */
 export function ChargeEtaTile() {
   return div(() => {
@@ -40,12 +57,14 @@ export function ChargeEtaTile() {
     // under "plug in to see delivery", and regen puts a ride above the floor in 3.1 % of minute
     // windows. `chargeMode` is the same predicate the delivery tile above uses, so the two cannot
     // disagree about whether the bike is charging.
-    if (chargeMode(valueOf, isStale) === "none") {
+    if (charging.val === false) {
       return div();
     }
     const socPct = valueOf("soc");
-    // ⚠️ A stale `soc` is not a slow one — 0x200 is 20 Hz, so this means the BMS went quiet.
-    if (isStale("soc", SOC_MAX_AGE_MS)) {
+    // ⚠️ SAMPLED, not subscribed: `isStale` reads serverTime, which apply() writes on EVERY
+    // message, so calling it here would pace this whole binding at ~10 Hz mid-charge. The tick
+    // above is what paces it. Same reason app.js uses isStaleSampled throughout updateDwell.
+    if (isStaleSampled("soc", SOC_MAX_AGE_MS)) {
       return div();
     }
     const limitPct = valueOf("charge_soc_limit_pct");
@@ -70,9 +89,9 @@ export function ChargeEtaTile() {
       bound
         ? div(
             { class: "action-note", style: `color:${MUTED}` },
-            // Not a hedge on a number that is roughly right: the last point alone measures 3.4-76.9
-            // minutes on AC against 4-11 normally, so a point estimate here would be wrong, not
-            // imprecise. Every target up to 99 gets a real time.
+            // Not a hedge on a number that is roughly right: predicted/actual drops 0.92 → 0.78 on
+            // AC between target 99 and 100, so a point estimate here would be wrong rather than
+            // imprecise. Every target up to 99 gets a real time. docs/charge-eta.md.
             "The pack's own taper takes the last point, and how long that takes is not predictable from here."
           )
         : div()

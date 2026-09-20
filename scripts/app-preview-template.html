@@ -222,9 +222,8 @@ __CSS__
         },
         // The same DC charge with NO limit set, which is what `charge_soc_limit_pct = 0` means. It
         // exists for one tile: the ETA then targets 100 %, and past 99 the arithmetic is only a
-        // LOWER bound — the pack's own taper takes the last point and the archive measures it at
-        // 3.4-76.9 min on AC against 4-11 normally. Different words, different colour, and no
-        // check can look at either. docs/charge-eta.md.
+        // LOWER bound — predicted/actual drops 0.92 to 0.78 on AC between target 99 and 100.
+        // Different words, different colour, and no check can look at either. docs/charge-eta.md.
         dcFull: {
           signals: { ...DC_SIGNALS, "charge_soc_limit_pct": [0, "%", "charge"] },
         },

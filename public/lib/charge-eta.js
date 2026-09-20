@@ -47,7 +47,8 @@ export const MIN_CHARGE_KW = 0.1;
  *
  * ⚠️ 100, and the boundary is measured rather than borrowed. Predicted/actual by target: 88 → 0.81
  * DC / 0.95 AC, 90 → 0.82/0.96, 99 → 0.68/0.92, then 100 → 0.39/0.78. One discontinuity, between 99
- * and 100 — the last point alone measures 3.4–76.9 min on AC against 4–11 min/point normally.
+ * and 100. The last step's own durations are too few to carry more than that (7 archive-wide, all
+ * AC, none DC), so the table is the evidence, not the step.
  *
  * ⚠️ It is NOT `SOC_RATE_TRUSTED_BELOW` (88) from src/charge/soc.ts. That was measured for a
  * trailing-rate DC controller and says so; a different instrument measures its own boundary, and

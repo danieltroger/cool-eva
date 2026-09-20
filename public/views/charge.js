@@ -74,7 +74,8 @@ export function ChargeView() {
     // Render nothing unless this Pi has writes enabled — on an ordinary phone these are invisible
     // and Charge stays read-only. The first three also need a LIVE charge; the SOC limit does not
     // (a stored setting, gated on the bike-state gate) and shows its value on any phone.
-    // All four share the session/status machinery in ../lib/charge-write.js.
+    // The three write controls share the session/status machinery in ../lib/charge-write.js; the ETA
+    // tile is read-only and shares none of it.
     ChargeEtaTile(),
     ChargeAutoControl(),
     ChargeCurrentControl(),

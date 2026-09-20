@@ -254,7 +254,7 @@ const CHECKS: SelfCheck[] = [
     covers:
       "the Charge tab's ETA: that it prices an SOC point at the 199 Wh the pack actually ABSORBS — measured by " +
       "integrating pack_kw, not the 160 Wh that residual_energy_wh implies, because that field is discharge-side " +
-      "and makes the answer 18 % optimistic — and divides by measured power, so one point at 190 W takes exactly " +
+      "and makes the answer 18 % optimistic — and divides by measured power, so one point at 199 W takes exactly " +
       "an hour; that it says nothing at all when there is no SOC, no target, the target is already passed, or " +
       "pack_kw is below the 0.1 kW floor, which is ONE rule for not-charging, a stalled charge and a discharging " +
       "pack and is a floor rather than a zero test because 0.02 kW returns a forty-day ETA; ⚠️ that the boundary " +
