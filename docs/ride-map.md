@@ -274,3 +274,46 @@ The 🚨 claim that `ts < 2000000000000` guarded every query was false as writte
 ### The line still drew what the ride list threw away
 
 `RIDES_SQL` drops fixes logged while plugged in; the track did not. **41 of 50 sessions** contain some, **17 044 points** of stationary scatter across the archive, drawn as if ridden. The builder now takes charge **intervals** rather than instants, drops the points inside them, and breaks there. Measured after: 266 689 → **249 483** vertices, 17 206 points gone.
+
+## The satellite terms, read rather than remembered
+
+⚠️ **The first attempt at this rejected EOX on the strength of a hostname that does not exist.** `docs.eox.at` is NXDOMAIN — `Host docs.eox.at not found: 3(NXDOMAIN)`. It was invented, it failed, and the failure was written up as "no terms read, so no recommendation." That is not a failed check; it is a check of nothing, reported as evidence about somebody's licensing. It is the same rule as the `#8018` citation, in mirror image: a **could not check** is worth only as much as what was actually opened.
+
+What the real sources say:
+
+- **EOX Sentinel-2 cloudless** — `https://tiles.maps.eox.at/wmts/1.0.0/WMTSCapabilities.xml` answers 200 with no key (67 911 B) and carries `s2cloudless-2022` … `s2cloudless-2025`. Each layer publishes its own attribution inline: _"EOxCloudless … by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2024) released under Creative Commons **BY-NC-SA 4.0**"_ (2016 and 2017 are BY 4.0). `ows:AccessConstraints`: _"Proper attribution is required for any usage."_ `s2maps.eu` redirects to `cloudless.eox.at`, whose `/license-non-commercial` is JS-rendered — which is why a plain `curl` shows nothing and is a fact about curl, not about the licence.
+- **MapTiler** — a free account may use the service _"up to the quota allowed under the free tiers"_; the free plan is _"Suitable for testing, personal or non-commercial use"_; attribution must include _"'© MapTiler' (with Free Account the MapTiler logo)"_ and stay _"always visible and readable"_; overrun degrades rather than bills — _"service will pause until the next month"_. Raster costs _"10-16 requests for raster tiles with 256px size"_ per map view against 4 for vector.
+- **Esri World Imagery** — its own item metadata (`licenseInfo`, via the sharing REST API) says _"This work is licensed under the Esri Master License Agreement"_, which one has to be party to. Not used.
+
+**So EOX is the default and MapTiler is the upgrade.** EOX needs no key, no `.env` and no quota, and non-commercial covers one person looking at where their own motorcycle went; ShareAlike does not reach a viewer that redistributes no derivative. The single reason to prefer MapTiler when a key exists is resolution: Sentinel-2 is 10 m and overzooms into mush past roughly z14. A second reason to keep EOX first: MapLibre renders no TileJSON `logo`, so the free MapTiler path needs a logo element the page has to add itself.
+
+⚠️ **The track needs a casing over imagery.** `paint_line` in style-spec 26.4.4 has no halo property — halos exist only on symbols — so a wider dark line underneath is the only way. Dimming the imagery instead would be a "Manipulation Or Modification" of it, which MapTiler's terms treat differently from displaying it.
+
+## Memory with imagery
+
+Same method as before — whole browser process tree, full archive, satellite on:
+
+|                                         | tree                     | page renderer | GPU    |
+| --------------------------------------- | ------------------------ | ------------- | ------ |
+| first paint                             | 1 319 MB                 | 411 MB        | 222 MB |
+| during 90 s of pan/zoom (10 801 frames) | 1 434 → 1 446 → 1 395 MB |               |        |
+| settled                                 | **1 398 MB**             | 482 MB        | 222 MB |
+
+Against the vector figures (1 013 MB at first paint, 1 235 MB settled), imagery costs about **+300 MB at first paint and +160 MB settled**, peaking at **1 446 MB**. It plateaus and gives memory back, like the vector case. JS heap is unchanged at 43–46 MB.
+
+⚠️ The growth is in the **renderer**, which holds decoded JPEG tiles — the GPU process is actually _lower_ on satellite (222 MB) than on vector (291 MB), where many style layers rasterise separately. Peaking at 1 446 MB leaves little headroom under the ~1.5 GB guideline, which is a third reason satellite is opt-in and is not remembered across reloads.
+
+## What the phase-1.5 diff review found
+
+Four of these were real defects in shipped code, and two of them are the same shape as the citation failures above: **a ⚠️ comment asserting something the code did not do.** A comment that describes intent rather than behaviour is not documentation, it is a second bug.
+
+- **The casing was never filtered.** `track` and `track-casing` share a source, and only `track` was ever passed to `setFilter` — so on satellite the casing drew all **249 483** vertices underneath a 90-day coloured track. Invisible in the fixture, whose four rides all fall inside the window. There is now one `setTrackFilter()` that sets both, and the check asserts they match.
+- **`applyMapState()` did not restore the selected ride**, while its own comment and the PR body both said it rebuilt everything `setStyle` destroys. There was no `selectedRide` state at all. Flipping to satellite while looking at one ride silently widened the track back to the whole window.
+- **The raster source had no `maxzoom`.** Measured: EOX serves z18 (200) and **404s at z19**, while its capabilities advertise more matrices and MapLibre defaults to 22 — holes in the imagery plus a failed request per tile per pan. `Basemap.maxzoom` is 18 for EOX and 22 for MapTiler, because one constant cannot serve both.
+- **`disabled` costs a row its focus.** Measured in Chrome: `.focus()` on a disabled button leaves `activeElement` unchanged and Tab skips it, so a keyboard user could reach neither the row nor the explanation of why it is inert. It is `aria-disabled` now, which announces the state and keeps the row reachable — verified: `focusableDisabled: true`.
+
+⚠️ **Seven of the new licence assertions could not fail.** `keyless.tiles === EOX_TILES` compares the function to the constant it returns, so it survives any change to the host, the layer id, the axis order or the extension; `includes("by-nc-sa")` matched a URL fragment rather than the licence name. Each fact is asserted separately now, and all eight mutants die — including swapping `{z}/{y}/{x}` for `{z}/{x}/{y}`, which would have silently fetched a mirrored world.
+
+⚠️ **"Carried verbatim" was false.** The attribution abbreviated the licence name, dropped "For commercial usage please see…", and omitted the links `ows:AccessConstraints` asks for. It is whole now. Attribution is a licence obligation; the shortest safe edit is none.
+
+Also fixed: the fixture gained a **charge stop that predates every GPS row**, so the `lat IS NULL` path is exercised by the query, the disabled row and a screenshot (the real archive has 2 of 50); the tooltip is clamped on both axes against the map's own box rather than a bare `240`; a point fly clears any per-ride filter, which otherwise left a pin on an empty basemap; attribution is compact only below 640 px, since MapLibre collapses a compact control on the first drag at any width and MapTiler asks for "always visible and readable"; the MapTiler logo moved off the scale control; `chargeColour` is gone, so the pin and the row get their colour from one function; and the marker chips show ● / ○ rather than signalling "on" with opacity alone, which read as _disabled_ rather than _hidden_.
