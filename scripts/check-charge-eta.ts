@@ -124,6 +124,23 @@ if (packRing.since(SMOOTH_MS, now).values.length < MIN_SMOOTH_SAMPLES) {
   failures.push("§4 the fixture did not land enough samples to have a median — Ring.push drops bursts under 500 ms");
 }
 
+// ⚠️ And the THRESHOLD'S OWN VALUE, which rode on nothing until now: every other fixture is either
+// well above it or empty, so `MIN_SMOOTH_SAMPLES < 1` and `3 -> 1` both survived. The samples above
+// are 1 s apart, so asking 57.5 s later leaves EXACTLY TWO in the window — the 2 kW at now-2000 and
+// the 40 at now-500. Two is below the threshold, so the answer must be the newest (40); were the
+// threshold 1 or 2 it would be their median (21). One number, both mutants.
+const twoInWindow = now + SMOOTH_MS - 2500;
+const inWindow = packRing.since(SMOOTH_MS, twoInWindow).values.length;
+if (inWindow !== 2) {
+  failures.push(`§4 the two-sample window holds ${inWindow}, not 2 — it cannot pin MIN_SMOOTH_SAMPLES`);
+}
+const belowThreshold = smoothedChargeKw(twoInWindow);
+if (belowThreshold !== 40) {
+  failures.push(
+    `§4 a window of 2 returned ${belowThreshold}; below MIN_SMOOTH_SAMPLES (${MIN_SMOOTH_SAMPLES}) it must be the newest, 40, not their median 21`
+  );
+}
+
 // ⚠️ THE FALLBACK, THROUGH THE SAME RING. The previous version built `thinRing`/`staleRing` under
 // their own keys — which `smoothedChargeKw` can never read, because it reads `ringFor("pack_kw")`
 // — so the branch went untested while a comment said otherwise. Two mutants proved it: returning

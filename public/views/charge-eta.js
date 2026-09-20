@@ -39,7 +39,7 @@ const FULL = 100;
  * CONTACTOR_LIVE_MS and `charge-write.js`'s CHARGE_SESSION_MAX_AGE_MS are both 12 s for exactly
  * this, and this is the third file to need it.
  */
-const SOC_MAX_AGE_MS = 12_000;
+export const SOC_MAX_AGE_MS = 12_000;
 
 /**
  * The ETA tile, or an empty node when there is nothing honest to say.

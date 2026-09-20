@@ -15,21 +15,13 @@ import { monotonicNow } from "./clock.js";
 // Every figure below is measured, and docs/charge-eta.md has the tables and the method.
 
 /**
- * What the pack ABSORBS per SOC point, integrated from `pack_kw` across the archive's own charging
- * runs. Two independent integrations: **AC n=10 median 198.8, DC n=34 median 199.7** (measured
- * between SOC transition instants, so no level-differencing), and an earlier pass at DC 196 / AC
- * 185. 199 is the figure the better method gives for both modes.
+ * What the pack ABSORBS per SOC point, integrated from `pack_kw` across the archive's charging
+ * runs: AC n=10 median 198.8, DC n=34 median 199.7, measured between SOC transition instants.
  *
- * ⚠️ It is a compromise, not a constant of nature: per SOC band, DC rises monotonically from 188.6
- * (20-29 %) to 208.1 (80-89 %), so 199 runs ~4 % optimistic exactly where a charge limit sits. The
- * honest reading is that this tile is good to roughly ±5 %, which is minutes on AC and seconds on
- * DC. A band table would buy that back and is not worth the fit.
- *
- * ⚠️ NOT `residual_energy_wh ÷ (soc/100)`, which implies 160 Wh and is ~20 % optimistic because
- * that field is DISCHARGE-side — charging a point costs more than discharging one returns, and
- * `soh` reads 100.0 across the archive so it is accounting, not degradation. NOT the 21.5 kWh
- * nameplate either. Stated per-point rather than as a "capacity" because calling it a capacity is
- * what produced both of those wrong values before this one.
+ * ⚠️ A compromise good to about ±5 %: within DC it drifts 188.6 Wh (20-29 %) to 208.1 (80-89 %),
+ * so it runs slightly optimistic where a charge limit sits. And it is emphatically NOT
+ * `residual_energy_wh ÷ soc`, which is discharge-side, nor the 21.5 kWh nameplate — both were
+ * tried and both were wrong. Why, and in which direction: docs/charge-eta.md.
  */
 export const WH_PER_SOC_POINT = 199;
 
@@ -98,17 +90,12 @@ export function chargeEta({ socPct, targetPct, kw }) {
 
 /**
  * A representative charging power: the median of `pack_kw` over the last SMOOTH_MS, or the newest
- * reading when the window is too thin to have a median.
+ * reading when the window holds fewer than MIN_SMOOTH_SAMPLES.
  *
- * ⚠️ `pack_kw` does NOT arrive at 20 Hz. `notifyChange` sits inside `record()`'s deadband branch,
- * so the patch stream is the ride log's row stream, gated at 0.05 kW — measured DC 28 rows/min, AC
- * 7.2, AC p10 **0.5**. A 60 s window can legitimately hold zero samples, and falling back to the
- * newest is correct rather than a concession: silence on a log-on-change signal means the value is
- * UNCHANGED, not missing. Peak-to-peak inside 60 s is 3-5 %, so the window is not doing much work
- * on DC either — it is there to stop a taper step jumping the readout.
- *
- * ⚠️ Reads the ring with an explicit `now`, never `valueOf()`: a binding that reads a signal is
- * paced at message rate, and this is sampled from a chartTick-paced render.
+ * ⚠️ `pack_kw` does NOT arrive at 20 Hz — `notifyChange` sits inside `record()`'s deadband branch,
+ * so the patch stream is the ride log's row stream (AC p10 0.5 rows/min). A 60 s window can hold
+ * nothing, and the fallback is correct rather than a concession: silence on a log-on-change signal
+ * means UNCHANGED. Rates and the rest: docs/charge-eta.md.
  *
  * @param {number} [now] monotonic; defaults to now. Passed in by the check.
  * @returns {number | null}

@@ -3,6 +3,7 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { connection, serverTime, signalState } from "../public/lib/store.js";
 import { HEARTBEAT_MS } from "../src/ws.ts";
+import { SOC_MAX_AGE_MS as ETA_SOC_MAX_AGE_MS } from "../public/views/charge-eta.js";
 
 // charge-write.js fetches /vcu-write on the session edge, and a relative URL is not a URL
 // outside a browser. Stubbed BEFORE the module is imported (hence the dynamic import below) so
@@ -99,11 +100,21 @@ if (nullReadings > 0) {
 //
 // §1 fails only for windows below the worst age it happens to reach. This is the invariant
 // behind it, and it is the one that catches someone "restoring" the 5000 to match the Pi.
-if (CHARGE_SESSION_MAX_AGE_MS < HEARTBEAT_MS * 2) {
-  failures.push(
-    `§2 CHARGE_SESSION_MAX_AGE_MS (${CHARGE_SESSION_MAX_AGE_MS} ms) leaves no room for a single missed ` +
-      `heartbeat (${HEARTBEAT_MS} ms). charge-mode.js allows 12 s for exactly this reason`
-  );
+// ⚠️ EVERY browser-side staleness window on this tab, not just this one. The rule is the same for
+// all of them and the mistake it catches has now been made twice: `charge-eta.js`'s SOC window was
+// written as 5 s, "the same 5 s the Pi uses" — which is the failure this section's own comment
+// describes, one file later. A window is on the browser's clock the moment it is read in public/.
+const BROWSER_WINDOWS: [string, number][] = [
+  ["CHARGE_SESSION_MAX_AGE_MS", CHARGE_SESSION_MAX_AGE_MS],
+  ["charge-eta.js SOC_MAX_AGE_MS", ETA_SOC_MAX_AGE_MS],
+];
+for (const [name, window] of BROWSER_WINDOWS) {
+  if (window < HEARTBEAT_MS * 2) {
+    failures.push(
+      `§2 ${name} (${window} ms) leaves no room for a single missed heartbeat (${HEARTBEAT_MS} ms). ` +
+        "charge-mode.js allows 12 s for exactly this reason"
+    );
+  }
 }
 
 // ── §3 no render may reach serverTime through liveChargeType ───────────────
