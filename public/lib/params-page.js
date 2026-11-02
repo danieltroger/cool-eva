@@ -1,6 +1,7 @@
 // @ts-check
 
 import { ageInWords } from "./format.js";
+import { request } from "./transport.js";
 
 /** @typedef {import("../../src/http/vcu-params.ts").VcuParamsResponse} VcuParamsResponse */
 /** @typedef {import("../../src/http/vcu-params.ts").VcuParameterRow} VcuParameterRow */
@@ -36,7 +37,7 @@ void load();
 
 async function load() {
   try {
-    const response = await fetch("/vcu-params", { cache: "no-store" });
+    const response = await request("/vcu-params", { cache: "no-store" });
     if (!response.ok) {
       statusLine.textContent = `/vcu-params returned HTTP ${response.status}`;
       return;

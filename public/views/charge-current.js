@@ -15,6 +15,7 @@ import {
   sessionLive,
   writesEnabled,
 } from "../lib/charge-write.js";
+import { request } from "../lib/transport.js";
 
 const { button, div, input } = van.tags;
 
@@ -358,7 +359,7 @@ async function performChargeCurrent() {
   busy.val = true;
   let payload = /** @type {VcuWriteResponse | null} */ (null);
   try {
-    const response = await fetch(`/vcu-write?${query}`, {
+    const response = await request(`/vcu-write?${query}`, {
       method: "POST",
       cache: "no-store",
       // The write endpoint's header, deliberately NOT the read path's `service-mode`. See

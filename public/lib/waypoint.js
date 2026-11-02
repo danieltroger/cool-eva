@@ -1,5 +1,7 @@
 // @ts-check
 
+import { request } from "./transport.js";
+
 /** @typedef {import("../../src/http/waypoint.ts").WaypointReply} WaypointReply */
 
 // Saving a waypoint from the phone: the menu button in ../views/sheet.js, and nothing
@@ -24,7 +26,7 @@
  */
 export async function saveWaypoint() {
   try {
-    const response = await fetch("/waypoint", {
+    const response = await request("/waypoint", {
       // The endpoint answers Siri in plain text by default (src/http/waypoint.ts).
       // This is the same request, asking for the structured form.
       headers: { Accept: "application/json" },

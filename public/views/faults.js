@@ -8,6 +8,7 @@ import { Fact, SectionLabel } from "../lib/tiles.js";
 import * as colors from "../lib/colors.js";
 import { RecordedValues, hasRecordedValues, loadRecordedValues } from "./recorded-values.js";
 import { ExpectedToggle, expectedNote, faultKey, isExpected, loadExpectedFaults } from "../lib/expected-faults.js";
+import { request } from "../lib/transport.js";
 
 const { button, div, span } = van.tags;
 
@@ -848,7 +849,7 @@ async function refreshStoredCodes() {
   }
   storedFetchInFlight = true;
   try {
-    const response = await fetch("/stored-dtcs");
+    const response = await request("/stored-dtcs");
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
@@ -874,7 +875,7 @@ async function loadTable() {
   }
   fetchInFlight = true;
   try {
-    const response = await fetch("/dtc-table");
+    const response = await request("/dtc-table");
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
@@ -905,7 +906,7 @@ async function loadInfokeys() {
   }
   infokeysInFlight = true;
   try {
-    const response = await fetch("/fault-infokeys");
+    const response = await request("/fault-infokeys");
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }

@@ -2,6 +2,7 @@
 
 import van from "../vendor/van-1.6.1.js";
 import { MUTED, WARN } from "./colors.js";
+import { request } from "./transport.js";
 
 // Which codes this bike is expected to have, as the Pi holds them.
 //
@@ -63,7 +64,7 @@ export async function loadExpectedFaults() {
   }
   inFlight = true;
   try {
-    const response = await fetch("/expected-faults", { cache: "no-store" });
+    const response = await request("/expected-faults", { cache: "no-store" });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
@@ -100,7 +101,7 @@ export async function setExpectedFault(component, symptom, expected) {
   writing.val = key;
   expectedFaultsError.val = { key: "", message: "" };
   try {
-    const response = await fetch(
+    const response = await request(
       `/expected-faults?component=${component}&symptom=${symptom}&expected=${expected ? 1 : 0}`,
       {
         method: "POST",

@@ -13,6 +13,8 @@ import { FanControl, refreshFanStatus } from "./fan.js";
 import { TripStats } from "./trip-stats.js";
 import { WaypointList, collapseWaypointList } from "./waypoints.js";
 import { blankWaypointMemory, shouldRefreshOnWaypoint } from "../lib/waypoint-list.js";
+import { download, request } from "../lib/transport.js";
+import { BleSection } from "./ble-connect.js";
 
 const { button, div, h2, h3 } = van.tags;
 
@@ -83,6 +85,9 @@ export function Sheet() {
       // found first rather than buried below the stats — neither is worth reaching for at
       // speed, but when the sheet is open they are the controls most likely wanted, and
       // the page flips under your thumb as you tap. Persisted in lib/theme.js, lib/units.js.
+      // First on the BLE copy of the dashboard, because until it is filled in nothing else
+      // on the sheet can reach the Pi. Renders nothing on the wifi-served one.
+      BleSection(),
       h2({ class: "sheet-heading" }, "Screen"),
       ThemeToggle(),
       h2({ class: "sheet-heading" }, "Units"),
@@ -189,6 +194,9 @@ function WaypointButton() {
   );
 }
 
+/** BLE-only: over wifi the browser's download manager shows progress, so this stays empty. */
+const downloadProgress = van.state("");
+
 /** Downloads the sealed ride log, with its size known before you commit to it. */
 function DownloadButton() {
   return div(
@@ -196,10 +204,19 @@ function DownloadButton() {
       {
         class: "action",
         onclick: () => {
-          // A plain navigation rather than fetch(): this can be tens of megabytes
-          // over garage wifi, and the browser's own download UI handles pausing,
-          // backgrounding and progress far better than anything here could.
-          location.href = "/dl";
+          downloadProgress.val = "";
+          download("/dl", "cool-eva.celog", (receivedBytes, totalBytes) => {
+            downloadProgress.val =
+              totalBytes === null ? bytes(receivedBytes) : `${bytes(receivedBytes)} of ${bytes(totalBytes)}`;
+          }).then(
+            () => {
+              downloadProgress.val = "";
+            },
+            error => {
+              console.warn("sheet: ride log download failed", error);
+              downloadProgress.val = `failed: ${/** @type {Error} */ (error).message}`;
+            }
+          );
         },
       },
       () => {
@@ -212,7 +229,8 @@ function DownloadButton() {
         }
         return `⬇  Download ride log (${bytes(current.log.bytes)})`;
       }
-    )
+    ),
+    () => (downloadProgress.val ? div({ class: "action-note" }, downloadProgress.val) : div())
     // No caption under the button. The file count that used to sit here is still
     // in the status payload (`log.files`) and still correct — it was dropped for
     // screen space, not because it was wrong. The two facts it carried are worth
@@ -308,8 +326,8 @@ export function installWaypointRefresh() {
 /** Refreshes /status while the sheet is open, and once at startup for the log size. */
 export async function refreshStatus() {
   try {
-    const response = await fetch("/status");
-    status.val = await response.json();
+    const response = await request("/status");
+    status.val = /** @type {StatusPayload} */ (await response.json());
   } catch (error) {
     console.warn("status: could not refresh", error);
   }

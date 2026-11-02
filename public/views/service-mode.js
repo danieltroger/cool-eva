@@ -9,6 +9,7 @@ import { monotonicNow, since } from "../lib/clock.js";
 import { ageInWords, duration } from "../lib/format.js";
 import { MUTED } from "../lib/colors.js";
 import { VcuWrite, refreshVcuWrite } from "./vcu-write.js";
+import { download, request } from "../lib/transport.js";
 
 const { a, button, div, h3 } = van.tags;
 
@@ -74,7 +75,7 @@ export function ServiceMode() {
     FreezeFrameReadButton(() => state.val),
     div(
       { class: "action-note" },
-      a({ href: "/params.html", style: `color:${MUTED}` }, "Open the full parameter table →")
+      a({ href: "params.html", style: `color:${MUTED}` }, "Open the full parameter table →")
     ),
     // ⚠️ Everything above this line reads. Everything below it can CHANGE the
     // motorcycle, and it is behind its own switch (SERVICE_WRITE_ENABLED, off by
@@ -139,7 +140,7 @@ function ReadButton() {
       onkeydown: refuseKeyRepeat,
       onclick: () => {
         if (isRunning()) {
-          void request("DELETE");
+          void sendVcuRead("DELETE");
           return;
         }
         if (armed.val !== SWEEP_KEY) {
@@ -247,10 +248,12 @@ function ExportButton() {
         class: "action action-quiet",
         disabled: () => (state.val?.export.rows ?? 0) === 0,
         onclick: () => {
-          // A plain navigation rather than fetch(): the browser's own download UI
-          // is what puts the file somewhere the phone can share it from, which is
-          // the entire point of exporting it. Same reasoning as the ride log.
-          location.href = "/vcu-backup.csv";
+          // ./lib/transport.js download(): a navigation on wifi, so the browser's own
+          // download UI puts the file somewhere the phone can share it from — the entire
+          // point of exporting it — and a tunnelled blob over BLE, where there is no URL.
+          download("/vcu-backup.csv", "vcu_backup.csv").catch(error => {
+            console.warn("service-mode: export download failed", error);
+          });
         },
       },
       () => {
@@ -290,9 +293,9 @@ function ExportButton() {
  *
  * @param {"GET" | "POST" | "DELETE"} method
  */
-async function request(method) {
+async function sendVcuRead(method) {
   try {
-    const response = await fetch("/vcu-read", {
+    const response = await request("/vcu-read", {
       method,
       cache: "no-store",
       // Not a secret and not authentication. A header a CORS-simple request cannot
@@ -343,7 +346,7 @@ function startPolling() {
       polling = false;
       return;
     }
-    await request("GET");
+    await sendVcuRead("GET");
     tick.val = tick.val + 1;
     if (!shouldKeepPolling()) {
       polling = false;
@@ -362,7 +365,7 @@ let sheetIsOpen = () => false;
 
 /** The sweep's firing site. Named so scripts/check-arming.ts can find and scan it. */
 function performSweep() {
-  return request("POST");
+  return sendVcuRead("POST");
 }
 
 /**
@@ -376,7 +379,7 @@ export function refreshServiceMode(isOpen) {
   armed.val = "";
   refreshLifetimeRead();
   refreshFreezeFrameRead();
-  void request("GET");
+  void sendVcuRead("GET");
   // The write section keeps its own state and its own endpoint, so it is refreshed
   // alongside rather than folded in — and its refresh DISARMS every button it has,
   // which is the property that matters here: re-opening the sheet must never find a

@@ -1584,3 +1584,20 @@ body {
   /* The one part of this control that says "there is more behind it". It was text-
      sized and trailing two spaces after a sentence, which read as punctuation. */
 }
+
+/* The header's BLE Connect button (views/ble-connect.js), only ever present on a BLE copy
+   of the dashboard. Its own class rather than `.action`: that one is sized for a gloved
+   thumb in the sheet (min-height 3.75rem), which in the header wrapped the button and
+   squeezed the brand onto two lines. */
+.ble-connect {
+  flex: none;
+  white-space: nowrap;
+  background: var(--tile);
+  border: 1px solid var(--tile-edge);
+  border-radius: 999px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.3rem 0.75rem;
+  cursor: pointer;
+}

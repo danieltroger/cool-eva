@@ -4,6 +4,7 @@ import van from "../vendor/van-1.6.1.js";
 import { isStale, valueOf } from "./store.js";
 import { armed } from "./arming.js";
 import { monotonicNow, since } from "./clock.js";
+import { request } from "./transport.js";
 
 // The session/status machinery the charge-tab controls share — charge-current.js sets a current,
 // charge-stop.js ends the charge, charge-soc-limit.js sets the SOC limit, charge-auto.js switches
@@ -276,7 +277,7 @@ export async function ensureWriteStatus() {
  */
 export async function fetchChargeWriteStatus() {
   try {
-    const response = await fetch("/vcu-write?list=0", { cache: "no-store" });
+    const response = await request("/vcu-write?list=0", { cache: "no-store" });
     const payload = /** @type {VcuWriteResponse} */ (await response.json());
     // Disarmed before the new status lands: writes switched off across the refresh must not
     // leave a primed button behind.

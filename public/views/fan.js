@@ -13,6 +13,7 @@ import {
   formatDuty,
 } from "../lib/fan-display.js";
 import { createFanCommandQueue } from "../lib/fan-command-queue.js";
+import { request } from "../lib/transport.js";
 
 const { button, div, h2, input } = van.tags;
 
@@ -100,7 +101,7 @@ export function FanControl() {
  */
 export async function refreshFanStatus() {
   try {
-    const response = await fetch("/fan", { cache: "no-store" });
+    const response = await request("/fan", { cache: "no-store" });
     if (!response.ok) {
       available.val = false;
       status.val = null;
@@ -401,7 +402,7 @@ const MODE_QUERY = { automatic: "auto", manual: "manual", fun: "fun" };
 async function postFanCommand(command, isSuperseded) {
   const query = "duty" in command ? `duty=${command.duty}` : `mode=${MODE_QUERY[command.mode]}`;
   try {
-    const response = await fetch(`/fan?${query}`, {
+    const response = await request(`/fan?${query}`, {
       method: "POST",
       cache: "no-store",
       // Not decoration: a custom header is what makes this NOT a simple request, so a
