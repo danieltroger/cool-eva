@@ -4,6 +4,7 @@ import van from "../vendor/van-1.6.1.js";
 import { GOOD, MUTED, WARN } from "../lib/colors.js";
 import { chargeType, onChargeSessionEnd, writesEnabled } from "../lib/charge-write.js";
 import { valueOf } from "../lib/store.js";
+import { request } from "../lib/transport.js";
 
 const { button, div } = van.tags;
 
@@ -213,7 +214,7 @@ let latestRead = 0;
 async function refresh() {
   const read = (latestRead += 1);
   try {
-    const response = await fetch("/charge-auto", { cache: "no-store" });
+    const response = await request("/charge-auto", { cache: "no-store" });
     const payload = /** @type {ChargeAutoResponse} */ (await response.json());
     if (read !== latestRead) {
       // A newer read was issued while this one was in flight, so its answer is at least as fresh.
@@ -265,7 +266,7 @@ async function toggle(wanted) {
   busy.val = true;
   failure.val = "";
   try {
-    const response = await fetch(`/charge-auto?mode=${wanted}`, {
+    const response = await request(`/charge-auto?mode=${wanted}`, {
       method: "POST",
       cache: "no-store",
       headers: { "X-Cool-Eva": "charge-auto" },

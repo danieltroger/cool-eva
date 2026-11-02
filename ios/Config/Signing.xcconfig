@@ -1,0 +1,9 @@
+// Signing for the iOS app. These are the committed defaults; your own Apple team (and,
+// on a free account, a bundle id of your own) go in Signing.local.xcconfig beside this
+// file, which is gitignored. Not in Xcode's Signing pane: that writes the team into
+// project.pbxproj, which is committed to a public repo. docs/ios-app.md §"Signing".
+DEVELOPMENT_TEAM =
+PRODUCT_BUNDLE_IDENTIFIER = io.github.andy-siu.cool-eva
+CODE_SIGN_STYLE = Automatic
+
+#include? "Signing.local.xcconfig"

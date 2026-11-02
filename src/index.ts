@@ -61,6 +61,7 @@ import { setupWs } from "./ws.ts";
 import { closeEncryptedLog, flushEncryptedLog, initEncryptedLog } from "./storage/encrypted-log.ts";
 import { startSealOnPark } from "./storage/seal-on-park.ts";
 import { startBleClient, type BleClient } from "./ble/client.ts";
+import { startBleServer, type BleServer } from "./ble-server/server.ts";
 import type { RawChannel } from "socketcan";
 
 // Thin orchestrator: wire DB + coolant probes + CAN decode/OBD + HTTP/WS together.
@@ -87,6 +88,8 @@ const UPDATE_DIR = process.env.UPDATE_DIR ?? ROOT;
 //   OBD_ENABLED=0 → passive/listen-only: decode broadcasts but don't TX OBD polls
 //   ELOCK_ENABLED=0 → skip the one-shot keys-paired read from the E-LOCK ECU
 //   BLE_ENABLED=0 / BLE_MAC=… → skip the Connectivity Hub link, or pin its address
+//   BLE_SECRET=… → ⚠️ OPT IN. Also serve the dashboard over BLE, to phones that know this
+//     secret (docs/ble-server.md). Unset, the Pi does not advertise at all
 //   GPS_TIME_SYNC=0 → never step the system clock from satellite time
 //   RIDE_LOG_PUBKEY=… / RIDE_LOG_DIR=… → the X25519 public key that enables the
 //     write-only encrypted log, and where its sealed .celog segments go
@@ -101,6 +104,7 @@ const OBD_ENABLED = process.env.OBD_ENABLED !== "0";
 const ELOCK_ENABLED = process.env.ELOCK_ENABLED !== "0";
 const BLE_ENABLED = process.env.BLE_ENABLED !== "0";
 const BLE_MAC = process.env.BLE_MAC ?? "";
+const BLE_SECRET = process.env.BLE_SECRET ?? "";
 const RIDE_LOG_PUBKEY = process.env.RIDE_LOG_PUBKEY ?? join(ROOT, "ride-log-key.public.pem");
 const RIDE_LOG_DIR = process.env.RIDE_LOG_DIR ?? join(ROOT, "ride-logs");
 const CUSTOM_BMS_CONFIG = process.env.CUSTOM_BMS_CONFIG === "1";
@@ -660,6 +664,27 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log(`HTTP + WebSocket server on http://0.0.0.0:${PORT}`);
 });
 
+// --- The same dashboard over BLE (docs/ble-server.md) ---
+// A tunnel into the server above, so it can only start once that one is listening. A
+// failure here is logged and survived: the wifi dashboard and the ride log must not go
+// down because bluetoothd refused an advertisement.
+let bleServer: BleServer | null = null;
+if (BLE_SECRET) {
+  server.once("listening", () => {
+    startBleServer({ secret: BLE_SECRET, httpPort: PORT }).then(
+      started => {
+        bleServer = started;
+        console.log("ble-server: serving the dashboard over BLE");
+      },
+      error => {
+        console.warn(`ble-server: could not start, the dashboard stays wifi-only: ${(error as Error).message}`);
+      }
+    );
+  });
+} else {
+  console.log("ble-server: off (set BLE_SECRET to serve the dashboard over BLE)");
+}
+
 // --- Automatic DC charge current (docs/charge-auto.md) ---
 // ⚠️ It commands through the write runner's own `charge-current` action, so it inherits every lock
 // that door has — and is INERT unless SERVICE_WRITE_ENABLED is also 1. One transmit path.
@@ -697,6 +722,7 @@ async function shutdown(): Promise<void> {
   canLinkMonitor.stop();
   wifiMonitor?.stop();
   void bleClient?.stop();
+  void bleServer?.stop();
   // A sweep in flight is stopped rather than left to be killed with the process:
   // aborting settles the request in flight, stops the client transmitting, and
   // leaves every row it had already appended to `sweep.partial.jsonl`, so the next

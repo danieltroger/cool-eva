@@ -6,6 +6,7 @@ import { ringFor } from "./ring.js";
 import { monotonicNow } from "./clock.js";
 import { observeAndPublish } from "./pack-resistance-live.js";
 import { POLL_MS, createConnection } from "./connection.js";
+import { BLE_MODE, openStream } from "./ble-link.js";
 
 /** @typedef {import("../../src/can/signals.ts").LiveValue} LiveValue */
 /** @typedef {import("../../src/ws.ts").DashboardMessage} DashboardMessage */
@@ -223,6 +224,9 @@ export function connect() {
       connection.val = status;
     },
     open: handlers => {
+      if (BLE_MODE) {
+        return openBleSocket(handlers);
+      }
       const protocol = location.protocol === "https:" ? "wss:" : "ws:";
       const socket = new WebSocket(`${protocol}//${location.host}`);
       socket.onopen = () => handlers.opened(socket);
@@ -263,6 +267,31 @@ export function connect() {
   setInterval(() => {
     chartTick.val = chartTick.val + 1;
   }, CHART_TICK_MS);
+}
+
+/**
+ * The BLE stream dressed as the socket ./connection.js expects. Same three callbacks in
+ * the same order as a WebSocket's, so the silence watchdog, the hidden-page rule and the
+ * "drop messages from an abandoned socket" check all hold over BLE without a second copy.
+ * @param {import("./connection.js").SocketHandlers} handlers
+ * @returns {import("./connection.js").LinkSocket}
+ */
+function openBleSocket(handlers) {
+  /** @type {import("./connection.js").LinkSocket} */
+  const socket = { close: () => stream.close() };
+  const stream = openStream({
+    onOpen: () => handlers.opened(socket),
+    onMessage: message => {
+      if (!handlers.received(socket)) return;
+      try {
+        apply(message);
+      } catch (error) {
+        console.error("ble: could not apply message", error);
+      }
+    },
+    onClose: () => handlers.closed(socket),
+  });
+  return socket;
 }
 
 /** How often charts and other whole-shape redraws are allowed to repaint. */

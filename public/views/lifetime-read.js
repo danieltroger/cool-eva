@@ -4,6 +4,7 @@ import van from "../vendor/van-1.6.1.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 import { MUTED } from "../lib/colors.js";
 import { serviceRefusal, serviceRefused } from "../lib/service-gate-caption.js";
+import { request } from "../lib/transport.js";
 
 // The service sheet's second read: the bike's lifetime battery statistics, off
 // components 51 and 52, in-process.
@@ -91,7 +92,7 @@ async function performLifetimeRead() {
   busy.val = true;
   message.val = "";
   try {
-    const response = await fetch("/lifetime-read", {
+    const response = await request("/lifetime-read", {
       method: "POST",
       cache: "no-store",
       headers: { "X-Cool-Eva": "service-mode" },

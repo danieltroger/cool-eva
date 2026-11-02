@@ -4,6 +4,7 @@ import van from "../vendor/van-1.6.1.js";
 import { infokeyFault } from "../lib/infokey-bounds.js";
 import { groupedReading } from "../lib/format.js";
 import * as colors from "../lib/colors.js";
+import { request } from "../lib/transport.js";
 
 const { div, span } = van.tags;
 
@@ -55,7 +56,7 @@ export async function loadRecordedValues() {
   }
   inFlight = true;
   try {
-    const response = await fetch("/freeze-frames", { cache: "no-store" });
+    const response = await request("/freeze-frames", { cache: "no-store" });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }

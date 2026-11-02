@@ -155,6 +155,26 @@ const CHECKS: SelfCheck[] = [
       "client.ts passes monotonicNow() and not Date.now()",
   },
   {
+    script: "scripts/check-ble-server.ts",
+    covers:
+      "the Pi's BLE GATT server end to end, with a stand-in radio and a real loopback HTTP server: that a short " +
+      "secret is refused at startup, a wrong secret is refused and arms the cooldown that then refuses even the " +
+      "right one, a sealed message with no session is refused and never answered, the right secret gets a sealed " +
+      "WELCOME, a tunnelled POST reaches the endpoint with its method, path, body and X-Cool-Eva gate header while " +
+      "Host is the tunnel's own, a 150 kB incompressible body arrives whole and in order through the paced queue, " +
+      "a replayed counter is dropped, SUBSCRIBE answers with a snapshot and coalesces ten changes into fewer " +
+      "patches, UNSUBSCRIBE stops them, and a GATT unsubscribe ends the session",
+  },
+  {
+    script: "scripts/check-ble-wire.ts",
+    covers:
+      "the BLE wire format shared by the dashboard and the Pi (public/lib/ble-wire.js): frames round-trip at MTUs " +
+      "20, 182, 244 and 512 across every boundary length, a message cut short is reported and the next survives, " +
+      "an oversized message is refused, messages keep kind, header and body, the HELLO proof and session key " +
+      "agree only on the same secret and nonces, a sealed envelope refuses the wrong key, direction, counter or " +
+      "one flipped bit, and compression still shrinks a telemetry snapshot",
+  },
+  {
     script: "scripts/check-can-decoders.ts",
     covers:
       "the broadcast frame decoders against frames captured 2026-08-02, plus three properties of the decoder set as a whole: that every id which decodes is in the kernel RX filter, that every emitted key is declared in the registry, and that no 1/0 flag carries a deadband big enough to swallow its own transitions",

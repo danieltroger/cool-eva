@@ -13,8 +13,8 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Cool Eva" />
     <meta name="theme-color" content="#0f172a" />
-    <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="stylesheet" href="/style.css" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="stylesheet" href="style.css" />
     <!-- Inline so the browser's automatic /favicon.ico request never happens: on the
          bike that is a round trip to a Pi Zero over hotspot wifi for a 404. -->
     <link
@@ -28,6 +28,6 @@
          toolchain. `npm run typecheck` still covers it — the modules carry JSDoc
          types that import the server's own wire format from src/ws.ts, which is
          what stops the two drifting apart. -->
-    <script type="module" src="/app.js"></script>
+    <script type="module" src="app.js"></script>
   </body>
 </html>

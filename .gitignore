@@ -279,3 +279,11 @@ evidence/
 # the GPS rule above, in a form that looks innocuous. They live on the Pi; the findings
 # go in docs/wifi.md. No trailing slash, same reason as node_modules above.
 wifi-diag
+
+# Xcode's per-user state for the iOS app (ios/). The project itself is committed; who
+# has which window open, and the signing team each developer picks, are not.
+xcuserdata/
+ios/CoolEva.xcodeproj/project.xcworkspace/xcuserdata/
+ios/build/
+DerivedData/
+ios/Config/Signing.local.xcconfig

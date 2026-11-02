@@ -5,6 +5,7 @@ import { BAD, GOOD, MUTED, WARN, WATCH } from "../lib/colors.js";
 import { ageInWords, hexWord } from "../lib/format.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 import { describeStampEvidence } from "../lib/service-stamp.js";
+import { request } from "../lib/transport.js";
 
 const { button, div, h2, h3, input, option, select, span } = van.tags;
 
@@ -2007,7 +2008,7 @@ async function readCurrent() {
   message.val = "";
   try {
     const query = new URLSearchParams({ target: target.micro, bank: "1", index: String(target.index) });
-    const response = await fetch(`/vcu-probe?${query}`, {
+    const response = await request(`/vcu-probe?${query}`, {
       method: "POST",
       cache: "no-store",
       headers: { "X-Cool-Eva": "service-mode" },
@@ -2159,7 +2160,7 @@ function beamTarget() {
 async function readTargetValue(target) {
   try {
     const query = new URLSearchParams({ target: target.micro, bank: "1", index: String(target.index) });
-    const response = await fetch(`/vcu-probe?${query}`, {
+    const response = await request(`/vcu-probe?${query}`, {
       method: "POST",
       cache: "no-store",
       headers: { "X-Cool-Eva": "service-mode" },
@@ -2338,7 +2339,7 @@ async function send(query) {
   }
   query.set("list", "0");
   try {
-    const response = await fetch(`/vcu-write?${query}`, {
+    const response = await request(`/vcu-write?${query}`, {
       method: "POST",
       cache: "no-store",
       // A DIFFERENT value from the read endpoints' `service-mode`, so a caller built
@@ -2454,7 +2455,7 @@ export async function fetchStatus(withListing = false, reAsks = 0) {
   const askedFor = selected.val;
   const read = (latestStatusRead += 1);
   try {
-    const response = await fetch(`/vcu-write?${query}`, { cache: "no-store" });
+    const response = await request(`/vcu-write?${query}`, { cache: "no-store" });
     const payload = /** @type {VcuWriteResponse} */ (await response.json());
     if (read !== latestStatusRead) {
       // A newer read was issued while this one was in flight, so its answer is at least as fresh —
