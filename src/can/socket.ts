@@ -2,6 +2,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import canModule from "socketcan";
 import type { RawChannel } from "socketcan";
+import { ensureCanAdapter } from "./adapter-rebind.ts";
 import { type BringUpDecision, canConfigureArgs, decideCanBringUp } from "./link-config.ts";
 
 const execFileAsync = promisify(execFile);
@@ -20,6 +21,8 @@ const execFileAsync = promisify(execFile);
 
 export async function bringUpCan(iface = "can0", active = true): Promise<void> {
   const mode = active ? "ACTIVE (TX enabled)" : "listen-only";
+  // The kernel never retries a USB2CAN probe that timed out at boot: src/can/adapter-rebind.ts.
+  await ensureCanAdapter(iface);
   const decision = await decideBringUp(iface, active);
   if (decision.skip) {
     console.log(`can: ${iface} is already up @500k ${mode} — skipping the down/up (${decision.reason})`);
