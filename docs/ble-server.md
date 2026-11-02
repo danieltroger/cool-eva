@@ -1,5 +1,7 @@
 # The dashboard over BLE
 
+> To connect a phone, follow [`connecting-over-bluetooth.md`](connecting-over-bluetooth.md). This file is how it works.
+
 The Pi can serve the whole dashboard over Bluetooth Low Energy as well as over wifi. That covers the live telemetry, every endpoint, and the service-mode writes. It's for a phone that shares no network with the Pi. Wifi is unchanged; BLE is a second door into the same service.
 
 Code: `src/ble-server/` (Pi), `public/lib/ble-wire.js` (the wire format, imported by **both** ends), `public/lib/ble-link.js` and `public/lib/transport.js` (phone). Checks: `scripts/check-ble-wire.ts`, `scripts/check-ble-server.ts`.
