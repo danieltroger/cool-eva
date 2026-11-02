@@ -70,6 +70,16 @@ const CHECKS: SelfCheck[] = [
       "while the poller parks stopping the read",
   },
   {
+    script: "scripts/check-can-adapter-rebind.ts",
+    covers:
+      "recovering a USB2CAN the kernel gave up on at boot (usb_8dev_probe never retries a firmware-version " +
+      "timeout): that a missing can0 with the dongle unbound and the driver live re-binds exactly the unbound " +
+      "interfaces, that a probe still in flight inside module init waits even though can0 and the driver link " +
+      "already exist, that a driver not loaded yet waits, that no dongle or a wrong CAN_IFACE gives up at once " +
+      "instead of delaying the dashboard, how sysfs interface names map to their USB device, and that " +
+      "bringUpCan() runs the check before it reads the link",
+  },
+  {
     script: "scripts/check-can-bringup.ts",
     covers:
       "when the service may leave can0 alone at startup and when it must bounce it: that a link already UP at " +
