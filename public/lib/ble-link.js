@@ -255,6 +255,16 @@ export async function chooseAndConnect() {
   await ensureSession();
 }
 
+/** Whether a Pi has been chosen on this page, so a retry can skip the chooser. */
+export function deviceChosen() {
+  return link.device !== null;
+}
+
+/** Connects to the Pi already chosen — after the rider corrects a refused secret, say. */
+export async function reconnect() {
+  await ensureSession();
+}
+
 /**
  * One HTTP request through the Pi's tunnel. The answer is whatever the Pi's own HTTP
  * server said, status and all; a rejection means the link failed, never the endpoint.
@@ -351,7 +361,9 @@ async function handshake() {
   }
   const secret = storedSecret();
   if (secret === "") {
-    setStatus("refused", "enter the Pi's BLE secret");
+    // "off", not "refused": the Pi never saw an attempt, and the menu says "Refused by
+    // the Pi" for that one.
+    setStatus("off", "");
     throw new Error("no secret entered");
   }
   if (secret === refusedSecret) {

@@ -91,7 +91,7 @@ function Header() {
     span({ class: "brand" }, "Cool Eva"),
     div(
       { class: "status" },
-      BleHeaderButton(),
+      BleHeaderButton(openSheet),
       span({ class: () => `dot ${canDotState()}` }),
       span("CAN"),
       span({ class: () => `dot ${connection.val}` }),
