@@ -1,5 +1,7 @@
 # The iOS app
 
+> Connecting with it, and the other ways in: [`connecting-over-bluetooth.md`](connecting-over-bluetooth.md).
+
 A small native shell for the iPhone: the dashboard in `public/`, bundled into the app so it opens with no reception, talking to the Pi over Bluetooth. It is the iPhone's answer to [the dashboard over BLE](ble-server.md). Safari has no Web Bluetooth, and a page cannot be loaded over BLE in the first place, so a browser can only reach the Pi's BLE server from a page it already got over a network. The app removes both problems.
 
 It is **not** a second dashboard. Every view, the wire protocol and the session crypto are the same `public/` files the Pi serves over wifi. The app adds three things: a way to load them from its own bundle, Bluetooth for the page, and a share sheet for saved files. Change the dashboard and the app picks the change up at its next build.
