@@ -11,6 +11,7 @@ import {
   onChargeSessionEnd,
   writesEnabled,
 } from "../lib/charge-write.js";
+import { request } from "../lib/transport.js";
 
 const { button, div, input } = van.tags;
 
@@ -290,7 +291,7 @@ async function post(query, kind) {
   busy.val = true;
   let payload = /** @type {VcuWriteResponse | null} */ (null);
   try {
-    const response = await fetch(`/vcu-write?${query}`, {
+    const response = await request(`/vcu-write?${query}`, {
       method: "POST",
       cache: "no-store",
       headers: { "X-Cool-Eva": "service-write" },

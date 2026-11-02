@@ -2,6 +2,7 @@
 
 import van from "../vendor/van-1.6.1.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
+import { request } from "../lib/transport.js";
 
 const { button, div } = van.tags;
 
@@ -132,7 +133,7 @@ async function performCanRestart() {
   canRestartFailed.val = false;
   canRestartMessage.val = "restarting…";
   try {
-    const response = await fetch("/can-restart", { method: "POST", headers: { "X-Cool-Eva": "can-restart" } });
+    const response = await request("/can-restart", { method: "POST", headers: { "X-Cool-Eva": "can-restart" } });
     const reply = /** @type {CanRestartReply} */ (await response.json());
     canRestartMessage.val = reply.message;
     canRestartFailed.val = !reply.ok;
@@ -151,7 +152,7 @@ async function performUpdate() {
   updateFailed.val = false;
   updateMessage.val = "updating…";
   try {
-    const response = await fetch("/update", { method: "POST", headers: { "X-Cool-Eva": "update" } });
+    const response = await request("/update", { method: "POST", headers: { "X-Cool-Eva": "update" } });
     const reply = /** @type {UpdateReply} */ (await response.json());
     updateMessage.val = reply.message;
     updateFailed.val = !reply.ok;

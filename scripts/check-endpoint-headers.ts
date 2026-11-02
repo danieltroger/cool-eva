@@ -240,7 +240,9 @@ try {
   ] as const) {
     const body = declarationBody(page, `async function ${name}(`);
     check(`${name}() was found at all — a pattern matching nothing would pass the two below in silence`, body !== "");
-    check(`${name}() posts to ${path}`, body.includes(`fetch("${path}"`));
+    // `request(`, public/lib/transport.js's wrapper: `fetch` on wifi, the BLE tunnel otherwise,
+    // and the header travels to the same handler either way (docs/ble-server.md).
+    check(`${name}() posts to ${path}`, body.includes(`request("${path}"`));
     check(
       `⚠️  …and sends "X-Cool-Eva": "${value}" from inside that same body`,
       body.includes(`"X-Cool-Eva": "${value}"`)

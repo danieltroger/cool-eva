@@ -18,12 +18,15 @@ const ROOT = join(HERE, "..");
  * Every path the dashboard fetches, and one file that fetches it.
  *
  * A `fetch()` whose argument cannot be read is reported rather than passed over: the endpoint it
- * names would be exactly the one nobody had stubbed.
+ * names would be exactly the one nobody had stubbed. Since the BLE transport, the dashboard's
+ * endpoint calls are `request()` from public/lib/transport.js, which reaches `fetch` on wifi;
+ * that file and ble-link.js forward whatever path they are handed, so they are the one place a
+ * non-literal path is the design rather than a hole.
  */
 export async function pathsFetchedByTheDashboard(problems: string[]): Promise<Map<string, string>> {
   const found = new Map<string, string>();
   for (const entry of await readdir(join(ROOT, "public"), { recursive: true })) {
-    if (!entry.endsWith(".js") || entry.startsWith("vendor")) {
+    if (!entry.endsWith(".js") || entry.startsWith("vendor") || TRANSPORT_FILES.has(entry)) {
       continue;
     }
     const text = await readFile(join(ROOT, "public", entry), "utf8");
@@ -67,8 +70,18 @@ export async function pathsServedFromTables(problems: string[]): Promise<Set<str
   );
 }
 
+/** The transport itself: it forwards any path, by design. Relative to public/. */
+const TRANSPORT_FILES = new Set(["lib/transport.js", "lib/ble-link.js"]);
+
+/**
+ * `fetch` itself, and public/lib/transport.js's `request()`. Not its `download()`: on wifi that
+ * is a navigation, as the `location.href` it replaced was, so a preview's stubbed fetch never
+ * sees it.
+ */
+const ENDPOINT_CALLS = new Set(["fetch", "request"]);
+
 function collectFetches(node: ts.Node, file: string, found: Map<string, string>, problems: string[]): void {
-  if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "fetch") {
+  if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && ENDPOINT_CALLS.has(node.expression.text)) {
     const argument = node.arguments[0];
     const path = argument ? literalPath(argument) : null;
     if (path === null) {

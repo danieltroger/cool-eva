@@ -2,6 +2,7 @@
 
 import van from "../vendor/van-1.6.1.js";
 import { groupedReading } from "./format.js";
+import { request } from "./transport.js";
 
 // The bike's lifetime battery statistics, fetched once when the All tab is first
 // shown. Not a signal: nothing broadcasts these, so there is no socket to bind to and
@@ -36,7 +37,7 @@ export async function loadLifetimeStats(force = false) {
     return;
   }
   try {
-    const response = await fetch("/lifetime-stats");
+    const response = await request("/lifetime-stats");
     if (!response.ok) {
       lifetimeError.val = `the Pi answered ${response.status}`;
       return;

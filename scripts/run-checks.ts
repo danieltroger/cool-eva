@@ -70,6 +70,16 @@ const CHECKS: SelfCheck[] = [
       "while the poller parks stopping the read",
   },
   {
+    script: "scripts/check-can-adapter-rebind.ts",
+    covers:
+      "recovering a USB2CAN the kernel gave up on at boot (usb_8dev_probe never retries a firmware-version " +
+      "timeout): that a missing can0 with the dongle unbound and the driver live re-binds exactly the unbound " +
+      "interfaces, that a probe still in flight inside module init waits even though can0 and the driver link " +
+      "already exist, that a driver not loaded yet waits, that no dongle or a wrong CAN_IFACE gives up at once " +
+      "instead of delaying the dashboard, how sysfs interface names map to their USB device, and that " +
+      "bringUpCan() runs the check before it reads the link",
+  },
+  {
     script: "scripts/check-can-bringup.ts",
     covers:
       "when the service may leave can0 alone at startup and when it must bounce it: that a link already UP at " +
@@ -153,6 +163,26 @@ const CHECKS: SelfCheck[] = [
       "that stop() emits the final partial window, and that the journal probe never throws, since its error would " +
       "replace the busy reply the whole gate is keyed on. Plus the one thing a synthetic clock cannot see: that " +
       "client.ts passes monotonicNow() and not Date.now()",
+  },
+  {
+    script: "scripts/check-ble-server.ts",
+    covers:
+      "the Pi's BLE GATT server end to end, with a stand-in radio and a real loopback HTTP server: that a short " +
+      "secret is refused at startup, a wrong secret is refused and arms the cooldown that then refuses even the " +
+      "right one, a sealed message with no session is refused and never answered, the right secret gets a sealed " +
+      "WELCOME, a tunnelled POST reaches the endpoint with its method, path, body and X-Cool-Eva gate header while " +
+      "Host is the tunnel's own, a 150 kB incompressible body arrives whole and in order through the paced queue, " +
+      "a replayed counter is dropped, SUBSCRIBE answers with a snapshot and coalesces ten changes into fewer " +
+      "patches, UNSUBSCRIBE stops them, and a GATT unsubscribe ends the session",
+  },
+  {
+    script: "scripts/check-ble-wire.ts",
+    covers:
+      "the BLE wire format shared by the dashboard and the Pi (public/lib/ble-wire.js): frames round-trip at MTUs " +
+      "20, 182, 244 and 512 across every boundary length, a message cut short is reported and the next survives, " +
+      "an oversized message is refused, messages keep kind, header and body, the HELLO proof and session key " +
+      "agree only on the same secret and nonces, a sealed envelope refuses the wrong key, direction, counter or " +
+      "one flipped bit, and compression still shrinks a telemetry snapshot",
   },
   {
     script: "scripts/check-can-decoders.ts",

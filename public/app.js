@@ -12,6 +12,7 @@ import { ChargeView } from "./views/charge.js";
 import { AllView } from "./views/all.js";
 import { FaultsView } from "./views/faults.js";
 import { Sheet, hasTroubleCodes, installWaypointRefresh, openSheet, refreshStatus } from "./views/sheet.js";
+import { BleHeaderButton } from "./views/ble-connect.js";
 import { monotonicNow } from "./lib/clock.js";
 import { TABS, advanceTab, currentTab, peekTab, showTab, startRouting } from "./lib/router.js";
 import { Toast } from "./lib/toast.js";
@@ -90,6 +91,7 @@ function Header() {
     span({ class: "brand" }, "Cool Eva"),
     div(
       { class: "status" },
+      BleHeaderButton(openSheet),
       span({ class: () => `dot ${canDotState()}` }),
       span("CAN"),
       span({ class: () => `dot ${connection.val}` }),

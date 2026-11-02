@@ -4,6 +4,7 @@ import van from "../vendor/van-1.6.1.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 import { MUTED } from "../lib/colors.js";
 import { serviceRefusal, serviceRefused } from "../lib/service-gate-caption.js";
+import { request } from "../lib/transport.js";
 
 // The service sheet's third read: every stored freeze frame — the `0x18` list of components
 // that have a record, then `0x17` for each one.
@@ -86,7 +87,7 @@ async function performFreezeFrameRead() {
   busy.val = true;
   message.val = "";
   try {
-    const response = await fetch("/freeze-frame-read", {
+    const response = await request("/freeze-frame-read", {
       method: "POST",
       cache: "no-store",
       headers: { "X-Cool-Eva": "service-mode" },
