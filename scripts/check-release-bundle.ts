@@ -1,15 +1,20 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
-import { runInNewContext } from "node:vm";
 import { copyBundleArtifacts } from "./release/build.ts";
 import { hashFile, selectSourcePaths, validateArchivePath, writeFileInventory } from "./release/files.ts";
 import { parseBundleInputs, readBundleInputs, validateBuildIdentity } from "./release/inputs.ts";
 import { createReleaseMetadata, renderReleaseManifest } from "./release/manifest.ts";
-import { selectNativeBinaries, validateArm64Elf } from "./release/native.ts";
-import { patchUsocketSource, prepareUsocket } from "./release/usocket.ts";
+import { assertUsocketUnavailable, selectNativeBinaries, validateArm64Elf } from "./release/native.ts";
+import {
+  assertNoBuildDependencies,
+  assertNoDevDependencies,
+  preserveAddonLicenses,
+  pruneRuntimeDependencies,
+  type DependencyLock,
+} from "./release/dependencies.ts";
+import { assertRuntimePayload, copyRuntimePayload, RUNTIME_ROOTS } from "./release/payload.ts";
 
 export async function checkReleaseBundle(): Promise<void> {
   const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -37,6 +42,8 @@ export async function checkReleaseBundle(): Promise<void> {
   const selected = selectSourcePaths([
     ...required,
     "public/app.js",
+    "scripts/can-capture/capture.sh",
+    "scripts/check-example.ts",
     "docs/setup.md",
     "ride-logs/trip.celog",
     "ride-log-key.private.pem",
@@ -45,7 +52,9 @@ export async function checkReleaseBundle(): Promise<void> {
     "map/node_modules/cache",
   ]);
   assert(selected.includes("public/app.js"));
-  assert(selected.includes("docs/setup.md"));
+  assert(selected.includes("scripts/can-capture/capture.sh"));
+  assert(!selected.includes("docs/setup.md"));
+  assert(!selected.includes("scripts/check-example.ts"));
   assert.equal(selected.length, required.length + 2);
   assert.throws(() => selectSourcePaths(required.filter(path => path !== "src/index.ts")));
   for (const path of [
@@ -54,8 +63,13 @@ export async function checkReleaseBundle(): Promise<void> {
     "src/../outside",
     "src/one\ntwo",
     "src/key.private.pem",
-    "docs/ride-logs/trip.celog",
-    "node_modules/one/.git/config",
+    "src/standalone.celog",
+    "public/ride-logs/entry.txt",
+    "public/vcu-params/entry.txt",
+    "public/wifi-diag/entry.txt",
+    "public/ride-captures/entry.txt",
+    "public/captures/entry.txt",
+    "public/.git/config",
   ]) {
     assert.throws(() => validateArchivePath(path), path);
   }
@@ -87,23 +101,19 @@ export async function checkReleaseBundle(): Promise<void> {
   ]);
   assert.throws(() => selectNativeBinaries("better-sqlite3", ["test_extension.node"]), /missing production native/);
   assert.throws(() => selectNativeBinaries("socketcan", ["can.node"]), /can_signals/);
-  const patchedUsocket = patchUsocketSource(
-    "var util = require('util');\nfunction test(r) { return util.isError(r); }\ntest;"
-  );
-  const checkNativeError: unknown = runInNewContext(patchedUsocket, { require: createRequire(import.meta.url) });
-  assert.equal(typeof checkNativeError, "function");
-  const nativeErrorPredicate = checkNativeError as (value: unknown) => boolean;
-  assert.equal(nativeErrorPredicate(new Error("synthetic")), true);
-  assert.equal(nativeErrorPredicate({ message: "not an error" }), false);
-  assert.throws(() => patchUsocketSource("changed upstream source"), /Unexpected/);
+  const workflow = await readFile(join(root, ".github/workflows/release-bundle.yml"), "utf8");
+  const actions = workflow.split("\n").filter(line => line.includes("uses:"));
+  assert.equal(actions.length, 3);
+  for (const action of actions) {
+    assert.match(action, /uses: actions\/[a-z-]+@[a-f0-9]{40} # v\d+\.\d+\.\d+$/);
+  }
 
   const temporaryParent = join(root, ".preview-shots");
   await mkdir(temporaryParent, { recursive: true });
   const directory = await mkdtemp(join(temporaryParent, "release-check-"));
   try {
-    await mkdir(join(directory, "node_modules/usocket"), { recursive: true });
-    await writeFile(join(directory, "node_modules/usocket/index.js"), "changed upstream source");
-    await assert.rejects(prepareUsocket(directory), /usocket source changed/);
+    await checkDependencyPruning(join(directory, "dependencies"));
+    await checkRuntimePayload(join(directory, "payload-source"), join(directory, "payload"));
     await mkdir(join(directory, "public"));
     await writeFile(join(directory, "public/app.js"), "first content\n");
     await symlink("app.js", join(directory, "public/alias.js"));
@@ -136,8 +146,89 @@ export async function checkReleaseBundle(): Promise<void> {
     await rm(directory, { recursive: true, force: true });
   }
   console.log(
-    "Release bundle: pinned inputs, source boundary, ARM64 rejection, manifest and file-integrity checks passed"
+    "Release bundle: action/input pins, runtime payload, dependency pruning, net fallback, path exclusions and integrity checks passed"
   );
+}
+
+async function checkDependencyPruning(directory: string): Promise<void> {
+  const lock: DependencyLock = {
+    packages: {
+      "": { dependencies: { "dbus-next": "1", "native": "1", "shared": "1" } },
+      "node_modules/dbus-next": { optionalDependencies: { usocket: "1" } },
+      "node_modules/native": { dependencies: { "node-gyp": "1", nan: "1", "node-addon-api": "1", bindings: "1" } },
+      "node_modules/bindings": { dependencies: { shared: "1" } },
+      "node_modules/shared": {},
+      "node_modules/node-gyp": { dependencies: { "build-helper": "1" } },
+      "node_modules/node-gyp/node_modules/build-helper": {},
+      "node_modules/nan": {},
+      "node_modules/node-addon-api": {},
+      "node_modules/usocket": {},
+      "node_modules/prettier": { dev: true },
+      "node_modules/native/node_modules/dev-only": { dev: true },
+    },
+  };
+  for (const path of Object.keys(lock.packages).filter(Boolean)) {
+    await mkdir(join(directory, path), { recursive: true });
+    await writeFile(
+      join(directory, path, "package.json"),
+      JSON.stringify({ name: path.split("/").at(-1), main: "index.js" })
+    );
+    await writeFile(join(directory, path, "index.js"), "module.exports = {};\n");
+  }
+  await writeFile(join(directory, "package.json"), "{}\n");
+  await assert.rejects(assertNoDevDependencies(directory, lock), /dev-only|prettier/);
+  await rm(join(directory, "node_modules/native/node_modules/dev-only"), { recursive: true });
+  await assert.rejects(assertNoDevDependencies(directory, lock), /prettier/);
+  await rm(join(directory, "node_modules/prettier"), { recursive: true });
+  await assertNoDevDependencies(directory, lock);
+  await assert.rejects(assertNoBuildDependencies(directory), /Build-only dependency/);
+  await mkdir(join(directory, "runtime"));
+  for (const name of ["nan", "node-addon-api"]) {
+    await writeFile(join(directory, "node_modules", name, "LICENSE.md"), `fixture ${name} license\n`);
+  }
+  await preserveAddonLicenses(directory, join(directory, "runtime"));
+  await mkdir(join(directory, "node_modules/.bin"));
+  await symlink("../node-gyp/bin/node-gyp.js", join(directory, "node_modules/.bin/node-gyp"));
+  await pruneRuntimeDependencies(directory, lock);
+  assertUsocketUnavailable(directory);
+  const retained = await readdir(join(directory, "node_modules"));
+  assert.deepEqual(retained.sort(), ["bindings", "dbus-next", "native", "shared"]);
+  assert.equal(await readFile(join(directory, "node_modules/shared/index.js"), "utf8"), "module.exports = {};\n");
+  await assertNoDevDependencies(directory, lock);
+  await assertNoBuildDependencies(directory);
+  assert.match(await readFile(join(directory, "runtime/addon-licenses.txt"), "utf8"), /fixture nan license/);
+  assert.match(await readFile(join(directory, "runtime/addon-licenses.txt"), "utf8"), /fixture node-addon-api license/);
+  await mkdir(join(directory, "node_modules/usocket"));
+  await writeFile(join(directory, "node_modules/usocket/package.json"), '{"main":"index.js"}');
+  await writeFile(join(directory, "node_modules/usocket/index.js"), "throw new Error('broken optional transport');\n");
+  assert.throws(() => assertUsocketUnavailable(directory));
+}
+
+async function checkRuntimePayload(source: string, output: string): Promise<void> {
+  const directoryRoots = new Set(["src", "public", "node_modules", "runtime"]);
+  await mkdir(source);
+  for (const path of RUNTIME_ROOTS) {
+    if (directoryRoots.has(path)) {
+      await mkdir(join(source, path));
+    } else {
+      await writeFile(join(source, path), "runtime fixture\n");
+    }
+  }
+  await mkdir(join(source, "scripts/can-capture"), { recursive: true });
+  await writeFile(join(source, "scripts/can-capture/capture.sh"), "exit 0\n");
+  await writeFile(join(source, "scripts/check-example.ts"), "throw new Error('not a runtime script');\n");
+  await mkdir(join(source, "docs"));
+  await writeFile(join(source, "docs/developer.md"), "developer fixture\n");
+  await writeFile(join(source, "package-lock.json"), "{}\n");
+  await copyRuntimePayload(source, output);
+  assert(!(await readdir(output)).includes("docs"));
+  assert(!(await readdir(output)).includes("package-lock.json"));
+  assert.deepEqual(await readdir(join(output, "scripts")), ["can-capture"]);
+  await writeFile(join(output, "scripts/check-example.ts"), "not allowed\n");
+  await assert.rejects(assertRuntimePayload(output), /Non-runtime script/);
+  await rm(join(output, "scripts/check-example.ts"));
+  await mkdir(join(output, "docs"));
+  await assert.rejects(assertRuntimePayload(output), /Non-runtime entry/);
 }
 
 await checkReleaseBundle();

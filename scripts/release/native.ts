@@ -1,16 +1,15 @@
 import { open, readdir } from "node:fs/promises";
+import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { captureCommand } from "./commands.ts";
-import { readBundleInputs } from "./inputs.ts";
-import { checkUsocketRoundTrip } from "./usocket-smoke.ts";
+import { readBundleInputs, type BundleInputs } from "./inputs.ts";
 
-export async function verifyNativeModules(bundleDirectory: string): Promise<void> {
+export async function verifyNativeModules(bundleDirectory: string, inputs: BundleInputs): Promise<void> {
   if (process.platform !== "linux" || process.arch !== "arm64") {
     throw new Error("Native bundle validation requires Linux ARM64");
   }
-  const inputs = await readBundleInputs(bundleDirectory);
   if (process.versions.node !== inputs.node.version) {
     throw new Error(`Expected bundled Node ${inputs.node.version}; got ${process.versions.node}`);
   }
@@ -27,10 +26,18 @@ export async function verifyNativeModules(bundleDirectory: string): Promise<void
     requireFromBundle(moduleName);
     console.log(`Native module loads: ${moduleName} (${nativeFiles.join(", ")})`);
   }
-  await checkUsocketRoundTrip(bundleDirectory);
+  assertUsocketUnavailable(bundleDirectory);
 }
 
-export const NATIVE_MODULES = ["socketcan", "better-sqlite3", "spi-device", "usocket"] as const;
+export const NATIVE_MODULES = ["socketcan", "better-sqlite3", "spi-device"] as const;
+
+export function assertUsocketUnavailable(bundleDirectory: string): void {
+  const requireFromBundle = createRequire(join(bundleDirectory, "package.json"));
+  const requireFromDbus = createRequire(requireFromBundle.resolve("dbus-next"));
+  // Keep the documented net fallback, rather than enabling a different D-Bus transport.
+  assert.throws(() => requireFromDbus.resolve("usocket"), { code: "MODULE_NOT_FOUND" });
+  console.log("D-Bus cannot resolve usocket; dbus-next uses its documented net fallback");
+}
 
 export function selectNativeBinaries(
   moduleName: (typeof NATIVE_MODULES)[number],
@@ -41,7 +48,6 @@ export function selectNativeBinaries(
     "socketcan": ["can.node", "can_signals.node"],
     "better-sqlite3": ["better_sqlite3.node"],
     "spi-device": ["spi.node"],
-    "usocket": ["uwrap.node"],
   }[moduleName];
   for (const filename of runtimeBinaries) {
     if (!availableFiles.includes(filename)) {
@@ -88,5 +94,5 @@ async function verifyBinary(path: string, directory: string, allowedLibraries: s
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  await verifyNativeModules(resolve(process.argv[2] ?? "."));
+  await verifyNativeModules(resolve(process.argv[2] ?? "."), await readBundleInputs(resolve(process.argv[3] ?? ".")));
 }

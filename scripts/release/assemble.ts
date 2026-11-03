@@ -1,4 +1,4 @@
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { captureCommand, runCommand } from "./commands.ts";
@@ -6,7 +6,15 @@ import { hashFile, writeFileInventory } from "./files.ts";
 import { readBundleInputs } from "./inputs.ts";
 import { createReleaseMetadata, renderReleaseManifest } from "./manifest.ts";
 import { NATIVE_MODULES, selectNativeBinaries, verifyNativeModules } from "./native.ts";
-import { prepareUsocket } from "./usocket.ts";
+import {
+  assertNoDevDependencies,
+  assertNoBuildDependencies,
+  preserveAddonLicenses,
+  pruneRuntimeDependencies,
+  readDependencyLock,
+  type DependencyLock,
+} from "./dependencies.ts";
+import { assertRuntimePayload, copyRuntimePayload } from "./payload.ts";
 
 export async function assembleBundle(sourceDirectory: string, outputDirectory: string): Promise<void> {
   if (process.platform !== "linux" || process.arch !== "arm64") {
@@ -24,15 +32,16 @@ export async function assembleBundle(sourceDirectory: string, outputDirectory: s
   });
   await mkdir(outputDirectory, { recursive: true });
   const options = { cwd: sourceDirectory, env: { ...process.env, npm_config_cache: "/tmp/cool-eva-npm-cache" } };
-  await assertKnownBuildScripts(sourceDirectory);
+  const dependencyLock = await readDependencyLock(sourceDirectory);
+  assertKnownBuildScripts(dependencyLock);
   // Optional native failures must fail the release, rather than npm pruning a dependency.
   await runCommand(
     "/opt/node/bin/npm",
     ["ci", "--omit=dev", "--include=optional", "--ignore-scripts", "--no-audit", "--no-fund"],
     options
   );
+  await assertNoDevDependencies(sourceDirectory, dependencyLock);
   for (const moduleName of NATIVE_MODULES) {
-    // usocket's own node-gyp 7 cannot use Trixie's Python. Use the locked top-level tool for all four.
     await runCommand(
       process.execPath,
       [
@@ -52,7 +61,6 @@ export async function assembleBundle(sourceDirectory: string, outputDirectory: s
       }
     );
   }
-  await prepareUsocket(sourceDirectory);
   const runtimeDirectory = join(sourceDirectory, "runtime");
   await mkdir(join(runtimeDirectory, "bin"), { recursive: true });
   await copyFile("/opt/node/bin/node", join(runtimeDirectory, "bin/node"));
@@ -69,7 +77,10 @@ export async function assembleBundle(sourceDirectory: string, outputDirectory: s
   );
   await writeFile(join(sourceDirectory, "release.json"), JSON.stringify(metadata, null, 2) + "\n");
   await keepNativeBinaries(sourceDirectory);
-  await verifyNativeModules(sourceDirectory);
+  await preserveAddonLicenses(sourceDirectory, runtimeDirectory);
+  await pruneRuntimeDependencies(sourceDirectory, dependencyLock);
+  await assertNoBuildDependencies(sourceDirectory);
+  await verifyNativeModules(sourceDirectory, inputs);
   await runCommand(
     join(runtimeDirectory, "bin/node"),
     [
@@ -78,7 +89,9 @@ export async function assembleBundle(sourceDirectory: string, outputDirectory: s
     ],
     options
   );
-  await writeFileInventory(sourceDirectory);
+  const payloadDirectory = await mkdtemp("/work/payload-");
+  await copyRuntimePayload(sourceDirectory, payloadDirectory);
+  await writeFileInventory(payloadDirectory);
 
   const archive = join(outputDirectory, "bundle.tar.zst");
   await runCommand(
@@ -95,7 +108,7 @@ export async function assembleBundle(sourceDirectory: string, outputDirectory: s
       "-cf",
       archive,
       "-C",
-      sourceDirectory,
+      payloadDirectory,
       ".",
     ],
     options
@@ -108,9 +121,17 @@ export async function assembleBundle(sourceDirectory: string, outputDirectory: s
   };
   await runCommand(
     join(extractedDirectory, "runtime/bin/node"),
-    ["--experimental-strip-types", "scripts/release/native.ts", extractedDirectory],
+    [
+      "--experimental-strip-types",
+      join(sourceDirectory, "scripts/release/native.ts"),
+      extractedDirectory,
+      sourceDirectory,
+    ],
     extractedOptions
   );
+  await assertRuntimePayload(extractedDirectory);
+  await assertNoDevDependencies(extractedDirectory, dependencyLock);
+  await assertNoBuildDependencies(extractedDirectory);
   await runCommand("sha256sum", ["--check", "--strict", "--quiet", "files.sha256"], extractedOptions);
   await copyFile(join(sourceDirectory, "release.json"), join(outputDirectory, "release.json"));
   await copyFile(packageList, join(outputDirectory, "tested-os-packages.txt"));
@@ -148,12 +169,13 @@ async function keepNativeBinaries(directory: string): Promise<void> {
   }
 }
 
-async function assertKnownBuildScripts(directory: string): Promise<void> {
-  const lockfile: { packages: Record<string, { hasInstallScript?: boolean; dev?: boolean }> } = JSON.parse(
-    await readFile(join(directory, "package-lock.json"), "utf8")
-  );
+function assertKnownBuildScripts(lockfile: DependencyLock): void {
   const knownPaths = new Set(NATIVE_MODULES.map(moduleName => `node_modules/${moduleName}`));
   for (const [path, entry] of Object.entries(lockfile.packages)) {
+    // Intentionally excluded optional transport; docs/pi-install-prerequisites.md documents the net fallback.
+    if (path === "node_modules/usocket") {
+      continue;
+    }
     if (entry.hasInstallScript && !entry.dev && !knownPaths.has(path)) {
       throw new Error(`Production lifecycle script needs an explicit release build step: ${path}`);
     }

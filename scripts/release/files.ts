@@ -4,9 +4,10 @@ import { lstat, readlink, readdir, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 export function selectSourcePaths(trackedPaths: string[]): string[] {
-  const directories = new Set(["src", "public", "scripts", "docs"]);
-  const rootFiles = new Set(["package.json", "package-lock.json", ".npmrc", "LICENSE", "README.md"]);
-  const selected = trackedPaths.filter(path => directories.has(path.split("/")[0]) || rootFiles.has(path));
+  const buildFiles = new Set(["package-lock.json", ".npmrc"]);
+  const selected = trackedPaths.filter(
+    path => isRuntimeSourcePath(path) || path.startsWith("scripts/release/") || buildFiles.has(path)
+  );
   for (const path of selected) {
     validateArchivePath(path);
   }
@@ -22,6 +23,18 @@ export function selectSourcePaths(trackedPaths: string[]): string[] {
     }
   }
   return selected.sort();
+}
+
+export const RUNTIME_SCRIPTS = ["scripts/can-capture/capture.sh"] as const;
+
+export function isRuntimeSourcePath(path: string): boolean {
+  return (
+    path.startsWith("src/") ||
+    path.startsWith("public/") ||
+    path === "package.json" ||
+    path === "LICENSE" ||
+    RUNTIME_SCRIPTS.some(script => script === path)
+  );
 }
 
 export function validateArchivePath(path: string): void {
