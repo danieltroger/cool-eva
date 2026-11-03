@@ -4,6 +4,15 @@ Cool Eva puts an Energica's battery temperature, battery percentage, charging, s
 
 It is developed on a **2021 Eva Ribelle**. Other models need checking: some displays assume its 81-cell pack and current limits. An Experia or another motorcycle is an untested adaptation. **A stock Energica needs no watercooling hardware or BMS modification.**
 
+## What it looks like
+
+Current dashboard with sample data; coolant readings use the optional probes. Tap a screenshot to enlarge it.
+
+| Ride | Charge | Faults |
+| :-: | :-: | :-: |
+| [<img src="docs/images/dashboard-ride-dark.png" width="180" alt="Ride screen for speed, power, battery and coolant temperatures">](docs/images/dashboard-ride-dark.png) | [<img src="docs/images/dashboard-charge-dark.png" width="180" alt="Charge screen for battery percentage, charging power, current and automatic current control">](docs/images/dashboard-charge-dark.png) | [<img src="docs/images/dashboard-faults-dark.png" width="180" alt="Faults screen for named active trouble codes and diagnostic counters">](docs/images/dashboard-faults-dark.png) |
+| Speed, power, cooling. | Charge and current. | Named trouble codes. |
+
 ## What to buy
 
 | Item | What you need it for |
