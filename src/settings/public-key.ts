@@ -8,9 +8,22 @@ export async function importLegacyPublicKey(imported: LegacyImport): Promise<Leg
   if (path === null) return null;
   try {
     const contents = await readFile(path, "utf-8");
-    imported.document.values.rideLogPublicKeyPem = validatePublicKey(contents);
+    const { publicKey, reason } = parseRideLogPublicKey(contents);
+    imported.document.values.rideLogPublicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
     imported.document.migration.pendingPublicKeyPath = null;
     imported.document.migration.complete = true;
+    if (reason !== null) {
+      if (!imported.document.migration.notices.includes(reason)) {
+        imported.document.migration.notices.push(reason);
+      }
+      const warning: LegacyPublicKeyFault = {
+        code: reason,
+        severity: "warning",
+        message: "A private key is on the Pi, which defeats the sealed log; put the public key there instead.",
+      };
+      console.warn(`settings: ${warning.message}`);
+      return warning;
+    }
     return null;
   } catch (error) {
     const absentDefault = !imported.publicKeyWasExplicit && (error as NodeJS.ErrnoException).code === "ENOENT";
@@ -22,6 +35,7 @@ export async function importLegacyPublicKey(imported: LegacyImport): Promise<Leg
     }
     const fault: LegacyPublicKeyFault = {
       code: "recording-key-unavailable",
+      severity: "fault",
       message: "Recording public key is unavailable. Choose a key in Settings → Ride recording.",
       errorCode: readErrorCode(error),
     };
@@ -32,11 +46,16 @@ export async function importLegacyPublicKey(imported: LegacyImport): Promise<Leg
 }
 
 export interface LegacyPublicKeyFault {
-  code: "recording-key-unavailable";
+  code: "recording-key-unavailable" | "private-key-on-pi";
+  severity: "fault" | "warning";
   message: string;
   errorCode?: string;
 }
 
 export function validatePublicKey(contents: string): string {
-  return parseRideLogPublicKey(contents).export({ type: "spki", format: "pem" }).toString();
+  const { publicKey, reason } = parseRideLogPublicKey(contents);
+  if (contents.length > 16 * 1024 || reason !== null) {
+    throw new Error("Settings need an X25519 public key, not a private key or an oversized file.");
+  }
+  return publicKey.export({ type: "spki", format: "pem" }).toString();
 }

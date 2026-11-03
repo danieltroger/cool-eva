@@ -1,6 +1,6 @@
 import assert from "assert/strict";
 import { generateKeyPair } from "crypto";
-import { lstat, mkdir, readFile, readlink, realpath, readdir, stat, symlink, writeFile } from "fs/promises";
+import { lstat, mkdir, readFile, readlink, realpath, readdir, stat, symlink, unlink, writeFile } from "fs/promises";
 import { join } from "path";
 import { appendDurably, durabilityCounters, replaceFileDurably } from "../src/storage/durable.ts";
 import { promisify } from "util";
@@ -11,7 +11,7 @@ import {
   type DataMoveOptions,
 } from "../src/settings/data-move.ts";
 import { migrateLegacySettings } from "../src/settings/migration.ts";
-import { effectiveHubAddress, pendingSettings } from "../src/settings/schema.ts";
+import { effectiveHubAddress, freshSettings, pendingSettings } from "../src/settings/schema.ts";
 import { openSettingsStore } from "../src/settings/store.ts";
 import { closeSettingsFixture, moveFixture, settingsFixture, type SettingsFixture } from "./settings-check-fixtures.ts";
 
@@ -246,8 +246,8 @@ async function checkFullMigration(): Promise<void> {
       assert.equal(await readFile(fixture.paths.moveJournal, "utf-8"), completedJournal);
       assert.equal((await stat(fixture.paths.moveJournal)).ino, completedJournalInode);
     }
-    const { publicKey } = await promisify(generateKeyPair)("x25519");
-    await writeFile(environment.RIDE_LOG_PUBKEY, publicKey.export({ type: "spki", format: "pem" }));
+    const { publicKey, privateKey } = await promisify(generateKeyPair)("x25519");
+    await writeFile(environment.RIDE_LOG_PUBKEY, privateKey.export({ type: "pkcs8", format: "pem" }));
     const resumedStore = await openSettingsStore(fixture.paths, fixture.lock, process.getgid!());
     const completed = await migrateLegacySettings({
       ...options,
@@ -255,15 +255,17 @@ async function checkFullMigration(): Promise<void> {
       environment: { FAN_ENABLED: "0" },
     });
     assert.equal(completed.kind, "ready");
-    assert.equal(completed.migrationFault, null);
+    assert.equal(completed.migrationFault?.code, "private-key-on-pi");
     assert.equal(preparationCalls, 1);
     if (completed.kind !== "ready") {
       throw new Error("migration did not complete");
     }
     assert.equal(completed.document.migration.complete, true);
+    assert.ok(completed.document.migration.notices.includes("private-key-on-pi"));
     assert.equal(completed.document.values.radiatorFanEnabled, true);
     assert.equal(completed.document.values.automaticDcChargingEnabled, false);
     assert.ok(completed.document.values.rideLogPublicKeyPem?.startsWith("-----BEGIN PUBLIC KEY-----"));
+    assert.equal(completed.document.values.rideLogPublicKeyPem, publicKey.export({ type: "spki", format: "pem" }));
     const active = structuredClone(completed.document.values);
     const revision = completed.document.revision;
     await resumedStore.learnHub("02:00:00:00:00:10");
@@ -279,6 +281,52 @@ async function checkFullMigration(): Promise<void> {
     assert.equal((await stat(fixture.paths.installationMarker)).mode & 0o777, 0o600);
     console.log(
       "  service-environment migration retries an explicit missing key; canonical values win; first learned hub does not stale an edit"
+    );
+    await unlink(fixture.paths.settingsFile);
+    await unlink(fixture.paths.installationMarker);
+    const lostStore = await openSettingsStore(fixture.paths, fixture.lock, process.getgid!());
+    assert.equal(lostStore.read().kind, "degraded");
+    const lost = await migrateLegacySettings({
+      ...options,
+      store: lostStore,
+      environment: new Proxy<Record<string, string | undefined>>(
+        {},
+        {
+          get: () => {
+            throw new Error("legacy environment must not be consulted during recovery");
+          },
+        }
+      ),
+      beforeDataMove: async () => {
+        throw new Error("move prerequisites must not run during recovery");
+      },
+    });
+    assert.equal(lost.kind, "degraded");
+    if (lost.kind !== "degraded") {
+      throw new Error("lost settings did not produce a recovery fault");
+    }
+    assert.equal(lost.fault, "missing-after-install");
+    assert.match(lost.message, /Restore the saved settings/);
+    assert.equal(lost.configuration.rideLogDirectory, fixture.paths.rideLogDirectory);
+    assert.equal(lost.configuration.vcuParameterDirectory, fixture.paths.vcuParameterDirectory);
+    assert.equal(lost.configuration.automaticDcChargingEnabled, false);
+    await assert.rejects(lostStore.initialise(freshSettings(fixture.paths)), /recovery/);
+    await assert.rejects(lstat(fixture.paths.settingsFile), { code: "ENOENT" });
+    await assert.rejects(lstat(fixture.paths.installationMarker), { code: "ENOENT" });
+    assert.equal(await readFile(fixture.paths.moveJournal, "utf-8"), completedJournal);
+    assert.equal((await stat(fixture.paths.moveJournal)).ino, completedJournalInode);
+    await unlink(moveOptions.sourceDirectories.rideLogDirectory);
+    await unlink(moveOptions.sourceDirectories.vcuParameterDirectory);
+    assert.equal(
+      await readFile(join(lost.configuration.rideLogDirectory, "synthetic.celog"), "utf-8"),
+      "synthetic rideLogDirectory"
+    );
+    assert.equal(
+      await readFile(join(lost.configuration.vcuParameterDirectory, "synthetic.txt"), "utf-8"),
+      "synthetic vcuParameterDirectory"
+    );
+    console.log(
+      "  completed move plus lost settings/marker: recovery fault, no environment import or new files, moved archives survive link cleanup"
     );
   } finally {
     await closeSettingsFixture(fixture);

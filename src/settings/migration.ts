@@ -67,7 +67,10 @@ export async function migrateLegacySettings(options: LegacyMigrationOptions): Pr
     await finishLegacyDataMove(moveOptions);
   }
   if (keyReady) {
-    await options.store.finishLegacyImport(imported.document.values.rideLogPublicKeyPem);
+    await options.store.finishLegacyImport(
+      imported.document.values.rideLogPublicKeyPem,
+      imported.document.migration.notices
+    );
   }
   return { ...options.store.read(), migrationFault: keyFault };
 }

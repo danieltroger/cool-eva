@@ -138,7 +138,7 @@ export async function initEncryptedLog(options: EncryptedLogOptions): Promise<bo
   // Everything below builds locals first. Assigning recipientPublicKey before
   // these can throw would leave appendReading() buffering into an array that has
   // no timer to drain it — unbounded growth behind a "logging disabled" message.
-  const publicKey = parseRideLogPublicKey(pem);
+  const { publicKey } = parseRideLogPublicKey(pem);
   // The raw 32 bytes sit at the end of the SPKI DER for X25519; binding both
   // public keys into the HKDF salt is standard ECIES practice.
   const publicRaw = publicKey.export({ type: "spki", format: "der" }).subarray(-EPHEMERAL_KEY_BYTES);

@@ -101,7 +101,7 @@ export async function openSettingsStore(
         loaded = { kind: "ready", ...parsed };
         return true;
       }),
-    finishLegacyImport: publicKeyPem =>
+    finishLegacyImport: (publicKeyPem, notices) =>
       serial("finish migration", async () => {
         const current = readySettings(loaded);
         const values = { ...record(current.raw.values, "settings values"), rideLogPublicKeyPem: publicKeyPem };
@@ -109,6 +109,7 @@ export async function openSettingsStore(
           ...record(current.raw.migration, "migration state"),
           complete: true,
           pendingPublicKeyPath: null,
+          notices: notices ?? current.document.migration.notices,
         };
         const raw = { ...current.raw, values, migration };
         const parsed = parseSettingsDocument(raw);
@@ -133,7 +134,7 @@ export interface SettingsStore {
   initialise: (document: SettingsDocument) => Promise<SettingsDocument>;
   update: (expectedRevision: number, changes: Partial<StartupSettings>) => Promise<SettingsDocument>;
   learnHub: (address: string) => Promise<boolean>;
-  finishLegacyImport: (publicKeyPem: string | null) => Promise<SettingsDocument>;
+  finishLegacyImport: (publicKeyPem: string | null, notices?: string[]) => Promise<SettingsDocument>;
   settled: () => Promise<void>;
 }
 
@@ -156,16 +157,19 @@ async function loadSettings(paths: SettingsPaths): Promise<SettingsState> {
     contents = await readFile(paths.settingsFile, "utf-8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      try {
-        await lstat(paths.installationMarker);
-      } catch (markerError) {
-        if ((markerError as NodeJS.ErrnoException).code === "ENOENT") {
-          console.log("settings: no settings document yet; explicit initialisation or legacy import is required");
-          return { kind: "missing" };
+      for (const sentinel of [paths.installationMarker, paths.moveJournal]) {
+        try {
+          await lstat(sentinel);
+        } catch (sentinelError) {
+          if ((sentinelError as NodeJS.ErrnoException).code === "ENOENT") continue;
+          return degradedState(paths, "unreadable", sentinelError);
         }
-        return degradedState(paths, "unreadable", markerError);
+        return degradedState(paths, "missing-after-install");
       }
-      return degradedState(paths, "missing-after-install");
+      console.log(
+        "settings: no settings document or prior-install evidence; explicit initialisation or legacy import is required"
+      );
+      return { kind: "missing" };
     }
     return degradedState(paths, "unreadable", error);
   }
@@ -179,7 +183,11 @@ async function loadSettings(paths: SettingsPaths): Promise<SettingsState> {
 
 function degradedState(paths: SettingsPaths, fault: SettingsFault, error?: unknown): SettingsState {
   const code = readErrorCode(error);
-  const message = `Settings cannot be loaded (${fault}${code ? `, ${code}` : ""}). The original file is preserved; repair it or use compatible software.`;
+  const recovery =
+    fault === "missing-after-install"
+      ? "Restore the saved settings. Existing archives were left in place."
+      : "The original file is preserved; repair it or use compatible software.";
+  const message = `Settings cannot be loaded (${fault}${code ? `, ${code}` : ""}). ${recovery}`;
   console.warn(`settings: ${message}`);
   return { kind: "degraded", fault, message, configuration: degradedSettings(paths) };
 }

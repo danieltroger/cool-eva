@@ -1,6 +1,6 @@
 import assert from "assert/strict";
-import { generateKeyPair } from "crypto";
-import { link, lstat, mkdir, readFile, stat, symlink, writeFile } from "fs/promises";
+import { createPublicKey, generateKeyPair } from "crypto";
+import { link, lstat, mkdir, readFile, readdir, stat, symlink, writeFile } from "fs/promises";
 import { join } from "path";
 import { promisify } from "util";
 import { moveLegacyData, finishLegacyDataMove } from "../src/settings/data-move.ts";
@@ -8,7 +8,8 @@ import { UnsafeArchiveError } from "../src/settings/data-permissions.ts";
 import { importLegacyEnvironment } from "../src/settings/legacy.ts";
 import { migrateLegacySettings } from "../src/settings/migration.ts";
 import { importLegacyPublicKey } from "../src/settings/public-key.ts";
-import { closeEncryptedLog, initEncryptedLog } from "../src/storage/encrypted-log.ts";
+import { appendReading, closeEncryptedLog, initEncryptedLog } from "../src/storage/encrypted-log.ts";
+import { parseRideLogPublicKey } from "../src/storage/ride-log-key.ts";
 import { closeSettingsFixture, moveFixture, settingsFixture } from "./settings-check-fixtures.ts";
 
 for (const kind of ["symlink", "hard-link"] as const) {
@@ -96,7 +97,7 @@ async function checkKeyCompatibility(): Promise<void> {
     const canonical = publicKey.export({ type: "spki", format: "pem" }).toString();
     const path = join(fixture.directory, "recipient.pem");
     const context = { codeDirectory: fixture.directory, workingDirectory: fixture.directory, paths: fixture.paths };
-    for (const prefix of ["", "\n", "\ufeff", "synthetic key header\n"]) {
+    for (const prefix of ["", "\n", "\ufeff", "synthetic key header\n", "synthetic".repeat(2200) + "\n"]) {
       await writeFile(path, prefix + canonical);
       assert.equal(
         await initEncryptedLog({
@@ -112,18 +113,48 @@ async function checkKeyCompatibility(): Promise<void> {
       assert.equal(imported.document.values.rideLogPublicKeyPem, canonical);
     }
     await writeFile(path, privateKey.export({ type: "pkcs8", format: "pem" }));
-    await assert.rejects(
-      initEncryptedLog({
+    assert.equal(
+      await initEncryptedLog({
         publicKeyPath: path,
         directory: join(fixture.directory, "recordings"),
         clockTrust: () => "never-synced",
       }),
-      /public key, not a private key/
+      true
     );
+    appendReading(1_600_000_000_000, "synthetic_reading", 1, "", "synthetic", "stream");
+    await closeEncryptedLog();
+    assert.ok((await readdir(join(fixture.directory, "recordings"))).some(name => name.endsWith(".celog")));
+    assert.equal(parseRideLogPublicKey(await readFile(path, "utf-8")).reason, "private-key-on-pi");
     const privateImport = importLegacyEnvironment({ RIDE_LOG_PUBKEY: path }, context);
-    assert.equal((await importLegacyPublicKey(privateImport))?.code, "recording-key-unavailable");
+    const warning = await importLegacyPublicKey(privateImport);
+    assert.equal(warning?.code, "private-key-on-pi");
+    assert.equal(warning?.severity, "warning");
+    assert.equal(
+      warning?.message,
+      "A private key is on the Pi, which defeats the sealed log; put the public key there instead."
+    );
+    assert.equal(privateImport.document.values.rideLogPublicKeyPem, canonical);
+    assert.equal(privateImport.document.migration.complete, true);
+    assert.ok(privateImport.document.migration.notices.includes("private-key-on-pi"));
+    let decoderMessage = "";
+    assert.throws(
+      () => createPublicKey("synthetic malformed key"),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        decoderMessage = error.message;
+        return true;
+      }
+    );
+    assert.throws(
+      () => parseRideLogPublicKey("synthetic malformed key"),
+      (error: unknown) => {
+        assert.ok(error instanceof Error && error.cause instanceof Error);
+        assert.equal(error.cause.message, decoderMessage);
+        return true;
+      }
+    );
     console.log(
-      "  logger and migration share public-key parsing: leading newline, BOM and text accepted; private key refused by both"
+      "  legacy logger still seals with a private/large key file; migration warns and retains the public half; decode cause survives"
     );
   } finally {
     await closeEncryptedLog();
