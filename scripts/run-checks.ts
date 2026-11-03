@@ -1020,6 +1020,34 @@ const CHECKS: SelfCheck[] = [
       "assertion still passing",
   },
   {
+    script: "scripts/check-capture-pruner.ts",
+    covers:
+      "the fixed non-interactive capture deletion helper: no arguments, capture-only basenames, " +
+      "current-boot and symlink refusal, protected root-owned directories, exact sudoers rule " +
+      "and the SSH client's legacy/new-layout selection",
+  },
+  {
+    script: "scripts/check-settings-storage.ts",
+    covers:
+      "literal effective-environment migration, private settings modes and serial writers, " +
+      "learned hub state without pending/revision churn, untouched future/corrupt settings, " +
+      "additive-field preservation, concurrent atomic replacements and selective orphan cleanup",
+  },
+  {
+    script: "scripts/check-settings-data-move.ts",
+    covers:
+      "the single journalled move of default ride/service/wifi/capture data, interruption at " +
+      "every persisted boundary, compatibility links, archive-group access, untouched explicit " +
+      "paths/conflicting destinations, public-key retry and canonical migration precedence",
+  },
+  {
+    script: "scripts/check-settings-migration-guards.ts",
+    covers:
+      "archive symlink/hard-link refusal before every rename, untouched sources and journal on interrupted attempts, " +
+      "named migration faults, shared logger/import parsing of newline/BOM/text-prefixed public keys, " +
+      "and refusal of foreign or released locks before journal/data writes",
+  },
+  {
     script: "scripts/check-power-cut-durability.ts",
     covers:
       "the four things the service writes, against the power cut this Pi takes every ride: that appendDurably " +
