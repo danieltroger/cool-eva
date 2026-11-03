@@ -225,8 +225,8 @@ function release(key, tracker, at) {
 // `van.derive` in a tile factory would be — is pinned to that render's DOM node and
 // dropped, silently, the next time it re-renders. The ALL grid re-renders on the first
 // keystroke in its filter box, which is exactly what you do to watch these, so a
-// per-tile derive would stop counting with every tile frozen at `idle` and the README's
-// "trust the count over the light" advice quietly no longer true.
+// per-tile derive would freeze every tile at `idle`, invalidating "trust the count over
+// the light" in docs/dashboard-decisions.md, "The dashboard".
 //
 // The mechanism, line by line, and why it cannot be checked from Node:
 // docs/dashboard-decisions.md §"ONE derive, at module scope". Same rule, same reason,

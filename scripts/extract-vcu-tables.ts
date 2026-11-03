@@ -24,7 +24,7 @@ import {
 // addresses its parameters BY INDEX, and what an index means comes from the table it is
 // running; if this repo does not carry yours, src/vcu/table-gate.ts refuses every write
 // rather than put a number into whichever parameter our table gives your name to. Run
-// this against your own install and commit the diff — README.md, "Adding your bike's VCU
+// this against your own install and commit the diff — docs/vcu-parameters.md, "Adding your bike's VCU
 // parameter table", is the walkthrough.
 //
 // ⚠️ IT MERGES, AND THAT IS NOT A NICETY. Energica builds do not all carry the same

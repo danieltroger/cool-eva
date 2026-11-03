@@ -190,3 +190,71 @@ Adding with `connection.autoconnect no` and flipping it afterwards makes "it wil
 **The Pi Zero 2 W radio is 2.4 GHz only** — raspberrypi.com gives it as _"2.4GHz 802.11 b/g/n wireless LAN"_ — so it cannot see a 5 GHz-only hotspot at all. That is what Apple's **Maximize Compatibility** toggle is for, and Apple scopes it to exactly the devices that broadcast 5 GHz: _"If you're using an iPhone 12 model or later, iPad Pro 11-inch (3rd generation or later), iPad Pro 12.9-inch (5th generation or later), or iPad mini (6th generation)"_ → _"Tap Personal Hotspot and turn on Maximize Compatibility."_ ⚠️ It is not free, in Apple's own footnote: _"When you turn on Maximize Compatibility, internet performance and Wi-Fi security might be reduced for devices connected to the hotspot."_
 
 `wifi-sec.key-mgmt wpa-psk` above is WPA2-PSK, so a WPA3-only network needs `sae` instead.
+
+> The following sections preserve the former README at commit `58c7eba` (2026-11-03), including dated measurements and limitations. For first installation, use the [current README](../README.md). Older validation/status claims are historical; the existing subsystem findings and current code take precedence.
+
+## Setup
+
+From a blank SD card to a dashboard. Steps 1–5 are the Pi, step 6 is your laptop, and **step 6 is the one people skip and regret** — without it the dashboard works perfectly and nothing at all is saved.
+
+**1. Flash Raspberry Pi OS (64-bit).** In Raspberry Pi Imager, open the gear icon and set:
+
+- **hostname `cool-eva`** — this is what makes `http://cool-eva.local` work. Skip it and your Pi is `raspberrypi.local`.
+- **Enable SSH**, with a password or your public key. There is no screen on the bike, so this is the only way in — including for every future update.
+- **Wi-Fi: your phone's hotspot** (SSID and password), so it connects on the road. Add your home Wi-Fi too, from the Pi later, or you'll be swapping the card to get it back.
+
+**2. Join the phone hotspot** (if you didn't set it in the Imager). Bookworm uses NetworkManager:
+
+```bash
+sudo nmcli device wifi connect "<your hotspot SSID>" password "<password>"
+sudo nmcli connection modify "<your hotspot SSID>" connection.autoconnect yes
+```
+
+On iOS you have to **open Settings → Personal Hotspot and leave it on screen for ~20 s** at the start of a ride, or the phone won't accept the join. That is an iOS behaviour, not something this app can fix. The Pi Zero 2 W radio is **2.4 GHz only**, so a 5 GHz-only hotspot is invisible to it — on an iPhone 12 or later, Apple's own fix is Settings → Personal Hotspot → **Maximize Compatibility** — which Apple notes costs some hotspot speed and Wi-Fi security.
+
+To add a **second** network later (home Wi-Fi, an Airbnb) while you are sshed in over the first, use `nmcli connection add` rather than `nmcli device wifi connect` — the latter activates what it creates and drops the session you are typing into. Exact command: [INSTALL.md §8](../INSTALL.md).
+
+**3. Install Node 24.** Raspberry Pi OS's `apt` Node is far too old — the app is TypeScript run directly, which needs `--experimental-strip-types` (Node 22.6.0 at the very oldest; 24 is what this is tested on).
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
+sudo apt install -y nodejs
+node --version   # must be v22.6 or newer
+```
+
+**4. Clone and install.**
+
+⚠️ **Give the Pi more swap first.** `npm install` compiles three native modules (`better-sqlite3`, `socketcan`, `spi-device`), which takes **several minutes** on a Pi Zero 2 W and wants more than the stock 512 MB — without it the build is OOM-killed and it looks like a crash rather than a memory problem. About 3 GB. How, for both Bookworm and Trixie: [INSTALL.md §2.5](../INSTALL.md).
+
+```bash
+git clone https://github.com/<your-fork>/cool-eva.git ~/cool-eva
+cd ~/cool-eva
+npm install
+```
+
+Nothing else to do for those compiles: the repo ships an `.npmrc` allowlisting the four packages with install scripts, because **npm 12 and newer refuse to run them** otherwise and you get a tree with no `.node` files. Version boundaries, how to tell whether your modules actually built, and the measurements: [`docs/pi-install-prerequisites.md`](pi-install-prerequisites.md).
+
+**5. Only if you have the coolant probes: enable SPI.** `sudo raspi-config` → Interface Options → SPI → Yes, then reboot. **Don't enable it if you have no probes wired**: with SPI on and nothing attached the reads succeed and return −242 °C forever. The app notices and retires the probe after a minute, but it's noise you don't need.
+
+**Historical status:** The current [probe loop](../src/sensors/max31865.ts) backs off a faulted probe and retries it once a minute; it does not retire it for the rest of the boot.
+
+**6. Generate the ride-log keypair — on your laptop, not the Pi.** Nothing is persisted until the Pi has a public key. See [Encrypted ride log](ride-log.md#encrypted-ride-log) for why it works this way.
+
+```bash
+# on the LAPTOP, in a clone of this repo
+node --experimental-strip-types scripts/generate-log-key.ts
+# back the PRIVATE key up now (password manager) — it is the only thing that
+# can ever read your logs, and there is no recovery path
+scp ride-log-key.public.pem pi@cool-eva.local:/home/pi/cool-eva/
+```
+
+**7. Install the service** (back on the Pi):
+
+```bash
+sudo $(which node) --experimental-strip-types scripts/setup-service.ts
+sudo journalctl -u cool-eva -f    # follow the logs
+```
+
+The installer refuses to run on too-old a Node, removes the old `thermometer` unit if you're upgrading, and tells you if the ride-log key is still missing. In the log you want to see `ride-log: encrypting to …`; if you see the `NO PUBLIC KEY` banner instead, step 6 didn't land.
+
+Then open **`http://cool-eva.local`** on your phone.

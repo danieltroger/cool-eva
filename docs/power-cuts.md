@@ -148,7 +148,7 @@ A hardening change that lets someone believe the problem is gone has done harm. 
 
 ### `rides.db` is not a Pi-side exposure at all
 
-The service opens no database. `initDb` has no caller under `src/`; `rides.db` is rebuilt on the laptop by `scripts/decrypt-log.ts` (README, §`src/db.ts`). It is outside this issue's blast radius.
+The service opens no database. `initDb` has no caller under `src/`; `rides.db` is rebuilt on the laptop by `scripts/decrypt-log.ts` (docs/development.md, "How it works", `src/db.ts`). It is outside this issue's blast radius.
 
 Recorded because it was measured and got the wrong answer once: better-sqlite3 ships SQLite compiled `DEFAULT_SYNCHRONOUS=2 DEFAULT_WAL_SYNCHRONOUS=1`, so under `journal_mode = WAL` the pragma reads `2` only until the first write transaction and settles to **`1` (NORMAL)** thereafter — and from the first read on any file already in WAL. NORMAL in WAL mode does not fsync per commit. Measuring it immediately after setting `journal_mode` catches the one moment it still says `2`.
 

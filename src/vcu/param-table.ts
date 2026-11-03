@@ -104,7 +104,7 @@ export function selectParameterTable(tableType: number): TableSelectionOutcome {
     const message =
       `vcu-table: ⚠️  this bike reports ${describeTableType(tableType)}, which this software does not carry — ` +
       `keeping ${describeTableType(active.tableType)}'s names, which may be WRONG for this bike. ` +
-      `Add the table with scripts/extract-vcu-tables.ts (README: "Adding your bike's VCU parameter table"). ` +
+      `Add the table with scripts/extract-vcu-tables.ts (docs/vcu-parameters.md: "Adding your bike's VCU parameter table"). ` +
       `Carried: ${KNOWN_TABLE_TYPES.join(", ")}.`;
     console.warn(message);
     return { ok: false, tableType, message };
@@ -186,7 +186,7 @@ export function checkTableType(index: number, value: number): TableTypeVerdict |
       "name still reads and still writes cleanly. On 20 of the 28 tables shipped in 2024, ids 70–94 are a regen " +
       "curve rather than the battery cell block, so this is not a small difference. Do not write anything by " +
       "name until the table is added: run scripts/extract-vcu-tables.ts against your own service-tool install (see " +
-      `README.md) and send the diff. Carried today: ${KNOWN_TABLE_TYPES.join(", ")}.`,
+      `docs/vcu-parameters.md) and send the diff. Carried today: ${KNOWN_TABLE_TYPES.join(", ")}.`,
   };
 }
 

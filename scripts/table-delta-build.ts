@@ -213,6 +213,6 @@ function moduleHeader(): string {
 // An empty delta means the table is byte-identical to params.ecf.
 //
 // ⚠️ Adding your own bike's table is a supported thing to do and does not mean editing
-// this file by hand — see README.md, "Adding your bike's VCU parameter table".
+// this file by hand — see docs/vcu-parameters.md, "Adding your bike's VCU parameter table".
 `;
 }

@@ -2206,7 +2206,7 @@ expect(
   "the mismatch remedy must say that reading will not help and name the script that fixes it"
 );
 expect(
-  mismatchedGate.remedy.includes("service-tool install") && mismatchedGate.remedy.includes("README"),
+  mismatchedGate.remedy.includes("service-tool install") && mismatchedGate.remedy.includes("docs/vcu-parameters.md"),
   "…and must say what the owner needs (their own service-tool install) and where the walkthrough is"
 );
 expect(
