@@ -1,0 +1,23 @@
+# Settings storage contract
+
+The first settings PR adds unused storage/migration modules and checks. The service still reads its current environment, and its unit, dashboard and capture writer keep their current configuration. The later cutover activates these modules with the UI and unit changes together; a merged foundation must remain deployable.
+
+The shared paths and permissions, including capture cleanup, are in [data-layout.md](data-layout.md). The settings service is the sole data mover. The installer may invoke/wait for it and verify completion, but cannot run a second move or keep another move journal. Stop all archive writers and install the non-interactive capture pruner before moving captures. `beforeDataMove` is the integration hook for those prerequisites; production cannot use a no-op there.
+
+## Stored choices and learned state
+
+Schema version 1 changes only for an incompatible format. Supported additive fields are retained on write. An unsupported or corrupt document is left intact; the loader returns a named degraded state with optional hardware, recording, dashboard Bluetooth and automatic current control off. A later compatible build can recover the same bytes. A prior-install marker makes a missing canonical file a recovery fault rather than permission to import the old environment again.
+
+`revision` versions owner choices in `values`. The learned motorcycle address is separate. A migrated discover-once install pins its first successful hub in memory and saves that address without changing the choice revision or pending fields. An already armed apply/open edit therefore does not become stale. Explicit selection/Forget prevents a late auto-pin. There is no persisted confirmation flag or restart invitation for a hub that is already connected.
+
+Only the service's own resolved environment is a legacy source. The pure importer accepts that snapshot; setup-service must never substitute its shell environment or a hand-written EnvironmentFile parser. Fixed test literals preserve explicit values and existing operators. Daniel's intentional exception is absent coolant: it migrates off, with the first-open notice pointing to Settings → Bike setup. Explicit coolant `0` is off; explicit `1` or an empty string retains its previous on meaning. Existing canonical settings win; an explicit missing public key stays unresolved and retries at later starts.
+
+The store serialises all writes and requires an acquired OS writer lock. Linux uses flock; offline writers must take the same lock while the service is inactive. The lock is held for the store's lifetime and released only after `settled()`. Unique exclusive replacement temps additionally keep unrelated concurrent callers from corrupting a file. Private files explicitly chmod 0600; archive access is preserved. Sweep recognised temp names only under the writer lock in known managed directories after a power cut.
+
+## Integration conditions for the later phases
+
+- Network candidates are inactive (`autoconnect=no`) with bounded authentication retries, never the existing profiles' unlimited `auth-retries=0`. Only an explicit armed, motion-checked apply authorises one trial. Persist a confirmed, failed or interrupted outcome; failed/interrupted trials never switch networks at a later start until the owner explicitly retries/edits. Bring up the retained profile explicitly. A failed trial followed by two starts must not drop the hotspot again. Network UI is a later phase, using the approved compact action row.
+- The motion predicate comes from service-gate.ts's rule table with unknowns accepted; do not maintain another list/windows. Restart uses the process generation and bounded reservation, without restart receipts or operation IDs.
+- Data root and Wi-Fi diagnostic location are display-only. Only ride-log and service-data locations are editable.
+- The legacy-name cutover check scans executable string/template literals and UI text, **not comments**. Comments follow the repo's “block you touch” obligation; this check does not force an unrelated comment migration into the cutover PR.
+- Keep an existing migrated Bluetooth server as-is. Only creating/rotating its code requires #318's hardened flow; the foundation itself starts no BLE server.
