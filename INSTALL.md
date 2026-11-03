@@ -78,60 +78,9 @@ sudo apt-get install -y build-essential python3 git
 
 ## 2.5. Swap — do this before the install, not after it
 
-Those three modules are compiled on the Pi, and the compile is memory-hungry. A Pi Zero 2 W has 512 MB and Raspberry Pi OS gives it 512 MB of swap, which is not reliably enough: the build gets OOM-killed, and what you see is a crash rather than anything that says "memory". #136 reports 3 GB as what worked. ⚠️ Treat 3072 as a generous number rather than a threshold: it is one owner's report on unknown hardware.
+<!-- for-now: #324 -->
 
-**Which manager you have depends on the OS.** They share no configuration:
-
-```sh
-ls /etc/dphys-swapfile   # exists → Bookworm, use dphys-swapfile below
-ls /etc/rpi/swap.conf    # exists → Trixie, use rpi-swap below
-df -h /var               # you need the full size FREE — see the Trixie warning
-```
-
-⚠️ If **both** exist, use the Trixie route: `rpi-swap` replaces `dphys-swapfile` and an in-place OS upgrade can leave the old config file behind with nothing reading it. `dpkg -l rpi-swap` settles it.
-
-**Bookworm (`dphys-swapfile`).** Edit `/etc/dphys-swapfile` and set **both** of these:
-
-```sh
-CONF_SWAPSIZE=3072
-CONF_MAXSWAP=3072
-```
-
-⚠️ **`CONF_SWAPSIZE` alone gives you 2048 MB.** `CONF_MAXSWAP` defaults to 2048 and clamps the absolute value, not just the computed one — `dphys-swapfile(8)` says "maximal computed and absolute(!) values". Then:
-
-```sh
-sudo dphys-swapfile swapoff
-sudo dphys-swapfile setup    # prints the size it settled on — read it
-sudo dphys-swapfile swapon
-cat /proc/swaps              # confirm
-```
-
-**Trixie (`rpi-swap`).** Two preconditions, then a drop-in, then a reboot — `daemon-reload` is not enough:
-
-- ⚠️ **`/var` needs the full 3 GiB free**, which `df -h /var` above tells you. Unlike Bookworm, nothing clamps `FixedSizeMiB` down to fit: `rpi-resize-swap-file` runs `fallocate --posix --length 3072M`, and if that fails the script's `set -e` aborts the service — which the generated swap unit `Requires=`. **You end up with no swap at all**, which is worse than the 512 MB you started with. Pick a size that fits, or clear space first.
-- ⚠️ **`/etc/fstab` must have no swap line for `/var/swap`.** Both `rpi-swap` and systemd's own `fstab-generator` would write a unit called `var-swap.swap` into the same directory, and which one wins is a race. Check with `grep swap /etc/fstab`.
-
-```sh
-sudo mkdir -p /etc/rpi/swap.conf.d/
-sudo tee /etc/rpi/swap.conf.d/80-use-swapfile.conf > /dev/null <<'EOF'
-[Main]
-Mechanism=swapfile
-
-[File]
-FixedSizeMiB=3072
-EOF
-sudo reboot
-
-# After the reboot — confirm. An EMPTY result means the resize failed:
-swapon --show
-systemctl status rpi-resize-swap-file.service   # read this when it is empty
-```
-
-`Mechanism=swapfile` is load-bearing: the default is `auto`, which resolves to `zram+file`, where the file is only writeback storage for compressed RAM swap.
-
-🚨 **Never use `Mechanism=none` or `Mechanism=zram` to get `rpi-swap` out of the way.** `swap.conf(5)` says of `none`: _"Any existing swap file will be removed to free up disk space."_ It means it — either setting generates a unit whose body is `ExecStart=/bin/rm -f /%I`, and **your swap file is deleted**. The bike's own Pi is in a non-default state this recipe does not apply to as written; that case, and the two safe ways out of it, are in [`docs/pi-install-prerequisites.md`](docs/pi-install-prerequisites.md) §2.
-
-3 GB is space and SD write wear you only need while compiling — turning it back down afterwards is fine.
+For now, follow the [manual swap setup](docs/pi-install-prerequisites.md#manual-swap-setup) before installing dependencies on a Zero 2 W. The planned installer will handle this.
 
 ## 3. Get the code
 

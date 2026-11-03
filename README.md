@@ -8,178 +8,89 @@ It is developed on a **2021 Eva Ribelle**. Other models need checking: some disp
 
 | Item | What you need it for |
 | --- | --- |
-| Raspberry Pi Zero 2 W | Runs the dashboard; other Pi models need their power and connector requirements checked. |
-| microSD card and a card reader | Raspberry Pi OS and the software; leave room for ride history and temporary installation swap. |
-| [8devices Korlan USB2CAN](https://www.8devices.com/products/korlan) | Connects the Pi to the bike's CAN network. Choose the OBD2 or DB9 version to match your verified cable. |
-| Micro-USB OTG adapter/cable | Connects the Korlan's USB plug to the Pi's **USB** data port. A charge-only cable will not work. |
-| A matching motorcycle diagnostic lead, if needed | The connector and wiring must match your bike and Korlan version; check before buying. |
-| Pi power supply, wiring and enclosure | A regulated micro-USB supply suitable for the Pi, with protection and mounting suitable for the bike. Start setup with a mains USB supply. |
-| A computer and a phone hotspot | The computer flashes the card and installs the software. The phone provides the network for the dashboard. |
+| Raspberry Pi Zero 2 W | Runs the dashboard. |
+| microSD card and card reader | Holds Raspberry Pi OS, the software and saved rides. |
+| [8devices Korlan USB2CAN — OBD2 version](https://www.8devices.com/products/korlan) | Plugs straight into the diagnostic port on every Energica. |
+| Micro-USB OTG adapter/cable | Connects the Korlan to the Pi's **USB** data port; a charge-only cable will not work. |
+| Pi power supply, wiring and enclosure | Protected, regulated micro-USB power and secure mounting; use a mains Pi supply for setup. |
+| A computer and phone hotspot | Flashes the card and installs the software. |
 
-**Optional cooling hardware:** MAX31865/PT100 coolant probes and a radiator fan with its motor driver. See [parts, Pi connections and mechanical fittings](docs/cooling-hardware.md). Skip these on a stock bike.
+**Optional cooling hardware:** [Coolant probes and a radiator fan](docs/cooling-hardware.md). A stock bike needs neither, and SPI can stay off.
 
 ## Connect the hardware
 
-With the motorcycle switched off, connect these two separate paths:
+With the bike switched off, plug the OBD2 Korlan into its diagnostic port and connect it to the Pi's **USB** port. Power the Pi separately through **PWR IN**. **Never connect the bike's 12 V directly to the Pi.** See [power and wiring](docs/hardware.md#connections).
 
-```text
-Bike's diagnostic CAN connection → matching lead → Korlan → Pi USB data port
-Bike's suitable low-voltage accessory supply → protected regulator → Pi PWR IN
-```
-
-The Zero 2 W has separate micro-USB data and power ports. The Korlan gets its power from USB. **Never connect the motorcycle's 12 V supply directly to the Pi, its GPIO pins or a USB port.** Keep this installation away from the traction battery and its high-voltage wiring.
-
-The [hardware guide](docs/hardware.md#connections) gives the verified **Korlan-side** CAN high, CAN low and ground pins. **The bike-side connector pin map, accessory power feed and regulator installation are not yet documented here.** Have those checked for your exact motorcycle before making a lead or tapping power; a matching plug alone does not establish the wiring. The software uses 500 kbit/s CAN and brings the adapter up itself.
-
-Leave SPI disabled on a bike without coolant probes. Cool Eva continues without them. The [cooling hardware guide](docs/cooling-hardware.md) covers the optional GPIO wiring.
-
-<!-- for-now: #317 -->
-
-For now, `COOLANT_ENABLED=0` in `/etc/default/cool-eva` also skips the probe attempts; it is optional on a stock bike with SPI off.
+The bike's other CAN connector leaves OBD2 free, but needs a sourced plug and soldering. Pi + OBD2 Korlan is the plug-and-play route. Daniel uses an **OBD2 Y-splitter**, bought online, when he needs the port for BMS configuration work.
 
 ## Setup
 
-These steps use the existing installer. Commands run either **on your computer** or **on the Pi**, as labelled. Choose the username **`pi`** below to use the commands unchanged.
+Commands below say where to run them. Choose username **`pi`** to use them unchanged; [full manual instructions](docs/manual-install.md) cover the details.
 
 ### 1. Prepare the phone and card — on your computer
 
-The Zero 2 W supports **2.4 GHz Wi-Fi only**. On an iPhone, enable **Settings → Personal Hotspot → Maximize Compatibility** if available. When the Pi boots, leave the Personal Hotspot settings page visible for about 20 seconds so it can join.
+The Zero 2 W needs **2.4 GHz Wi-Fi**. On iPhone, turn on **Personal Hotspot → Maximize Compatibility** if available. Keep the hotspot settings page open for about 20 seconds when the Pi boots so it can join.
 
-Use [Raspberry Pi Imager](https://www.raspberrypi.com/software/) to flash **64-bit Raspberry Pi OS**. In its OS customization settings, set:
-
-- Hostname: **`cool-eva`**.
-- Username: **`pi`**, with a password or your SSH public key.
-- **SSH enabled**; this is how you install and maintain a Pi with no screen.
-- Wi-Fi: your phone hotspot's name and password. Do not put these in this repository.
-
-Insert the card, connect the Korlan and power the Pi. Keep the hotspot available while it starts.
+Use [Raspberry Pi Imager](https://www.raspberrypi.com/software/) to flash **64-bit Raspberry Pi OS**. Set hostname **`cool-eva`**, username **`pi`**, a password, **SSH enabled**, and your hotspot's Wi-Fi name and password. Insert the card and power the Pi.
 
 ### 2. Connect — on your computer
 
-Join your computer to the **same phone hotspot as the Pi**. Open **PowerShell on Windows**, or **Terminal on macOS/Linux**, and run:
-
-```sh
-ssh pi@cool-eva.local
-```
-
-Accept the host key for your new Pi and enter the password you chose. You are now typing commands on the Pi. If the name does not resolve, find the Pi's IP address in the hotspot/router's connected-device list and use `ssh pi@<pi-ip>` instead. If it never joins, check the hotspot's 2.4 GHz compatibility and discoverability before continuing.
+Join the same hotspot. In **PowerShell (Windows)** or **Terminal (macOS/Linux)**, run `ssh pi@cool-eva.local`. Accept the new Pi's host key and enter your password. You are now typing on the Pi. If the name fails, [connect using its IP address](docs/manual-install.md#2-connect--on-your-computer).
 
 ### 3. Install the software — on the Pi
 
-```sh
-sudo apt update
-sudo apt install -y build-essential python3 git curl avahi-daemon
-curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
-sudo apt install -y nodejs
-node --version
-```
+<!-- for-now: #324 -->
 
-The last command should report **v24.x**. Before the next commands, follow the [Bookworm/Trixie swap instructions](INSTALL.md#25-swap--do-this-before-the-install-not-after-it). Native modules can run out of memory on the Zero 2 W without additional swap. Allow several minutes for installation.
+For now, [prepare Node 24, build tools and swap](docs/manual-install.md#prepare-node-and-swap), then paste this on the Pi; installation takes several minutes:
 
 ```sh
 git clone https://github.com/danieltroger/cool-eva.git /home/pi/cool-eva
 cd /home/pi/cool-eva
-rm package-lock.json
-npm install
+rm package-lock.json && npm install
 git checkout -- package-lock.json
-ls node_modules/socketcan/build/Release/can.node
 ```
-
-Removing the lockfile is for this first Linux installation; [why it is needed](docs/deploy.md#running-it). `git checkout -- package-lock.json` restores the tracked file while leaving the freshly built `node_modules` in place, so Menu → Update can pull later lockfile changes. The final command must find `can.node`. See [build troubleshooting](docs/pi-install-prerequisites.md) if it fails. Do not use `sudo` for the clone or `npm install`.
 
 ### 4. Enable saved ride history — on your computer
 
+<!-- for-now: #327 -->
+
 The [browser key setup](docs/hosted-pages.md#make-recording-keys) also supports a phone-only path. Its hosted address will be published after hosting verification; the manual route below remains available.
 
-Keep your Pi session open. Install **Node 24** from [nodejs.org](https://nodejs.org/en/download) on the computer if needed.
-
-On your computer, open the [GitHub repository](https://github.com/danieltroger/cool-eva), choose **Code → Download ZIP**, and extract it (on Windows, use **Extract All**). Find the extracted project folder containing `README.md` and `scripts/`. Open a **second computer terminal** and change to that folder, replacing the example path with its actual location:
-
-```sh
-cd "path/to/extracted/cool-eva-main"
-```
-
-If Git is already installed, you can instead run `git clone https://github.com/danieltroger/cool-eva.git` followed by `cd cool-eva`. An existing checkout also works. From the project folder, run:
-
-```sh
-node --experimental-strip-types scripts/generate-log-key.ts
-```
-
-**Back up `ride-log-key.private.pem` in a password manager before continuing.** It is the only way to read your saved rides; losing it makes them permanently unreadable. Keep it off the Pi. Copy only the public half:
-
-```sh
-scp ride-log-key.public.pem pi@cool-eva.local:/home/pi/cool-eva/
-```
-
-Without that public key, the live dashboard still works but **no ride history is saved**. The [ride-log guide](docs/ride-log.md) explains downloads and encryption's limits.
+For now, follow the [computer key setup](docs/manual-install.md#4-enable-saved-ride-history--on-your-computer): run `node --experimental-strip-types scripts/generate-log-key.ts`, back up the private key and copy only the public key to the Pi; without it, the dashboard works but no rides are saved.
 
 ### 5. Before the first service start
 
-Cool Eva enrolls the Pi with the motorcycle's Bluetooth hub. The hub remembers **one authorized device**, so this can replace the pairing you already use. To pair a previous device again, clear the stored device from the bike's own dashboard first.
-
-<!-- for-now: #317 -->
-
-For now, you can prevent that enrollment by adding `BLE_ENABLED=0` to `/etc/default/cool-eva` **before the next step**; edit the file with `sudo nano /etc/default/cool-eva` in your Pi terminal.
-
-Manual bike changes require deliberate dashboard actions. Automatic DC charge management can act without asking each time; read [what can change the bike](#what-can-change-the-bike) before starting. Stock bikes need no coolant probes, fan or SPI enablement.
+[Read what can change the bike](#what-can-change-the-bike).
 
 ### 6. Start and check — on the Pi
 
-Back in your **Pi terminal**:
+<!-- for-now: #324 -->
+
+For now, start the service with:
 
 ```sh
 cd /home/pi/cool-eva
 sudo "$(command -v node)" --experimental-strip-types scripts/setup-service.ts
-sudo systemctl status cool-eva
-sudo journalctl -u cool-eva -f
 ```
 
-The installer starts the service and enables it for future boots. Press **q** to leave the status viewer; press **Ctrl+C** to stop following logs. Neither stops the service.
-
-With the **motorcycle awake and parked**, check for a started CAN channel and live readings. For saved history, look for **`ride-log: encrypting to …`**. A **`NO PUBLIC KEY`** message means the key-copy step did not land; fix it and restart with `sudo systemctl restart cool-eva`.
-
-A missing optional `candump`/`can-utils` warning concerns raw developer captures; it does not prevent the phone dashboard or encrypted ride logging. Do not enable SPI unless you have wired the optional probes.
+With the **bike awake and parked**, open the dashboard below and check for live readings. See [startup and ride-log checks](docs/manual-install.md#6-start-and-check--on-the-pi) if anything is missing.
 
 ## Open the dashboard
 
-On the phone hosting the hotspot, or another device on the same network, open **[http://cool-eva.local](http://cool-eva.local)**. If the name fails, use `http://<pi-ip>/`, with the address from the earlier SSH step. The dashboard runs on the Pi; internet access is not needed to view it.
+- **Bluetooth:** [Connect over BLE](docs/connecting-over-bluetooth.md) using **Chrome on Android** or **Bluefy on iPhone**. The experimental [iOS app](docs/ios-app.md) requires an Xcode build and has not been tested on a phone. Bluetooth needs a [secret set on the Pi over Wi-Fi](docs/dashboard.md) first; after that, it avoids waiting on the hotspot settings page. A browser must first load the hosted page online.
+- **Wi-Fi/hotspot:** open **[http://cool-eva.local](http://cool-eva.local)** on the same network in any browser. Viewing works without internet. The Pi still needs Wi-Fi internet for **Menu → Update**, even when the phone uses Bluetooth. See [dashboard details and IP fallback](docs/dashboard.md) or [update help](docs/deploy.md#running-it).
 
-- **Ride:** speed, power, battery temperature and charge.
-- **Charge:** charging current, voltage, power and battery condition.
-- **Faults:** named active and stored trouble codes.
-- **Hypermile / All:** battery headroom and a fuller view of the available readings.
-
-Coolant temperatures need the optional probes. Detailed individual cell/module readings need a custom BMS configuration; their absence on a stock bike is normal. Keep your phone interaction for when you are parked.
-
-For later software updates, use **Menu → Update**. [Updating and troubleshooting the installation](docs/deploy.md#running-it) explains dependency changes and manual recovery. Do not routinely run `npm install` on an already working Pi.
+Use the phone while parked. Missing coolant or detailed cell readings on a stock bike is normal; see [what each screen shows](docs/dashboard.md).
 
 ## What can change the bike
 
-Reading telemetry includes transmitting diagnostic **read requests**; this is not a completely silent tap. Bluetooth enrollment changes the hub's pairing as explained before first start.
-
-Manual charging and service actions use a two-tap arm and vehicle-state checks. They can change charge limits, stop charging, write calibration parameters, set a service point, sync the bike's clock, clear trouble codes or **Reset the VCU** (restart both processors). Parameter writes also require a matching parameter table. Some actions are irreversible; the gates do not establish that a calibration value is suitable for your motorcycle.
-
-<!-- for-now: #317 -->
-
-For now, state-changing CAN commands also require `SERVICE_WRITE_ENABLED=1`; leave it unset for a first installation.
-
-**Automatic DC charge management starts in automatic mode** and can adjust the requested current without a confirmation for each adjustment. When the dashboard setting **"Allow automatic current reduction"** is available, it defaults **on**. On a stock BMS configuration, it only changes the maximum-current figure the bike's dash shows; it does not control the actual DC charging current. See [Daniel's stock-bike observation](docs/charge-auto.md#stock-bms-configuration) and the [automatic charging details](docs/charge-auto.md).
-
-<!-- for-now: #317 -->
-
-For now, use the Charge tab's **"Automatic charge current"** tile (visible during a DC charge when writes are enabled) for session controls, or set `CHARGE_AUTO_ENABLED=0` in `/etc/default/cool-eva` to disable the controller across boots.
-
-The optional fan can start by itself once enabled. Keep hands clear while it has power; see the [cooling hardware guide](docs/cooling-hardware.md).
-
-<!-- for-now: #317 -->
-
-For now, a fitted fan is enabled with `FAN_ENABLED=1`, after the hardware and boot configuration in that guide are complete.
+- Starting Cool Eva enrolls the Pi with the bike's Bluetooth hub, which remembers **one authorized device**; it can replace your existing pairing. Read [pairing details](docs/bike-changes.md#bluetooth-pairing-before-startup) before starting.
+- Telemetry sends diagnostic read requests. **Automatic DC charge management starts in automatic mode** and can request current changes without asking each time; on stock BMS settings it only changes the dash's maximum-current figure. See [controls and limits](docs/bike-changes.md).
+- Manual bike actions take two taps and vehicle-state checks; some are irreversible. An enabled optional fan can start by itself. Read [actions, gates and fan precautions](docs/bike-changes.md).
 
 ## Get help
 
-If the page will not open, check the hotspot steps first. If it opens without bike readings, check the adapter, wake the parked bike, and look at `sudo journalctl -u cool-eva -n 50`. Missing saved history usually means the public key is absent.
-
-[Open a GitHub issue](https://github.com/danieltroger/cool-eva/issues/new) with the bike's model/year, Pi model, OS version, running version shown in the dashboard, and the relevant error text. Remove personal identifiers before posting: ride logs, diagnostic dumps, network names, keys and GPS traces do not belong in a public issue. Useful references: [CAN adapter startup](docs/can-adapter-probe.md), [Wi-Fi](docs/wifi.md), and [Bluetooth connections](docs/connecting-over-bluetooth.md).
+For setup trouble, [download Claude Code](https://code.claude.com/docs/en/quickstart) on your computer, open this project and ask Claude to figure it out. Please also [send Daniel feedback through a GitHub issue](https://github.com/danieltroger/cool-eva/issues/new) about how to improve the setup. The [help checklist](docs/support.md) explains useful error details and what to keep private.
 
 ## Going further
 
