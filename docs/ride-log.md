@@ -2,6 +2,8 @@
 
 Encryption here applies to the sealed `.celog` files. The optional [raw CAN capture](can-capture.md) is a separate artifact and can contain personal telemetry; it is not made confidential by sealing the ride log. Keep raw captures private.
 
+The [browser key setup](hosted-pages.md#make-recording-keys) generates compatible PEM files locally, with a phone-only download/public-file handoff. Its hosted address is published after hosting verification; the manual key-generation route below remains available.
+
 > The following sections preserve the former README at commit `58c7eba` (2026-11-03), including dated measurements and limitations. For first installation, use the [current README](../README.md). Older validation/status claims are historical; the existing subsystem findings and current code take precedence.
 
 The sealed ride log can be downloaded from `http://<pi>/dl` — short enough to type on a phone, and ~10x smaller than the old SQLite download. What crosses the wire is ciphertext: without the laptop's private key those bytes are noise. That is a claim about the **bytes**, not about the **transfer** — `/dl` is unauthenticated plain HTTP, so anyone on that network can pull the whole log and keep the ciphertext against the day the key leaks, and anyone in the middle can truncate it, because segments are sealed one by one and nothing signs the sequence. See [What this does and doesn't hide](#what-this-does-and-doesnt-hide). Decrypt it on the laptop (see below) to get a `.db` for Grafana.
