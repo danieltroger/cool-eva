@@ -35,11 +35,7 @@ export async function assembleBundle(sourceDirectory: string, outputDirectory: s
   const dependencyLock = await readDependencyLock(sourceDirectory);
   assertKnownBuildScripts(dependencyLock);
   // Optional native failures must fail the release, rather than npm pruning a dependency.
-  await runCommand(
-    "/opt/node/bin/npm",
-    ["ci", "--omit=dev", "--include=optional", "--ignore-scripts", "--no-audit", "--no-fund"],
-    options
-  );
+  await runCommand("/opt/node/bin/npm", NPM_CI_ARGUMENTS, options);
   await assertNoDevDependencies(sourceDirectory, dependencyLock);
   for (const moduleName of NATIVE_MODULES) {
     await runCommand(
@@ -141,6 +137,15 @@ export async function assembleBundle(sourceDirectory: string, outputDirectory: s
   );
   console.log(`Built and checked ${metadata.release}; manifest written last`);
 }
+
+export const NPM_CI_ARGUMENTS = [
+  "ci",
+  "--omit=dev",
+  "--include=optional",
+  "--ignore-scripts",
+  "--no-audit",
+  "--no-fund",
+];
 
 function requiredEnvironment(name: string): string {
   const value = process.env[name];

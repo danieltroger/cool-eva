@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { copyBundleArtifacts } from "./release/build.ts";
+import { NPM_CI_ARGUMENTS } from "./release/assemble.ts";
 import { hashFile, selectSourcePaths, validateArchivePath, writeFileInventory } from "./release/files.ts";
 import { parseBundleInputs, readBundleInputs, validateBuildIdentity } from "./release/inputs.ts";
 import { createReleaseMetadata, renderReleaseManifest } from "./release/manifest.ts";
@@ -19,6 +20,8 @@ import { assertRuntimePayload, copyRuntimePayload, RUNTIME_ROOTS } from "./relea
 export async function checkReleaseBundle(): Promise<void> {
   const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
   const inputs = await readBundleInputs(root);
+  assert.equal(NPM_CI_ARGUMENTS[0], "ci");
+  assert(NPM_CI_ARGUMENTS.includes("--omit=dev"), "npm ci must explicitly omit dev dependencies");
   const commit = "a".repeat(40);
   const identity = { commit, channel: "branch-can-fix", branch: "fix/can", epoch: "1793736000" };
   validateBuildIdentity(commit, identity.channel, identity.branch, identity.epoch);
