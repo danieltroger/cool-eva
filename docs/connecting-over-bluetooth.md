@@ -8,28 +8,25 @@ How to get the dashboard on your phone over Bluetooth, for when the phone and th
 
 | Phone | Use | Opens with no reception? |
 | --- | --- | --- |
-| iPhone | the **Cool Eva app** (`ios/`, installed from Xcode) | yes — the dashboard is in the app |
+| iPhone | the experimental **[Cool Eva app](ios-app.md)** (`ios/`, installed from Xcode; not yet tested on a phone) | yes — the dashboard is in the app |
 | iPhone | **[Bluefy](https://apps.apple.com/app/id1492822055)**, a Web Bluetooth browser | no — load the page while you have signal |
 | Android | **Chrome** | no — the same |
 
 Safari cannot do this on any iPhone: it has no Web Bluetooth.
 
-Bluefy and Chrome use the copy of the dashboard on GitHub Pages, **`https://andy-siu.github.io/cool-eva/`**. Not `http://cool-eva.local`: that is the copy the Pi serves over wifi, which never uses Bluetooth, so its menu has no Bluetooth section at all. A browser can only use Bluetooth on an https page, and once the page is open, everything goes straight between the phone and the Pi; GitHub never sees any of it.
+Bluefy and Chrome use the copy of the dashboard on GitHub Pages, **[https://danieltroger.github.io/cool-eva/](https://danieltroger.github.io/cool-eva/)**. Not `http://cool-eva.local`: that is the copy the Pi serves over wifi, which never uses Bluetooth, so its menu has no Bluetooth section at all. A browser can only use Bluetooth on an https page, and once the page is open, everything goes straight between the phone and the Pi; GitHub never sees any of it.
 
 ## 1. Set up the Pi (once)
 
 Do this with the bike parked in wifi range, over ssh.
 
-1. **Run a version with the BLE server.** Until the `ble-server` branch is merged, check it out — as the `pi` user, **never with `sudo`**:
+1. **Use the current software.** The BLE server is already on `main`; a fresh installation needs no branch change. For an older installation, follow the [update guide](deploy.md#running-it).
 
-   ```
-   cd /home/pi/cool-eva
-   git fetch origin && git checkout ble-server && git pull
-   ```
+2. **Choose a secret** of at least 12 characters. You will type it on the phone once, so a phrase you can type is better than random characters.
 
-   After it merges, a plain `git pull` on `main` is enough. Neither needs `npm install`.
+   <!-- for-now: #317 -->
 
-2. **Choose a secret** of at least 12 characters. You will type it on the phone once, so a phrase you can type is better than random characters. Add it to the service's environment file:
+   For now, add it to the service's environment file:
 
    ```
    sudo nano /etc/default/cool-eva
@@ -67,7 +64,7 @@ Stay within about 10 m of the bike.
 
 ### Bluefy (iPhone)
 
-1. Install [Bluefy](https://apps.apple.com/app/id1492822055) and open **`https://andy-siu.github.io/cool-eva/`** in it.
+1. Install [Bluefy](https://apps.apple.com/app/id1492822055) and open **[https://danieltroger.github.io/cool-eva/](https://danieltroger.github.io/cool-eva/)** in it.
 2. Tap the **☰ menu** (top left). **Bluetooth** is the first section.
 3. Type the secret into **BLE secret (BLE_SECRET on the Pi)** and tap **Connect to the Pi**.
 4. Allow Bluetooth if Bluefy asks, then pick **cool-eva** in the list. It may show as the Pi's hostname instead once iOS has seen it before.
@@ -100,7 +97,7 @@ In Bluefy and Chrome, open the page while you still have signal and leave the ta
 
 | what you see | what to do |
 | --- | --- |
-| **No Bluetooth section in the menu** | You are on the wifi copy (`cool-eva.local`). Open `https://andy-siu.github.io/cool-eva/` instead, or use the app. |
+| **No Bluetooth section in the menu** | You are on the wifi copy (`cool-eva.local`). Open `https://danieltroger.github.io/cool-eva/` instead, or use the app. |
 | **This browser has no Web Bluetooth…** | You are in Safari or another browser without it. Use Bluefy or the app on iPhone, Chrome on Android. |
 | Tapping **Connect** opens the menu instead of the list | No secret is saved yet. Type it in the highlighted field and tap **Connect to the Pi**. |
 | **The list stays empty** | The Pi is not advertising. Check the journal for `advertising as` (step 1.3). If it shows `Operation already in progress` over and over, the Pi's Bluetooth adapter is wedged ([`ble-adapter-wedge.md`](ble-adapter-wedge.md)). Restarting the service does **not** clear that; the service power-cycles the adapter itself after a few failures, so give it a minute, and `sudo reboot` if it persists. Also check you are in range. |
@@ -112,4 +109,26 @@ In Bluefy and Chrome, open the page while you still have signal and leave the ta
 
 ## Who can connect
 
-Only a phone that knows the secret. Anyone in range can see that a `cool-eva` is advertising, but without the secret the Pi refuses everything except the handshake, and everything it sends after that is encrypted under a key derived from the secret. The secret lives in `/etc/default/cool-eva` on the Pi and in the browser or app on your phone, nowhere else. To lock out a phone, change `BLE_SECRET` and restart the service.
+Only a phone that knows the secret. Anyone in range can see that a `cool-eva` is advertising, but without the secret the Pi refuses everything except the handshake, and everything it sends after that is encrypted under a key derived from the secret.
+
+<!-- for-now: #317 -->
+
+For now, the secret lives in `/etc/default/cool-eva` on the Pi and in the browser or app on your phone, nowhere else; to lock out a phone, change `BLE_SECRET` and restart the service.
+
+## Earlier branch instructions
+
+<details>
+<summary>Before the BLE server merged (superseded)</summary>
+
+The current `main` already includes the server. These earlier instructions are preserved for history; use the setup above.
+
+1. **Run a version with the BLE server.** Until the `ble-server` branch is merged, check it out — as the `pi` user, **never with `sudo`**:
+
+   ```
+   cd /home/pi/cool-eva
+   git fetch origin && git checkout ble-server && git pull
+   ```
+
+   After it merges, a plain `git pull` on `main` is enough. Neither needs `npm install`.
+
+</details>
