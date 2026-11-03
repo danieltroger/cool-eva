@@ -16,8 +16,7 @@
       <p class="eyebrow">RIDE RECORDING</p>
       <h1>Your rides.<br />Your keys.</h1>
       <p class="intro">
-        Make the two files that protect your saved rides. Your phone or computer makes them here; neither file is sent
-        anywhere.
+        Make the two files that protect your saved rides. This page makes them on your device and does not upload them.
       </p>
       <section class="card" aria-labelledby="start-title">
         <h2 id="start-title">Keep the private one safe</h2>
@@ -37,6 +36,10 @@
         <p class="eyebrow">1 · KEEP ON YOUR DEVICE</p>
         <h2 id="save-title">Save your private key</h2>
         <p class="filename">ride-log-key.private.pem</p>
+        <p class="secondary">
+          Your device or password manager may sync downloaded files. Safari saves downloads to iCloud Drive by default.
+          For a local copy, choose On My iPhone in Safari’s Downloads settings.
+        </p>
         <button id="private-download" class="primary" type="button">Download private key</button>
         <p id="private-status" role="status"></p>
         <label class="confirmation"
@@ -72,12 +75,13 @@
         </p>
         <ol>
           <li>
-            Download the private file. On iPhone, find it in <strong>Files → Downloads</strong> (under iCloud Drive or
-            On My iPhone). On Android, use <strong>Chrome → Downloads</strong> or your Files app.
+            Download the private file. On iPhone, find it in <strong>Files → iCloud Drive → Downloads</strong>, or On My
+            iPhone if you changed the download location. On Android, use <strong>Chrome → Downloads</strong> or your
+            Files app.
           </li>
           <li>
-            Back it up, then return to this tab. Switching to Files keeps the same pair; you can download it again here.
-            Reloading or leaving the page clears the pair and never makes a new one automatically.
+            Back it up, then return to this tab. If your pair is still shown, you can retry its downloads. Reloading or
+            leaving the page clears it; a new pair is made only when you tap Generate keys.
           </li>
           <li>
             Confirm your backup and download the public file. In the Pi’s recording setup, choose Browse/Files and

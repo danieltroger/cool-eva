@@ -8,7 +8,7 @@ This is the first hosting stage of [#327](https://github.com/danieltroger/cool-e
 
 Open the published key-page address in a supported browser. Tap **Generate keys**, then **Download private key**. Find `ride-log-key.private.pem`, keep a recoverable backup away from the Pi (for example in your password manager), and confirm **I have saved a recoverable copy**. Download `ride-log-key.public.pem`. Only the public file belongs on the Pi. Losing the private key makes old rides unreadable; generating another pair does not recover them. Existing owners can keep their existing keys.
 
-The page reports that a download started. It cannot confirm that the file was saved or backed up. Retrying the private download in the same tab uses the same pair. Switching to another app keeps the pair in memory. Reloading, navigating away or a browser discarding the tab loses it; returning never generates a replacement automatically. Use the files you saved rather than accidentally configuring a different key. A browser download cannot set the CLI's mode 0600.
+The page reports that a download started. It cannot confirm that the file was saved or backed up. If the pair is still shown when you return to the tab, retrying its private download uses the same pair. Reloading, navigating away or a browser discarding the tab loses it; returning never generates a replacement automatically. Use the files you saved rather than accidentally configuring a different key. A browser download cannot set the CLI's mode 0600. Phone app-switching and file handling remain part of the pre-cutover acceptance below.
 
 Chrome/Edge 133+, Firefox 130+ and Safari/iOS Safari 17+ support the required X25519 operations. The page attempts generation and export and reports failure if either is unavailable. For an unsupported browser, update it or use the existing Node 24 laptop command:
 
@@ -16,25 +16,25 @@ Chrome/Edge 133+, Firefox 130+ and Safari/iOS Safari 17+ support the required X2
 node --experimental-strip-types scripts/generate-log-key.ts
 ```
 
-Both routes produce the same X25519 PKCS#8 private/SPKI public PEM format and filenames. No key is uploaded to this website, stored in browser storage, embedded in a URL or copied to the clipboard. The private PEM is never rendered. Only transient memory and explicit downloads hold the private material; JavaScript cannot guarantee memory erasure. The public fingerprint is lowercase SHA-256 hex of the SPKI DER bytes. This key pair is separate from the dashboard Bluetooth access code.
+Both routes produce the same X25519 PKCS#8 private/SPKI public PEM format and filenames. The page never uploads a key, writes it to browser storage, embeds it in a URL or copies it to the clipboard. The private PEM is never rendered. The page uses transient memory and explicit downloads; your device, password manager or backup service may sync files you save. JavaScript cannot guarantee memory erasure. The public fingerprint is lowercase SHA-256 hex of the SPKI DER bytes. This key pair is separate from the dashboard Bluetooth access code.
 
 ### Only a phone
 
 On an iPhone use **Safari**; on Android use **Chrome**. When starting in the Cool Eva iOS app, open the key page separately in Safari; the native dashboard's download/share implementation does not establish that Safari's key downloads work.
 
-1. Download the private PEM. On iPhone, open **Files → Downloads** under iCloud Drive or On My iPhone, according to Safari's download location. On Android, use **Chrome → Downloads** or your Files app. Find the exact `ride-log-key.private.pem` file and back it up. [Apple's download guide](https://support.apple.com/en-us/102440), [Chrome's Android download guide](https://support.google.com/chrome/answer/95759?hl=en&co=GENIE.Platform%3DAndroid).
-2. Return to the same browser tab. You can retry the private download before confirming your backup; the pair must not change. A browser may suffix repeated filenames, so compare the public fingerprint and keep one known matching pair.
+1. Download the private PEM. Safari saves downloads to **iCloud Drive** by default, which may sync the private file to iCloud. Choose **On My iPhone** in Safari's Downloads settings for a local copy. Find the file in **Files → iCloud Drive → Downloads**, or the location you chose. On Android, use **Chrome → Downloads** or your Files app. Find the exact `ride-log-key.private.pem` file and back it up. [Safari download locations](https://support.apple.com/guide/iphone/customize-your-safari-settings-iphb3100d149/ios), [find iPhone downloads](https://support.apple.com/en-us/102440), [Chrome's Android download guide](https://support.google.com/chrome/answer/95759?hl=en&co=GENIE.Platform%3DAndroid).
+2. Return to the same browser tab. If the pair is still shown, you can retry its private download before confirming your backup. A browser may suffix repeated filenames, so compare the public fingerprint and keep one known matching pair. If the tab was cleared, use your saved matching files; generating again creates a different pair.
 3. Confirm the backup, download the public file, and find `ride-log-key.public.pem` as well. Join the Pi's Wi-Fi network, open its own HTTP dashboard, and use ride recording setup's Browse/Files picker to select **only `ride-log-key.public.pem`**. Never select the private file. Compare the fingerprint, apply the setting and check the active recorder status.
 
 The file-picker flow belongs to [#317](https://github.com/danieltroger/cool-eva/issues/317); its integration is outstanding until that UI exists. The HTTPS key page never POSTs to the HTTP Pi or attempts cross-origin installation. Until public-key upload is available, the manual installation route still copies the public file with SCP. [#324](https://github.com/danieltroger/cool-eva/issues/324)'s installation guide and #317 onboarding should link to the published key-page URL. No key argument is added to the installer.
 
 ## One-time account setup — coordinator only
 
-The author lane must never access a Cloudflare account or token. Daniel authorised the coordinator to set up his **personal** account. No Depict account or connector is involved.
+The author lane must never access a Cloudflare account or token. Daniel authorised the coordinator to set up his **personal** account.
 
-1. Enable Workers if necessary and choose the account's workers.dev subdomain. Reserve the stable Worker names **`cool-eva-keys`** and **`cool-eva-dashboard`**. CI creates the Workers. No custom domain or DNS change is required.
-2. Create an API token with **Account → Workers Scripts → Edit**, restricted to this one personal account. Use **no TTL/expiration and no IP filter**, so hosted runners and next year's deployment remain usable. Do not grant DNS, Routes, Pages, KV, R2 or general account administration permissions. This is an account-scoped permission, not a restriction to just the two named Workers.
-3. Set GitHub Actions repository secrets **`CLOUDFLARE_API_TOKEN`** and **`CLOUDFLARE_ACCOUNT_ID`**. Never put their values into configs, Git, issues, PRs, receipts, command output or the coordination events file.
+1. **Before creating a token**, confirm both a Cloudflare account display name and a workers.dev subdomain that contain no personal identity. Rename an email-derived default account name and any identifying subdomain first. Wrangler can print the account display name into these public Actions logs on an authentication error; GitHub does not mask that name. The subdomain becomes the permanent public origin. Keep the stable Worker names **`cool-eva-keys`** and **`cool-eva-dashboard`**; CI creates them on first deploy. No reservation, custom domain or DNS change is required.
+2. Complete independent diff review of `.github/workflows/workers.yml` before adding deployment credentials. Only after approval and the two naming checks above, create an API token with **Account → Workers Scripts → Edit**, restricted to this one personal account. Use **no TTL/expiration and no IP filter**, so hosted runners and next year's deployment remain usable. Do not grant DNS, Routes, Pages, KV, R2 or general account administration permissions. This is an account-scoped permission, not a restriction to just the two named Workers.
+3. After that approval, set GitHub Actions repository secrets **`CLOUDFLARE_API_TOKEN`** and **`CLOUDFLARE_ACCOUNT_ID`**. Never put their values into configs, Git, issues, PRs, receipts, command output or the coordination events file.
 
 Keep both Worker names and the account subdomain stable. Changing either changes the origin and loses the dashboard's stored Bluetooth code at that address. The exact origin passed through the coordinator to #318 is:
 
@@ -44,11 +44,15 @@ https://cool-eva-dashboard.<subdomain>.workers.dev
 
 There is **no path or trailing slash**. Do not permit the key-page origin, wildcard workers.dev hosts, sibling Workers, deployment previews or the shared account GitHub Pages origin. #318 owns the committed exact-origin policy, its initial disabled state, native `cooleva://app/` allowance, legacy storage cleanup and any exposed-code rotation guidance.
 
+Use the single placeholder `<subdomain>` in this origin and the dashboard Wrangler config's origin comment until the coordinator confirms the naming decision. Wrangler derives the actual address from the Worker name and account subdomain; no placeholder is passed as a route or runtime setting.
+
 ## CI and local checks
 
 `.github/workflows/workers.yml` uses Node **24**, Actions pinned by full commit SHA, and Wrangler **4.157.0** pinned in `workers/package.json` and its own lockfile. `npm --prefix workers ci` installs development/CI tooling, without changing the Pi application's dependency tree or root lockfile. Do not install it on the Pi.
 
-PR validation has no Cloudflare secrets. Pushes to main, or a manual run on main, validate before deploying both Workers sequentially. The deployment job refuses a main SHA that has already been superseded, serialises production deployments without cancelling a running one, and supplies the two Cloudflare secrets only to the deployment steps. An ordinary failed second deploy is visible and can be rerun from main; the two independent Workers are not an atomic pair.
+PR validation has no Cloudflare secrets. Pushes to main, or a manual run on main, validate before deploying both Workers sequentially. A superseded main SHA records a notice and skips the deployment steps without failing the run; fetch/auth/deployment errors still fail. Production deployments are serialised without cancelling a running one, and the two Cloudflare secrets are supplied only to the deployment steps. Formatting belongs to the existing automatic Prettier workflow; it does not block this workflow's deploy gate. An ordinary failed second deploy is visible and can be rerun from main; the two independent Workers are not an atomic pair.
+
+If automatic formatting advances main, its bot commit does not trigger another workflow run. The revision guard skips the older run; manually run **Hosted pages** on main to publish the formatted revision.
 
 All remote deployment happens in GitHub Actions. **Never run laptop `wrangler deploy`, even with `--dry-run`.** Local development uses only `wrangler dev --local`:
 

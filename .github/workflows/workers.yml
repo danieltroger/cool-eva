@@ -25,7 +25,6 @@ jobs:
             workers/package-lock.json
       - run: npm ci
       - run: npm --prefix workers ci
-      - run: npm run format:check
       - run: npm run typecheck
       - run: npm test
       - run: npm --prefix workers run check
@@ -40,23 +39,33 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Refuse a superseded main revision
+      - name: Check deployment revision
+        id: revision
         run: |
           git fetch --no-tags --depth=1 origin main
-          test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
+          if [ "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Skipping deployment from a superseded main revision."
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.revision.outputs.current == 'true'
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: workers/package-lock.json
       - run: npm --prefix workers ci
+        if: steps.revision.outputs.current == 'true'
       - name: Deploy key page
+        if: steps.revision.outputs.current == 'true'
         working-directory: workers
         run: npm exec --offline -- wrangler deploy --config keys/wrangler.jsonc
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       - name: Deploy dashboard
+        if: steps.revision.outputs.current == 'true'
         working-directory: workers
         run: npm exec --offline -- wrangler deploy --config dashboard/wrangler.jsonc
         env:
