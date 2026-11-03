@@ -96,6 +96,7 @@ For setup trouble, [download Claude Code](https://code.claude.com/docs/en/quicks
 | --- | --- |
 | Check wiring or add cooling hardware | [Hardware](docs/hardware.md) · [Probes, fan and fittings](docs/cooling-hardware.md) |
 | Change configuration | [Configuration reference](docs/configuration.md) |
+| Inspect Daniel's personal BMS file or select changes for your own pack | [BMS compatibility, hazards, file and agent prompt](docs/bms-config.md) |
 | Download and use ride history | [Encrypted ride logs](docs/ride-log.md) · [Grafana and `rides.db`](docs/grafana.md) |
 | View rides on a laptop map | [Run the map viewer](map/README.md) · [Map findings](docs/ride-map.md) |
 | Save a waypoint or connect by Bluetooth | [Waypoints / Siri](docs/waypoints.md#saving-a-waypoint-from-siri) · [Phone Bluetooth guide](docs/connecting-over-bluetooth.md) |

@@ -1144,16 +1144,17 @@ Still not converted to km/h, and now **for a better reason than "no scale is kno
 
 What they mean depends on which BMS config is flashed. The VCU derates DC charging from **36 °C** reported pack temperature, which is far too early for a watercooled pack, so the custom configs lower these two bytes to push that knee later. Only what is transmitted changes — every BMS protection threshold, the regen shaping curve and `allowed_regen_a` are still computed from the raw internal values.
 
-**The size of that shift is NOT fixed, and assuming it is has already produced one false alarm.** Four configs have been flashed:
+**The size of that shift is NOT fixed, and assuming it is has already produced one false alarm.** Configuration history and the selected candidate:
 
 | config | behaviour |
 | --- | --- |
 | `5-custom-p32b-vcu-offset` | a flat −15 °C. **RETIRED** — it broke charging. |
 | `11-full-conditional-offset` | a no-op: its postprocessor line never ran (verified over 1900 samples, 0x660 b3/b4 identical to 0x200). |
 | `14-signbit-clamp` | pinned the reported value at 35 °C for ANY true temperature above 35, and passed the true value through below it. **SUPERSEDED.** |
-| `15-bounded-clamp` | built 2026-08-09, **NOT YET FLASHED**. Bounds that clamp at the top: below 35 °C it passes the truth through, from 35 to 54 °C it reports 35, and at **55 °C and above it reports the TRUTH again**. |
+| `15-bounded-clamp` | Archive behavior supports it being live since 2026-08-09; this is not a byte-level read-back. Below 35 °C it passes the truth through, from 35 to 54 °C it reports 35, and at **55 °C and above it reports the TRUTH again**. |
+| `17-bounded-clamp-33` | **To be flashed and read back.** Changes only the two floor operands in 15, with the 55 °C release unchanged. [File, selected floor, hazards and read-back checklist](bms-config.md). |
 
-So under the live config the difference `batt_temp_hi − batt_temp_hi_vcu` is 0 below 35 °C, `(true − 35)` from 35 to 54 °C, and 0 again from 55 °C up. **A constant 15 is the one thing it is NOT**, and it is not even monotonic in temperature. Do not treat any particular difference as a health check.
+Under the archived 15 configuration the difference `batt_temp_hi − batt_temp_hi_vcu` is 0 below 35 °C, `(true − 35)` from 35 to 54 °C, and 0 again from 55 °C up. **A constant 15 is the one thing it is NOT**, and it is not even monotonic in temperature. Do not treat any particular difference as a health check. The guide keeps 17's selected floor and pending-flash status separate from these historical measurements.
 
 **The upper bound exists because the VCU enters limp mode at 55 °C** (`LIMP_B_TEMP` = 55 in the A9 parameter block — `obd-garage/DC_CHARGE_LIMITS.md` §7 puts it plainly: pinned at 35, the unbounded clamp does not delay that protection, it **disables** it). Not hypothetical: this bike's own log has the pack at a true 55 °C on 2026-08-08 13:45 UTC with `clamp_amount` = 20 and `batt_temp_hi_vcu` last logged at 35.
 

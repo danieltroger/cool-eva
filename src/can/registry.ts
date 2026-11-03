@@ -95,20 +95,11 @@ export const SIGNALS: SignalDef[] = [
   // `iw dev wlan0 link`. docs/wifi.md §2.
 
   // 0x200 / 0x660 — BMS
-  // batt_temp_lo/hi always mean the TRUE pack temperature, whichever frame supplies
-  // them (see pack-temperature.ts), so the history stays one continuous series. That
-  // guarantee is why they can be ABSENT: until the frames establish which BMS config is
-  // flashed, no row is written under them at all, and if the pack that owns the true
-  // values goes silent they stop rather than fall back. Sparse is the intended shape —
-  // anything reading them has to tolerate gaps instead of interpolating across one.
-  // The _vcu pair is what the VCU and dash actually read: identical to the true pair on
-  // the stock config, and lower once a DC-derate config is flashed. It comes straight off
-  // 0x200 with no routing, so it is the pair that never has gaps. The difference between
-  // the two is the useful signal, but it is NOT a fixed number, not even monotonic in
-  // temperature, and must not be used as a health check — under 15-bounded-clamp (built, not yet flashed
-  // now) it is 0 below 35 °C, (true − 35) from 35 to 54 °C, and 0 again from 55 °C up, where
-  // the truth is reported so the VCU's limp protection can still fire. Only the retired
-  // flat-offset config gave a constant 15. See the 0x200 comment in decode-bms.ts.
+  // True temperatures may be absent until routing is known, or when their source stops;
+  // consumers must tolerate gaps. The _vcu pair always reads 0x200's VCU/dash view.
+  // Their difference is neither fixed nor monotonic and is not a health check. The
+  // archived 15 clamp releases at 55 °C; 17 is pending flash/read-back. History and
+  // routing evidence: docs/can-decode-findings.md, “0x200 / 0x660”; docs/bms-config.md.
   { key: "batt_temp_lo", unit: "°C", group: "battery", source: "stream", bounds: [-30, 90] },
   { key: "batt_temp_hi", unit: "°C", group: "battery", source: "stream", bounds: [-30, 90] },
   { key: "batt_temp_lo_vcu", unit: "°C", group: "battery", source: "stream" },
