@@ -9,11 +9,11 @@ import { monotonicNow, since } from "../monotonic.ts";
 
 /**
  * The ATT MTU until the phone's first write tells us better. 23 is the floor every BLE
- * link starts at; a frame is MTU − 3 because a notification spends 3 bytes on its opcode
- * and handle.
+ * link starts at. Multiple notifications also carry a value length: reserve MTU − 5.
  */
 export const DEFAULT_ATT_MTU = 23;
-const ATT_NOTIFICATION_OVERHEAD = 3;
+const ATT_NOTIFICATION_OVERHEAD = 5;
+const MAX_QUEUED_BYTES = 128 * 1024;
 
 /** Unmeasured starting point — a Pi Zero 2 W sharing its radio with wifi. Tune on the bike. */
 export const DEFAULT_BYTES_PER_SECOND = 24_000;
@@ -45,19 +45,23 @@ export class OutboundQueue {
     return this.#queuedBytes;
   }
 
-  /** Learned from each WriteValue's `mtu` option; BlueZ reports the negotiated ATT MTU there. */
+  /** Only the authenticated owner's WriteValue may select this MTU. */
   set mtu(value: number) {
-    if (Number.isInteger(value) && value >= DEFAULT_ATT_MTU) {
+    if (Number.isInteger(value) && value >= DEFAULT_ATT_MTU && value <= 517) {
       this.#mtu = value;
     }
   }
 
-  enqueue(envelope: Bytes): void {
+  enqueue(envelope: Bytes, mtu = this.#mtu): boolean {
+    const frameBytes = Math.min(mtu - ATT_NOTIFICATION_OVERHEAD, 512);
+    const requiredBytes = envelope.length + 2 * Math.max(1, Math.ceil(envelope.length / (frameBytes - 2)));
+    if (this.#queuedBytes + requiredBytes > MAX_QUEUED_BYTES) return false;
     this.#messageId = (this.#messageId + 1) & 0xff;
-    for (const frame of splitIntoFrames(envelope, this.#messageId, this.#mtu - ATT_NOTIFICATION_OVERHEAD)) {
+    for (const frame of splitIntoFrames(envelope, this.#messageId, frameBytes)) {
       this.#frames.push(frame);
       this.#queuedBytes += frame.length;
     }
+    return true;
   }
 
   clear(): void {

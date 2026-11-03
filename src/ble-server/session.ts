@@ -18,162 +18,140 @@ import {
   type WireMessage,
 } from "../../public/lib/ble-wire.js";
 
-// Who the Pi is talking to over BLE, and the keys that prove it. One session at a time:
-// BlueZ fans a notification out to every subscribed device, so "per device" would be a
-// fiction on the send side — the session key is what actually separates the phone that
-// knows the secret from anything else in range. docs/ble-server.md §"Why seal".
-
-/**
- * Failed HELLOs inside this window are refused without being checked. The secret is
- * typed by a person, so it may be short; this is what keeps it from being guessed at
- * radio speed.
- */
-export const HELLO_FAILURE_COOLDOWN_MS = 2_000;
-
-export interface ReceiveResult {
-  /** Messages that opened under the current session, in order. */
-  messages: WireMessage[];
-  /** Envelopes to send straight back: WELCOME after a good HELLO, REFUSED after a bad one. */
-  replies: Bytes[];
-  /** Something worth a journal line. Never a reason to stop the server. */
-  problem?: string;
-  /** A HELLO just replaced whatever session there was. */
-  startedSession?: true;
-}
-
-interface ActiveSession {
-  key: CryptoKey;
-  /** The highest counter accepted from the phone. Anything at or below it is a replay. */
-  lastInboundCounter: number;
-  nextOutboundCounter: number;
-}
-
 export class BleSession {
   #secret: string;
   #serverNonce = randomNonce();
   #active: ActiveSession | null = null;
-  #lastHelloFailureMs = Number.NEGATIVE_INFINITY;
   #generation = 0;
 
   constructor(secret: string) {
     this.#secret = secret;
   }
-
   get authenticated(): boolean {
     return this.#active !== null;
   }
-
-  /** Bumped by every new session and every end(), so work begun under one can tell it is stale. */
   get generation(): number {
     return this.#generation;
   }
-
   info(): HelloInfo {
     return { version: PROTOCOL_VERSION, serverNonce: this.#serverNonce };
   }
-
   end(): void {
     this.#active = null;
     this.#generation++;
   }
 
-  /** @param nowMs monotonicNow(), passed in so a check can drive the cooldown */
-  async receive(envelope: Bytes, nowMs: number): Promise<ReceiveResult> {
+  /** Verification must not mutate the rider's session or initiate a D-Bus liveness read. */
+  async verifyHello(envelope: Bytes): Promise<HelloResult> {
+    let header: HelloHeader;
+    try {
+      const parsed = parseEnvelope(envelope);
+      if (parsed.sealed) return problem("sealed envelope without an owner");
+      const message = decodeMessage(parsed.message);
+      if (message.kind !== MessageKind.HELLO) return problem("only HELLO may be sent clear");
+      if (typeof message.header !== "object" || message.header === null) return problem("malformed HELLO header");
+      header = message.header as HelloHeader;
+    } catch (error) {
+      return problem(`unreadable HELLO: ${(error as Error).message}`);
+    }
+    if (typeof header.clientNonce !== "string" || !/^[0-9a-f]{32}$/.test(header.clientNonce)) {
+      return problem("HELLO requires a 16-byte lowercase-hex nonce");
+    }
+    if (header.version !== PROTOCOL_VERSION) {
+      return refused(header.clientNonce, `protocol unsupported; this Pi speaks ${PROTOCOL_VERSION}`);
+    }
+    const serverNonce = this.#serverNonce;
+    const generation = this.#generation;
+    const expected = await helloProof(this.#secret, serverNonce, header.clientNonce);
+    if (typeof header.proof !== "string" || !proofsMatch(header.proof, expected)) {
+      return refused(header.clientNonce, "wrong secret");
+    }
+    return { messages: [], replies: [], hello: { clientNonce: header.clientNonce, serverNonce, generation } };
+  }
+
+  async commitHello(hello: VerifiedHello, current: () => boolean = () => true): Promise<ReceiveResult> {
+    if (!this.#currentHello(hello, current)) return problem("stale HELLO");
+    const key = await deriveSessionKey(this.#secret, hello.serverNonce, hello.clientNonce);
+    const welcome = await sealEnvelope(
+      key,
+      Direction.TO_PHONE,
+      0,
+      encodeMessage(MessageKind.WELCOME, { version: PROTOCOL_VERSION })
+    );
+    if (!this.#currentHello(hello, current)) return problem("stale HELLO");
+    this.#active = { key, lastInboundCounter: -1, nextOutboundCounter: 1 };
+    // A stranger could invalidate an in-flight proof if failures rotated it; docs/ble-server.md §"Key and protocol".
+    this.#serverNonce = randomNonce();
+    this.#generation++;
+    return { messages: [], replies: [welcome], startedSession: true };
+  }
+
+  async receive(envelope: Bytes, current: () => boolean = () => true): Promise<ReceiveResult> {
     let parsed: ReturnType<typeof parseEnvelope>;
     try {
       parsed = parseEnvelope(envelope);
     } catch (error) {
-      return { messages: [], replies: [], problem: `unreadable envelope: ${(error as Error).message}` };
+      return problem(`unreadable envelope: ${(error as Error).message}`);
     }
-
     if (!parsed.sealed) {
-      return this.#receiveHello(parsed.message, nowMs);
+      return problem("HELLO requires the server's complete-frame authentication path");
     }
     const active = this.#active;
-    if (active === null) {
-      return {
-        messages: [],
-        replies: [refusal("no session — send HELLO first")],
-        problem: "sealed envelope with no session",
-      };
-    }
-    if (parsed.counter <= active.lastInboundCounter) {
-      return { messages: [], replies: [], problem: `replayed or reordered counter ${parsed.counter}` };
-    }
-    let plaintext: Bytes;
+    if (active === null) return problem("sealed envelope with no session");
+    if (parsed.counter <= active.lastInboundCounter) return problem("replayed or reordered counter");
     try {
-      plaintext = await openEnvelope(active.key, Direction.TO_PI, parsed.counter, parsed.ciphertext);
-    } catch (error) {
-      return { messages: [], replies: [], problem: `envelope did not open: ${(error as Error).message}` };
-    }
-    active.lastInboundCounter = parsed.counter;
-    try {
+      const plaintext = await openEnvelope(active.key, Direction.TO_PI, parsed.counter, parsed.ciphertext);
+      if (!current() || this.#active !== active) return problem("stale encrypted message");
+      active.lastInboundCounter = parsed.counter;
       return { messages: [decodeMessage(plaintext)], replies: [] };
     } catch (error) {
-      return { messages: [], replies: [], problem: `undecodable message: ${(error as Error).message}` };
+      return problem(`envelope did not open: ${(error as Error).message}`);
     }
   }
 
-  /** Seals a message for the phone; null when there is no session to seal it under. */
   async seal(kind: number, header: unknown, body?: Bytes): Promise<Bytes | null> {
     const active = this.#active;
     if (active === null) return null;
-    const counter = active.nextOutboundCounter++;
-    return sealEnvelope(active.key, Direction.TO_PHONE, counter, encodeMessage(kind, header, body));
+    return sealEnvelope(
+      active.key,
+      Direction.TO_PHONE,
+      active.nextOutboundCounter++,
+      encodeMessage(kind, header, body)
+    );
   }
 
-  async #receiveHello(message: Bytes, nowMs: number): Promise<ReceiveResult> {
-    if (nowMs - this.#lastHelloFailureMs < HELLO_FAILURE_COOLDOWN_MS) {
-      return { messages: [], replies: [refusal("too soon after a failed attempt")], problem: "HELLO inside cooldown" };
-    }
-    let hello: HelloHeader;
-    try {
-      const decoded = decodeMessage(message);
-      if (decoded.kind !== MessageKind.HELLO) {
-        return {
-          messages: [],
-          replies: [refusal("only HELLO may be sent clear")],
-          problem: `clear kind ${decoded.kind}`,
-        };
-      }
-      hello = decoded.header as HelloHeader;
-    } catch (error) {
-      return { messages: [], replies: [], problem: `undecodable HELLO: ${(error as Error).message}` };
-    }
-    if (hello.version !== PROTOCOL_VERSION) {
-      return {
-        messages: [],
-        replies: [refusal(`protocol ${hello.version} unsupported; this Pi speaks ${PROTOCOL_VERSION}`)],
-        problem: `HELLO with protocol ${hello.version}`,
-      };
-    }
-
-    let expectedProof: string;
-    try {
-      expectedProof = await helloProof(this.#secret, this.#serverNonce, hello.clientNonce);
-    } catch (error) {
-      return {
-        messages: [],
-        replies: [refusal("malformed nonce")],
-        problem: `HELLO nonce: ${(error as Error).message}`,
-      };
-    }
-    if (typeof hello.proof !== "string" || !proofsMatch(hello.proof, expectedProof)) {
-      this.#lastHelloFailureMs = nowMs;
-      return { messages: [], replies: [refusal("wrong secret")], problem: "HELLO with a wrong secret" };
-    }
-
-    const key = await deriveSessionKey(this.#secret, this.#serverNonce, hello.clientNonce);
-    // Rotated only on success: rotating on failure would let anyone in range knock the
-    // real phone's HELLO off its nonce just by sending garbage first.
-    this.#serverNonce = randomNonce();
-    this.#active = { key, lastInboundCounter: -1, nextOutboundCounter: 0 };
-    this.#generation++;
-    const welcome = await this.seal(MessageKind.WELCOME, { version: PROTOCOL_VERSION });
-    return { messages: [], replies: welcome === null ? [] : [welcome], startedSession: true };
+  #currentHello(hello: VerifiedHello, current: () => boolean): boolean {
+    return current() && hello.generation === this.#generation && hello.serverNonce === this.#serverNonce;
   }
 }
 
-function refusal(reason: string): Bytes {
-  return clearEnvelope(encodeMessage(MessageKind.REFUSED, { reason }));
+export interface ReceiveResult {
+  messages: WireMessage[];
+  replies: Bytes[];
+  problem?: string;
+  startedSession?: true;
+}
+export interface VerifiedHello {
+  clientNonce: string;
+  serverNonce: string;
+  generation: number;
+}
+export interface HelloResult extends ReceiveResult {
+  hello?: VerifiedHello;
+}
+interface ActiveSession {
+  key: CryptoKey;
+  lastInboundCounter: number;
+  nextOutboundCounter: number;
+}
+
+export function refused(clientNonce: string, reason: string): ReceiveResult {
+  return {
+    messages: [],
+    replies: [clearEnvelope(encodeMessage(MessageKind.REFUSED, { reason, clientNonce }))],
+    problem: reason,
+  };
+}
+function problem(reason: string): ReceiveResult {
+  return { messages: [], replies: [], problem: reason };
 }

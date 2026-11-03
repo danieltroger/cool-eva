@@ -2,7 +2,11 @@
 
 ## Connections
 
-The documented running bike is a 2021 Eva Ribelle with a Korlan USB2CAN connected through its diagnostic/OBD port. That establishes a working combination, not a verified connector map for every model/year. The repository does not identify the bike-side socket location, any conversion lead or its wiring, or a suitable accessory power feed. Confirm those for the actual motorcycle before making connections.
+**The OBD2 version of the Korlan plugs straight into the diagnostic port on every Energica**, as Daniel confirmed on 2026-11-03. Pi + Korlan in the OBD2 port is the plug-and-play CAN connection; no matching diagnostic lead is needed.
+
+The bike's other CAN connector can leave the OBD2 port free, but you must source its plug and solder the wiring. The repository does not document a name, pin map or wiring recipe for that connector. Daniel instead uses an **OBD2 Y-splitter**, bought online, when he needs the port for BMS configuration work.
+
+The bike-side socket location and a suitable accessory power feed are not documented here. The CAN plug-and-play connection does not supply the Pi's power; see the separate power path below.
 
 ### Pi power and USB
 
