@@ -4,6 +4,7 @@ import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { captureCommand } from "./commands.ts";
 import { readBundleInputs } from "./inputs.ts";
+import { checkUsocketRoundTrip } from "./usocket-smoke.ts";
 
 export async function verifyNativeModules(bundleDirectory: string): Promise<void> {
   if (process.platform !== "linux" || process.arch !== "arm64") {
@@ -26,6 +27,7 @@ export async function verifyNativeModules(bundleDirectory: string): Promise<void
     requireFromBundle(moduleName);
     console.log(`Native module loads: ${moduleName} (${nativeFiles.join(", ")})`);
   }
+  await checkUsocketRoundTrip(bundleDirectory);
 }
 
 export const NATIVE_MODULES = ["socketcan", "better-sqlite3", "spi-device", "usocket"] as const;

@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+import { runInNewContext } from "node:vm";
 import { copyBundleArtifacts } from "./release/build.ts";
 import { hashFile, selectSourcePaths, validateArchivePath, writeFileInventory } from "./release/files.ts";
 import { parseBundleInputs, readBundleInputs, validateBuildIdentity } from "./release/inputs.ts";
 import { createReleaseMetadata, renderReleaseManifest } from "./release/manifest.ts";
 import { selectNativeBinaries, validateArm64Elf } from "./release/native.ts";
+import { patchUsocketSource, prepareUsocket } from "./release/usocket.ts";
 
 export async function checkReleaseBundle(): Promise<void> {
   const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -84,11 +87,23 @@ export async function checkReleaseBundle(): Promise<void> {
   ]);
   assert.throws(() => selectNativeBinaries("better-sqlite3", ["test_extension.node"]), /missing production native/);
   assert.throws(() => selectNativeBinaries("socketcan", ["can.node"]), /can_signals/);
+  const patchedUsocket = patchUsocketSource(
+    "var util = require('util');\nfunction test(r) { return util.isError(r); }\ntest;"
+  );
+  const checkNativeError: unknown = runInNewContext(patchedUsocket, { require: createRequire(import.meta.url) });
+  assert.equal(typeof checkNativeError, "function");
+  const nativeErrorPredicate = checkNativeError as (value: unknown) => boolean;
+  assert.equal(nativeErrorPredicate(new Error("synthetic")), true);
+  assert.equal(nativeErrorPredicate({ message: "not an error" }), false);
+  assert.throws(() => patchUsocketSource("changed upstream source"), /Unexpected/);
 
   const temporaryParent = join(root, ".preview-shots");
   await mkdir(temporaryParent, { recursive: true });
   const directory = await mkdtemp(join(temporaryParent, "release-check-"));
   try {
+    await mkdir(join(directory, "node_modules/usocket"), { recursive: true });
+    await writeFile(join(directory, "node_modules/usocket/index.js"), "changed upstream source");
+    await assert.rejects(prepareUsocket(directory), /usocket source changed/);
     await mkdir(join(directory, "public"));
     await writeFile(join(directory, "public/app.js"), "first content\n");
     await symlink("app.js", join(directory, "public/alias.js"));

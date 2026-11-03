@@ -1,0 +1,8 @@
+{
+  "name": "cool-eva-usocket-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "debug": "4.4.3"
+  }
+}

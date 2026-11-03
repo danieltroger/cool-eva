@@ -6,6 +6,7 @@ import { hashFile, writeFileInventory } from "./files.ts";
 import { readBundleInputs } from "./inputs.ts";
 import { createReleaseMetadata, renderReleaseManifest } from "./manifest.ts";
 import { NATIVE_MODULES, selectNativeBinaries, verifyNativeModules } from "./native.ts";
+import { prepareUsocket } from "./usocket.ts";
 
 export async function assembleBundle(sourceDirectory: string, outputDirectory: string): Promise<void> {
   if (process.platform !== "linux" || process.arch !== "arm64") {
@@ -51,6 +52,7 @@ export async function assembleBundle(sourceDirectory: string, outputDirectory: s
       }
     );
   }
+  await prepareUsocket(sourceDirectory);
   const runtimeDirectory = join(sourceDirectory, "runtime");
   await mkdir(join(runtimeDirectory, "bin"), { recursive: true });
   await copyFile("/opt/node/bin/node", join(runtimeDirectory, "bin/node"));
