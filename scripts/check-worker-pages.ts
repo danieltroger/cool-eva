@@ -69,6 +69,18 @@ async function checkDeploymentRevision(): Promise<void> {
   const workflow = await readFile(join(projectDirectory, ".github/workflows/workers.yml"), "utf8");
   const guard = /        id: revision\n        run: \|\n((?:          [^\n]*\n)+)/.exec(workflow);
   assert.ok(guard, "the deployment revision guard must be exercised from the real workflow");
+  const deploySteps = workflow
+    .slice(workflow.indexOf(guard[0]) + guard[0].length)
+    .split(/^      - /m)
+    .slice(1);
+  assert.equal(deploySteps.length, 4, "the revision guard must cover all four deployment steps");
+  for (const deployStep of deploySteps) {
+    assert.match(
+      deployStep,
+      /^        if: steps\.revision\.outputs\.current == 'true'$/m,
+      `${deployStep.split("\n")[0]} must carry the superseded-skip condition`
+    );
+  }
   const script = guard[1]
     .split("\n")
     .map(line => line.slice(10))
