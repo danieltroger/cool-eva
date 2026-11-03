@@ -97,9 +97,9 @@ export const SIGNALS: SignalDef[] = [
   // 0x200 / 0x660 — BMS
   // True temperatures may be absent until routing is known, or when their source stops;
   // consumers must tolerate gaps. The _vcu pair always reads 0x200's VCU/dash view.
-  // Their difference is neither fixed nor monotonic and is not a health check. The
-  // archived 15 clamp releases at 55 °C; 17 is pending flash/read-back. History and
-  // routing evidence: docs/can-decode-findings.md, “0x200 / 0x660”; docs/bms-config.md.
+  // Their difference is neither fixed nor monotonic and is not a health check.
+  // The archived 15 clamp releases at 55 °C. History and routing evidence:
+  // docs/can-decode-findings.md, “0x200 / 0x660”; docs/bms-config.md.
   { key: "batt_temp_lo", unit: "°C", group: "battery", source: "stream", bounds: [-30, 90] },
   { key: "batt_temp_hi", unit: "°C", group: "battery", source: "stream", bounds: [-30, 90] },
   { key: "batt_temp_lo_vcu", unit: "°C", group: "battery", source: "stream" },

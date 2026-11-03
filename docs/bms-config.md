@@ -69,18 +69,22 @@ Relative to the bike maker's P32B calibration, Daniel moves regen points 7/8 fro
 
 ## File, status and clamp behavior
 
+### Flash status
+
 **Status: to be flashed.** Keep this status until Daniel confirms both writing 17 and reading it back. [Download `17-bounded-clamp-33.bms`](../bms/17-bounded-clamp-33.bms), 223,920 bytes.
 
 ```text
 SHA-256  97c92f9578a6eab742b7a301bce12e22fdaa8ff4afdbd2666ff02da4b0062193
 ```
 
+### Clamp behavior
+
 | Clamp setting              | Selected value |
 | -------------------------- | -------------- |
 | Reported-temperature floor | **33 °C**      |
 | True-high release          | **55 °C**      |
 
-The floor was chosen from the bike's **observed charge-current behavior: 73 A at 35 °C, 75 A or more at 33 °C as observed**. These are allowances at the reported temperature, not guaranteed current from a charger. The bike's configured 75 A ceiling is described in the [existing charge-current documentation](can-decode-findings.md#0x121--the-riders-own-charge-current-limit).
+The floor uses the bike's observed charging as context: [75 A was held on 2026-09-12 and 2026-09-13](dc-taper.md) while the VCU saw pack temperatures of **29–35 °C**. **75 A is the configured ceiling**, as described in the [charge-current documentation](can-decode-findings.md#0x121--the-riders-own-charge-current-limit). These observations do not guarantee current from a charger at one particular reported temperature.
 
 Below the release, each reported temperature is the lesser of its true value and the floor in the table. At/above the release, both true temperatures pass through. The operations use wrapping-byte arithmetic and unsigned, truncating Divide; this describes the configuration, not a live test of 17. Only `Postprocessor_Frame_4_Operand_2` and `Postprocessor_Frame_9_Operand_2` change relative to 15. Both use that one floor setting; the 55 °C release is unchanged.
 
@@ -149,9 +153,9 @@ Verify behavior only at naturally encountered temperatures. Do not heat the pack
 ### Daniel's next-bike-contact and post-flash checklist
 
 - Read/save the bike's current configuration and compare it before the write; archive behavior is not byte-level identity.
-- After writing 17, read it back and compare every effective field, preserving the file and bus checks above. Confirm both steps before changing “to be flashed” status.
+- After writing 17, read it back and compare every effective field, preserving the file and bus checks above. Only after Daniel confirms both steps, update the guide's [flash-status line](#flash-status).
 - Read back the separately recorded VCU undervoltage settings; do not treat the change record as a new device read.
-- **Only after Daniel confirms flashing 17:** update `CLAMP_FLOOR_C = 35` in `src/can/decode-bms.ts`, its comment and the corresponding floor warning text in `src/can/pack-temperature.ts` to the selected floor. Until then they describe the previous live variant. The current monitor's band above 35 and below 55 is a conservative subset for both bounded variants; temperature routing uses actual frame values, not a reconstructed floor.
+- **Only after Daniel confirms flashing 17:** update `CLAMP_FLOOR_C = 35` in `src/can/decode-bms.ts` and its comment to the selected floor; the floor warning uses that constant. Until then they describe the previous live variant. The current monitor's band above 35 and below 55 is a conservative subset for both bounded variants; temperature routing uses actual frame values, not a reconstructed floor.
 
 ## Copy-paste prompt for your own agent
 

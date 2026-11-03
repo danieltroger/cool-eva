@@ -2,7 +2,7 @@
 
 Read the [compatibility gate, hazards and recovery procedure](bms-config.md) before using these values. This is an authored comparison, not an import file or a set of packed numbers to type into GUI controls.
 
-Baseline: `1-stock.bms`, identified by the source collection README as the original delivered-pack configuration; SHA-256 `ddbafbe4cc90862fba446ab48edcaefa6330a7aebd64f9ac06d107069900aaf1`. Selected file: [17-bounded-clamp-33.bms](../bms/17-bounded-clamp-33.bms), SHA-256 `97c92f9578a6eab742b7a301bce12e22fdaa8ff4afdbd2666ff02da4b0062193`, **to be flashed/read back**.
+Baseline: `1-stock.bms`, identified by the source collection README as the original delivered-pack configuration; SHA-256 `ddbafbe4cc90862fba446ab48edcaefa6330a7aebd64f9ac06d107069900aaf1`. Selected file: [17-bounded-clamp-33.bms](../bms/17-bounded-clamp-33.bms), SHA-256 `97c92f9578a6eab742b7a301bce12e22fdaa8ff4afdbd2666ff02da4b0062193`. [Flash status](bms-config.md#flash-status).
 
 **271 changed fields; 0 added; 0 removed**, over 2,978 stored fields: twenty ordinary BMCU, 153 CAN-transmit, 87 postprocessor and eleven LMU bleed thresholds. SUBC and all other LMU fields are unchanged. Of the changed rows, forty equal the bike maker's P32B calibration and 231 are Daniel's. Origin means value provenance, not compatibility or endorsement.
 
