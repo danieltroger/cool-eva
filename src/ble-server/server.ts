@@ -115,7 +115,7 @@ interface ServerContext {
   pendingSeals: number;
   subscribed: boolean;
   stopped: boolean;
-  // Both chains exist for ordering authenticated counters; see docs/ble-server.md §"Why seal".
+  // Both chains exist for ordering authenticated counters; see docs/ble-server.md §"Key and protocol".
   inboundChain: Promise<void>;
   outboundChain: Promise<void>;
   app: GattApplication | null;

@@ -80,7 +80,7 @@ export class BleSession {
     );
     if (!this.#currentHello(hello, current)) return problem("stale HELLO");
     this.#active = { key, lastInboundCounter: -1, nextOutboundCounter: 1 };
-    // A stranger could invalidate an in-flight proof if failures rotated it; docs/ble-server.md §"Why seal".
+    // A stranger could invalidate an in-flight proof if failures rotated it; docs/ble-server.md §"Key and protocol".
     this.#serverNonce = randomNonce();
     this.#generation++;
     return { messages: [], replies: [welcome], startedSession: true };
