@@ -34,3 +34,4 @@ All source archives are checked for links/special files before any journal publi
 
 - Ask Daniel in phase 2 whether the live loader should eventually refuse private keys; phase 1 preserves its existing recording behaviour.
 - Show a bounded permission-sync timeout on a slow card as a visible fault; no silent retry loop. Keep M8 (cross-filesystem guard) and M12 (inode check on resume) on the phase-2 test list.
+- Settings saves persist the cleaned SPKI public key returned by `validatePublicKey`, rather than the raw submission, so BOMs/leading text are removed and private keys never reach `settings.json`.

@@ -1,7 +1,9 @@
 import assert from "assert/strict";
+import { generateKeyPair } from "crypto";
 import { chmod, mkdir, open, readFile, readdir, stat, writeFile } from "fs/promises";
 import { join } from "path";
 import { pathToFileURL } from "url";
+import { promisify } from "util";
 import { replaceFileDurably, durabilityCounters } from "../src/storage/durable.ts";
 import { sweepReplacementFiles } from "../src/storage/replacement-files.ts";
 import { importLegacyEnvironment, legacyConfigurationWarning } from "../src/settings/legacy.ts";
@@ -95,6 +97,18 @@ async function checkStore(): Promise<void> {
     document.values.discoverHubOnce = true;
     document.migration.source = "legacy";
     await fixture.store.initialise(document);
+    {
+      const { publicKey, privateKey } = await promisify(generateKeyPair)("x25519");
+      const privateKeyPem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+      const before = await readFile(fixture.paths.settingsFile, "utf-8");
+      for (const submittedKey of [privateKeyPem, publicKey.export({ type: "spki", format: "pem" }) + privateKeyPem]) {
+        await assert.rejects(
+          fixture.store.update(document.revision, { rideLogPublicKeyPem: submittedKey }),
+          /X25519 public key/
+        );
+        assert.equal(await readFile(fixture.paths.settingsFile, "utf-8"), before);
+      }
+    }
     const active = structuredClone(document.values);
     const revision = document.revision;
     assert.equal(await fixture.store.learnHub("02:00:00:00:00:02"), true);
