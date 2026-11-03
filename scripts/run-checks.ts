@@ -1118,6 +1118,12 @@ const CHECKS: SelfCheck[] = [
       "refuses 93 % of this hub's pairs",
   },
   {
+    script: "scripts/check-release-bundle.ts",
+    covers:
+      "pinned release inputs, tracked-source boundaries, private data and escaping symlinks, ARM64 ELF rejection, " +
+      "the shell-readable manifest and the extracted file inventory; native builds and loads run in ARM64 release CI",
+  },
+  {
     script: "scripts/check-waypoint-endpoint.ts",
     covers:
       "GET /waypoint, which had no check at all until it saved a position 7 000 km from the bike (#157): three " +
