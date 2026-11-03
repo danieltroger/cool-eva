@@ -8,21 +8,25 @@ How to get the dashboard on your phone over Bluetooth, for when the phone and th
 
 | Phone | Use | Opens with no reception? |
 | --- | --- | --- |
-| iPhone | the **Cool Eva app** (`ios/`, installed from Xcode) | yes — the dashboard is in the app |
+| iPhone | the experimental **[Cool Eva app](ios-app.md)** (`ios/`, installed from Xcode; not yet tested on a phone) | yes — the dashboard is in the app |
 | iPhone | **[Bluefy](https://apps.apple.com/app/id1492822055)**, a Web Bluetooth browser | no — load the page while you have signal |
 | Android | **Chrome** | no — the same |
 
 Safari cannot do this on any iPhone: it has no Web Bluetooth.
 
-Bluefy and Chrome use the copy of the dashboard on GitHub Pages, **`https://danieltroger.github.io/cool-eva/`**. Not `http://cool-eva.local`: that is the copy the Pi serves over wifi, which never uses Bluetooth, so its menu has no Bluetooth section at all. A browser can only use Bluetooth on an https page, and once the page is open, everything goes straight between the phone and the Pi; GitHub never sees any of it.
+Bluefy and Chrome use the copy of the dashboard on GitHub Pages, **[https://danieltroger.github.io/cool-eva/](https://danieltroger.github.io/cool-eva/)**. Not `http://cool-eva.local`: that is the copy the Pi serves over wifi, which never uses Bluetooth, so its menu has no Bluetooth section at all. A browser can only use Bluetooth on an https page, and once the page is open, everything goes straight between the phone and the Pi; GitHub never sees any of it.
 
 ## 1. Set up the Pi (once)
 
 Do this with the bike parked in wifi range, over ssh.
 
-1. **Update both the Pi and the phone page/app to protocol 2.** The installed iOS app bundles the dashboard and must be rebuilt. The Pi and phone report a version mismatch if only one is updated. No dependency installation is needed for this code change.
+1. **Update both the Pi and the phone page/app to protocol 2.** A fresh installation needs no branch change; for an older installation, follow the [update guide](deploy.md#running-it). The installed iOS app bundles the dashboard and must be rebuilt. The Pi and phone report a version mismatch if only one is updated. No dependency installation is needed for this code change.
 
 2. **Generate one random key**, rather than choosing a phrase:
+
+   <!-- for-now: #317 -->
+
+   For now, generate it and add it to the service's environment file:
 
    ```sh
    openssl rand -hex 32
@@ -59,7 +63,7 @@ Stay within about 10 m of the bike.
 
 ### Bluefy (iPhone)
 
-1. Install [Bluefy](https://apps.apple.com/app/id1492822055) and open **`https://danieltroger.github.io/cool-eva/`** in it.
+1. Install [Bluefy](https://apps.apple.com/app/id1492822055) and open **[https://danieltroger.github.io/cool-eva/](https://danieltroger.github.io/cool-eva/)** in it.
 2. Tap the **☰ menu** (top left). **Bluetooth** is the first section.
 3. Paste the key into **Paste the Pi’s generated Bluetooth key** and tap **Connect to the Pi**.
 4. Allow Bluetooth if Bluefy asks, then pick the Pi’s dashboard service in the list. It may appear without a name, or as **Unnamed Pi** in the app. The encrypted welcome verifies the shared key.
@@ -105,6 +109,28 @@ In Bluefy and Chrome, open the page while you still have signal and leave the ta
 
 ## Who can connect
 
-Only a phone that knows the generated key. Anyone in range can see the dashboard service UUID, but without the key the Pi refuses everything except the handshake, and everything it sends after that is encrypted under a key derived from the secret. The secret lives in `/etc/default/cool-eva` on the Pi and in the browser or app on your phone, nowhere else. To lock out a phone, change `BLE_SECRET` and restart the service.
+Only a phone that knows the generated key. Anyone in range can see the dashboard service UUID, but without the key the Pi refuses everything except the handshake, and everything it sends after that is encrypted under a key derived from the secret.
+
+<!-- for-now: #317 -->
+
+For now, the key lives in `/etc/default/cool-eva` on the Pi and in the browser or app on your phone, nowhere else; to lock out a phone, change `BLE_SECRET` and restart the service.
 
 The hosted account must serve **no other GitHub Pages site**: storage is shared by origin, not by project path. See [the exact-origin allowlist and fork instructions](ble-server.md#hosted-pages-and-origin-isolation). Address privacy remains an optional, unverified choice: [phone reconnect and hub enrolment trade-offs](ble-server.md#address-privacy-is-optional-and-remains-off-pending-hardware-verification) explain why it stays off until hardware checks pass.
+
+## Earlier branch instructions
+
+<details>
+<summary>Before the BLE server merged (superseded)</summary>
+
+The current `main` already includes the server. These earlier instructions are preserved for history; use the setup above.
+
+1. **Run a version with the BLE server.** Until the `ble-server` branch is merged, check it out — as the `pi` user, **never with `sudo`**:
+
+   ```
+   cd /home/pi/cool-eva
+   git fetch origin && git checkout ble-server && git pull
+   ```
+
+   After it merges, a plain `git pull` on `main` is enough. Neither needs `npm install`.
+
+</details>

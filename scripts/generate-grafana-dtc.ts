@@ -60,7 +60,7 @@ const TESTS_MIL_FOR_NULL = /\b[\w.]*\bmil\s+IS\s+NULL\b/i;
  * dropping the entry, or that file goes back to drifting unwatched.
  */
 const COUNT_MENTIONS: { path: string; pattern: RegExp }[] = [
-  { path: "README.md", pattern: /`src\/diagnostics\/dtc-table\.ts`, (\d+) codes/ },
+  { path: "docs/diagnostics-and-checks.md", pattern: /`src\/diagnostics\/dtc-table\.ts`, (\d+) codes/ },
   { path: "grafana/README.md", pattern: /which of the (\d+) appear is a runtime fact/ },
   { path: "public/lib/bounds-rules.js", pattern: /the (\d+) generated `dtc_\*`/ },
   { path: "src/can/registry.ts", pattern: /the cell signals are: (\d+)/ },

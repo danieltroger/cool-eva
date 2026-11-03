@@ -239,7 +239,7 @@ function DownloadButton() {
     // ride — a day file plus whatever was sealed before the clock could be believed
     // (src/http/status.ts, docs/ride-log-clock.md); and the log is unreadable without the laptop's
     // private key, but /dl authenticates nobody, so the ciphertext is pullable by
-    // anyone on that wifi (src/http/download.ts, and README "What this does and
+    // anyone on that wifi (src/http/download.ts, and docs/ride-log.md "What this does and
     // doesn't hide").
   );
 }

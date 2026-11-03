@@ -350,7 +350,7 @@ async function checkTheCaptionSaysWhatIsCounted(): Promise<void> {
       `DownloadButton() in ${path} claims the log is "safe over any network". That is a claim about the TRANSFER, ` +
         `and the transfer is the part with no crypto in it: /dl is unauthenticated plain HTTP, so anyone on the ` +
         `wifi can pull the whole log and keep the ciphertext against the day the key leaks, and a MITM can drop ` +
-        `or truncate segments holding no key at all (README, "No cross-segment integrity"). What is true is a ` +
+        `or truncate segments holding no key at all (docs/ride-log.md, "No cross-segment integrity"). What is true is a ` +
         `claim about the BYTES — without the laptop's private key they are noise. Claim that instead. ` +
         `src/http/download.ts says something similar in a comment and is not held to this; a caption is a promise ` +
         `made to the rider, a comment is a note to whoever is already reading the code`

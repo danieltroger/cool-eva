@@ -4,7 +4,7 @@ Why the ride map has holes, how much riding is in them, and which of it the raw 
 
 Measured against `rides.db` at **mtime 2026-09-19 18:15:07 CEST** (shared mutable — other tracks re-import it, so every figure here carries that vintage), the 79 captures in `~/Documents/cool-eva-route/data/ride-captures/`, and the journal export in `~/Documents/cool-eva-route/data/pi-journals/`. No coordinates appear in this file, deliberately — same rule as `docs/route-map.md`.
 
-⚠️ **Every query here is bounded to 2026-08-02 → 2026-09-20**, which silently excludes the 49 772 readings stamped 2060 (a corrupt GPS frame stepped the Pi's clock; `docs/route-map.md` and `README.md`). 254 of them are `gps_lat`. That filter is load-bearing for every count below: without it those rows open a 34-year window and the gap enumeration is meaningless.
+⚠️ **Every query here is bounded to 2026-08-02 → 2026-09-20**, which silently excludes the 49 772 readings stamped 2060 (a corrupt GPS frame stepped the Pi's clock; `docs/route-map.md` and `docs/diagnostics-and-checks.md` §Clock). 254 of them are `gps_lat`. That filter is load-bearing for every count below: without it those rows open a 34-year window and the gap enumeration is meaningless.
 
 ## The short answer
 

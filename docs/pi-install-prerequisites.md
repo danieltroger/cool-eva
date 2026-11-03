@@ -1,6 +1,6 @@
 # Two things a fresh Pi needs before `npm install` works
 
-The native modules (`better-sqlite3`, `socketcan`, `spi-device`) are compiled on the Pi at install time, and on a small Pi that build has two ways to not happen: it runs out of memory, or npm declines to run it at all. This file is the research behind the two steps `INSTALL.md` §2.5 and §4 tell you to take — the version boundaries, the traps, and what was measured versus what was reported.
+The native modules (`better-sqlite3`, `socketcan`, `spi-device`) are compiled on the Pi at install time, and on a small Pi that build has two ways to not happen: it runs out of memory, or npm declines to run it at all. This file contains the [manual swap recipe](#manual-swap-setup) and the research behind the two steps `INSTALL.md` §2.5 and §4 tell you to take — the version boundaries, the traps, and what was measured versus what was reported.
 
 ## Where the report came from, and what is actually established
 
@@ -190,3 +190,128 @@ Adding with `connection.autoconnect no` and flipping it afterwards makes "it wil
 **The Pi Zero 2 W radio is 2.4 GHz only** — raspberrypi.com gives it as _"2.4GHz 802.11 b/g/n wireless LAN"_ — so it cannot see a 5 GHz-only hotspot at all. That is what Apple's **Maximize Compatibility** toggle is for, and Apple scopes it to exactly the devices that broadcast 5 GHz: _"If you're using an iPhone 12 model or later, iPad Pro 11-inch (3rd generation or later), iPad Pro 12.9-inch (5th generation or later), or iPad mini (6th generation)"_ → _"Tap Personal Hotspot and turn on Maximize Compatibility."_ ⚠️ It is not free, in Apple's own footnote: _"When you turn on Maximize Compatibility, internet performance and Wi-Fi security might be reduced for devices connected to the hotspot."_
 
 `wifi-sec.key-mgmt wpa-psk` above is WPA2-PSK, so a WPA3-only network needs `sae` instead.
+
+> The following sections preserve the former README at commit `58c7eba` (2026-11-03), including dated measurements and limitations. For first installation, use the [current README](../README.md). Older validation/status claims are historical; the existing subsystem findings and current code take precedence.
+
+## Setup
+
+From a blank SD card to a dashboard. Steps 1–5 are the Pi, step 6 is your laptop, and **step 6 is the one people skip and regret** — without it the dashboard works perfectly and nothing at all is saved.
+
+**1. Flash Raspberry Pi OS (64-bit).** In Raspberry Pi Imager, open the gear icon and set:
+
+- **hostname `cool-eva`** — this is what makes `http://cool-eva.local` work. Skip it and your Pi is `raspberrypi.local`.
+- **Enable SSH**, with a password or your public key. There is no screen on the bike, so this is the only way in — including for every future update.
+- **Wi-Fi: your phone's hotspot** (SSID and password), so it connects on the road. Add your home Wi-Fi too, from the Pi later, or you'll be swapping the card to get it back.
+
+**2. Join the phone hotspot** (if you didn't set it in the Imager). Bookworm uses NetworkManager:
+
+```bash
+sudo nmcli device wifi connect "<your hotspot SSID>" password "<password>"
+sudo nmcli connection modify "<your hotspot SSID>" connection.autoconnect yes
+```
+
+On iOS you have to **open Settings → Personal Hotspot and leave it on screen for ~20 s** at the start of a ride, or the phone won't accept the join. That is an iOS behaviour, not something this app can fix. The Pi Zero 2 W radio is **2.4 GHz only**, so a 5 GHz-only hotspot is invisible to it — on an iPhone 12 or later, Apple's own fix is Settings → Personal Hotspot → **Maximize Compatibility** — which Apple notes costs some hotspot speed and Wi-Fi security.
+
+To add a **second** network later (home Wi-Fi, an Airbnb) while you are sshed in over the first, use `nmcli connection add` rather than `nmcli device wifi connect` — the latter activates what it creates and drops the session you are typing into. Exact command: [INSTALL.md §8](../INSTALL.md).
+
+**3. Install Node 24.** Raspberry Pi OS's `apt` Node is far too old — the app is TypeScript run directly, which needs `--experimental-strip-types` (Node 22.6.0 at the very oldest; 24 is what this is tested on).
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
+sudo apt install -y nodejs
+node --version   # must be v22.6 or newer
+```
+
+**4. Clone and install.**
+
+⚠️ **Give the Pi more swap first.** `npm install` compiles three native modules (`better-sqlite3`, `socketcan`, `spi-device`), which takes **several minutes** on a Pi Zero 2 W and wants more than the stock 512 MB — without it the build is OOM-killed and it looks like a crash rather than a memory problem. About 3 GB. How, for both Bookworm and Trixie: [INSTALL.md §2.5](../INSTALL.md).
+
+```bash
+git clone https://github.com/<your-fork>/cool-eva.git ~/cool-eva
+cd ~/cool-eva
+npm install
+```
+
+Nothing else to do for those compiles: the repo ships an `.npmrc` allowlisting the four packages with install scripts, because **npm 12 and newer refuse to run them** otherwise and you get a tree with no `.node` files. Version boundaries, how to tell whether your modules actually built, and the measurements: [`docs/pi-install-prerequisites.md`](pi-install-prerequisites.md).
+
+**5. Only if you have the coolant probes: enable SPI.** `sudo raspi-config` → Interface Options → SPI → Yes, then reboot. **Don't enable it if you have no probes wired**: with SPI on and nothing attached the reads succeed and return −242 °C forever. The app notices and retires the probe after a minute, but it's noise you don't need.
+
+**Historical status:** The current [probe loop](../src/sensors/max31865.ts) backs off a faulted probe and retries it once a minute; it does not retire it for the rest of the boot.
+
+**6. Generate the ride-log keypair — on your laptop, not the Pi.** Nothing is persisted until the Pi has a public key. See [Encrypted ride log](ride-log.md#encrypted-ride-log) for why it works this way.
+
+```bash
+# on the LAPTOP, in a clone of this repo
+node --experimental-strip-types scripts/generate-log-key.ts
+# back the PRIVATE key up now (password manager) — it is the only thing that
+# can ever read your logs, and there is no recovery path
+scp ride-log-key.public.pem pi@cool-eva.local:/home/pi/cool-eva/
+```
+
+**7. Install the service** (back on the Pi):
+
+```bash
+sudo $(which node) --experimental-strip-types scripts/setup-service.ts
+sudo journalctl -u cool-eva -f    # follow the logs
+```
+
+The installer refuses to run on too-old a Node, removes the old `thermometer` unit if you're upgrading, and tells you if the ride-log key is still missing. In the log you want to see `ride-log: encrypting to …`; if you see the `NO PUBLIC KEY` banner instead, step 6 didn't land.
+
+Then open **`http://cool-eva.local`** on your phone.
+
+## Manual swap setup
+
+Those three modules are compiled on the Pi, and the compile is memory-hungry. A Pi Zero 2 W has 512 MB and Raspberry Pi OS gives it 512 MB of swap, which is not reliably enough: the build gets OOM-killed, and what you see is a crash rather than anything that says "memory". #136 reports 3 GB as what worked. ⚠️ Treat 3072 as a generous number rather than a threshold: it is one owner's report on unknown hardware.
+
+**Which manager you have depends on the OS.** They share no configuration:
+
+```sh
+ls /etc/dphys-swapfile   # exists → Bookworm, use dphys-swapfile below
+ls /etc/rpi/swap.conf    # exists → Trixie, use rpi-swap below
+df -h /var               # you need the full size FREE — see the Trixie warning
+```
+
+⚠️ If **both** exist, use the Trixie route: `rpi-swap` replaces `dphys-swapfile` and an in-place OS upgrade can leave the old config file behind with nothing reading it. `dpkg -l rpi-swap` settles it.
+
+**Bookworm (`dphys-swapfile`).** Edit `/etc/dphys-swapfile` and set **both** of these:
+
+```sh
+CONF_SWAPSIZE=3072
+CONF_MAXSWAP=3072
+```
+
+⚠️ **`CONF_SWAPSIZE` alone gives you 2048 MB.** `CONF_MAXSWAP` defaults to 2048 and clamps the absolute value, not just the computed one — `dphys-swapfile(8)` says "maximal computed and absolute(!) values". Then:
+
+```sh
+sudo dphys-swapfile swapoff
+sudo dphys-swapfile setup    # prints the size it settled on — read it
+sudo dphys-swapfile swapon
+cat /proc/swaps              # confirm
+```
+
+**Trixie (`rpi-swap`).** Two preconditions, then a drop-in, then a reboot — `daemon-reload` is not enough:
+
+- ⚠️ **`/var` needs the full 3 GiB free**, which `df -h /var` above tells you. Unlike Bookworm, nothing clamps `FixedSizeMiB` down to fit: `rpi-resize-swap-file` runs `fallocate --posix --length 3072M`, and if that fails the script's `set -e` aborts the service — which the generated swap unit `Requires=`. **You end up with no swap at all**, which is worse than the 512 MB you started with. Pick a size that fits, or clear space first.
+- ⚠️ **`/etc/fstab` must have no swap line for `/var/swap`.** Both `rpi-swap` and systemd's own `fstab-generator` would write a unit called `var-swap.swap` into the same directory, and which one wins is a race. Check with `grep swap /etc/fstab`.
+
+```sh
+sudo mkdir -p /etc/rpi/swap.conf.d/
+sudo tee /etc/rpi/swap.conf.d/80-use-swapfile.conf > /dev/null <<'EOF'
+[Main]
+Mechanism=swapfile
+
+[File]
+FixedSizeMiB=3072
+EOF
+sudo reboot
+
+# After the reboot — confirm. An EMPTY result means the resize failed:
+swapon --show
+systemctl status rpi-resize-swap-file.service   # read this when it is empty
+```
+
+`Mechanism=swapfile` is load-bearing: the default is `auto`, which resolves to `zram+file`, where the file is only writeback storage for compressed RAM swap.
+
+🚨 **Never use `Mechanism=none` or `Mechanism=zram` to get `rpi-swap` out of the way.** `swap.conf(5)` says of `none`: _"Any existing swap file will be removed to free up disk space."_ It means it — either setting generates a unit whose body is `ExecStart=/bin/rm -f /%I`, and **your swap file is deleted**. The bike's own Pi is in a non-default state this recipe does not apply to as written; that case, and the two safe ways out of it, are in [§2 above](#2-swap).
+
+3 GB is space and SD write wear you only need while compiling — turning it back down afterwards is fine.

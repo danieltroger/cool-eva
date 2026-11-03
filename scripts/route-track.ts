@@ -129,7 +129,7 @@ WITH raw AS (
                   THEN r.value END) AS speed
   FROM reading r JOIN signal s ON s.id = r.signal_id
   WHERE s.key IN ('gps_lat', 'gps_lon', 'gps_speed_kmh')
-    -- The 49 772 rows a corrupt GPS frame stamped 2060 (README.md §Clock) are not positions
+    -- The 49 772 rows a corrupt GPS frame stamped 2060 (docs/diagnostics-and-checks.md §Clock) are not positions
     -- in any window, and every query in the dashboard guards against them by name.
     AND r.ts < 2000000000000
   GROUP BY r.ts

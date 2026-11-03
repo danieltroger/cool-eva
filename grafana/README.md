@@ -155,7 +155,7 @@ WHERE signal_id = (SELECT id FROM signal WHERE key = 'gps_altitude_m')
 
 The `seq IS NULL` is what keeps this idempotent and safe to run twice: rows written by a Pi carrying the fix arrive from v2 ride-log segments and have a write-order counter, so a NULL `seq` means "decoded before 2026-08-16" — which is exactly the set that needs correcting.
 
-**49 772 rows stamped 2060** (`ts` between `2844182125379` and `2859221509504`). One corrupt GPS frame stepped the Pi's clock 34 years forward and the anti-thrash cooldown held it there; see the Clock section of the top-level README. Their `gps_epoch_s` is intact, so the true time is recoverable per row, but there is no single offset to subtract — the two bursts are 34 years and different months apart. Easiest is to exclude them from any range that matters:
+**49 772 rows stamped 2060** (`ts` between `2844182125379` and `2859221509504`). One corrupt GPS frame stepped the Pi's clock 34 years forward and the anti-thrash cooldown held it there; see the Clock section of `docs/diagnostics-and-checks.md`. Their `gps_epoch_s` is intact, so the true time is recoverable per row, but there is no single offset to subtract — the two bursts are 34 years and different months apart. Easiest is to exclude them from any range that matters:
 
 ```sql
 AND r.ts < 2000000000000   -- anything past year 2033 is the 2060 corruption

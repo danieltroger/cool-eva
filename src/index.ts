@@ -77,7 +77,7 @@ const CAN_IFACE = "can0";
 // whatever the checkout is named or wherever it was moved to.
 const UPDATE_DIR = process.env.UPDATE_DIR ?? ROOT;
 
-// Config (env overrides). README's Configuration section is the full table; this indexes it:
+// Config (env overrides). docs/configuration.md is the full table; this indexes it:
 //   COOLANT_ENABLED=0 → skip the MAX31865 probes (a bike with no watercooling loop)
 //   FAN_ENABLED=1 → ⚠️ OPT IN. Drive the IBT-2 cooling fan and route /fan (docs/fan-control.md)
 //   CAN_ENABLED=0 → skip CAN entirely (coolant only)
@@ -115,7 +115,7 @@ const WIFI_IFACE = process.env.WIFI_IFACE ?? "wlan0";
 // ⚠️ NO DEFAULT, deliberately. This is a PUBLIC repo and an SSID is a personal network
 // identifier; naming the owner's phone here would publish it with every clone. Unset, the
 // poller still records `wifi_link_state` and says loudly at startup that the hotspot half
-// is off — see src/wifi/status.ts. Set it in /etc/default/cool-eva; README and
+// is off — see src/wifi/status.ts. Set it in /etc/default/cool-eva; docs/configuration.md and
 // docs/wifi.md §2 both say so.
 const WIFI_HOTSPOT_SSID = process.env.WIFI_HOTSPOT_SSID ?? "";
 // ⚠️ ONE recovery, TWO triggers — the poller's watchdog and the handlebar hold — and
@@ -134,7 +134,7 @@ const wifiContext: RecoverContext = {
 // from SERVICE_MODE_ENABLED because reads and writes are not the same risk and must
 // not share an off button. ⚠️ And it cannot satisfy src/vcu/table-gate.ts: a PARAMETER
 // write stays refused until a sweep has read both TABLE_TYPE copies, which on this
-// bike it never has. README, "Changing something on the bike".
+// bike it never has. docs/vcu-parameters.md, "Changing something on the bike".
 const SERVICE_WRITE_ENABLED = process.env.SERVICE_WRITE_ENABLED === "1";
 // ⚠️ DEFAULT ON, unlike the two above — `!== "0"`, the same shape as CAN_ENABLED. The controller
 // only ever LOWERS the charge current, the rider overrides it on the bike's own dial, and it is

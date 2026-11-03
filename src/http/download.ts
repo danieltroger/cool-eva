@@ -17,7 +17,7 @@ import type { ServerResponse } from "http";
 // the whole log and keep it against the day the key leaks, and segments can be
 // dropped or truncated in flight by someone holding no key at all. The caption above
 // this button once blurred the two and claimed the log was "safe over any network".
-// README, "What this does and doesn't hide", has the full list;
+// docs/ride-log.md, "What this does and doesn't hide", has the full list;
 // docs/diagnostics-and-checks.md §9.4 has how the claim got there.
 
 const SEGMENT_EXTENSION = ".celog";
