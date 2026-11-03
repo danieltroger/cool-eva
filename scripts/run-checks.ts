@@ -1032,6 +1032,13 @@ const CHECKS: SelfCheck[] = [
       "paths/conflicting destinations, public-key retry and canonical migration precedence",
   },
   {
+    script: "scripts/check-settings-migration-guards.ts",
+    covers:
+      "archive symlink/hard-link refusal before every rename, untouched sources and journal on interrupted attempts, " +
+      "named migration faults, shared logger/import parsing of newline/BOM/text-prefixed public keys, " +
+      "and refusal of foreign or released locks before journal/data writes",
+  },
+  {
     script: "scripts/check-power-cut-durability.ts",
     covers:
       "the four things the service writes, against the power cut this Pi takes every ride: that appendDurably " +

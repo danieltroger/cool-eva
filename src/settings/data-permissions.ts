@@ -1,6 +1,6 @@
-import { chmod, chown, lstat, open, readdir } from "fs/promises";
+import { chmod, chown, lstat, readdir } from "fs/promises";
 import { join } from "path";
-import { syncDirectory } from "../storage/durable.ts";
+import { syncFilesystems } from "../storage/durable.ts";
 
 export async function normaliseArchivePermissions(directory: string, archiveGroupId: number): Promise<void> {
   const metadata = await lstat(directory);
@@ -23,15 +23,40 @@ export async function normaliseArchivePermissions(directory: string, archiveGrou
       }
       await chown(path, ownerId, archiveGroupId);
       await chmod(path, 0o640);
-      const handle = await open(path, "r");
-      try {
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
     } else {
       throw new Error("A legacy archive contains a link or special file; migration needs an explicit choice.");
     }
   }
-  await syncDirectory(directory);
+}
+
+export async function validateArchiveTree(directory: string): Promise<void> {
+  const metadata = await lstat(directory);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    throw new UnsafeArchiveError();
+  }
+  for (const name of await readdir(directory)) {
+    const path = join(directory, name);
+    const entry = await lstat(path);
+    if (entry.isDirectory()) {
+      await validateArchiveTree(path);
+    } else if (!entry.isFile() || entry.nlink !== 1) {
+      throw new UnsafeArchiveError();
+    }
+  }
+}
+
+export async function flushArchivePermissions(): Promise<void> {
+  const failure = await syncFilesystems();
+  if (failure !== null) {
+    throw new Error(`Archive permissions could not be flushed: ${failure}`);
+  }
+}
+
+export class UnsafeArchiveError extends Error {
+  readonly code = "unsafe-archive";
+
+  constructor() {
+    super("A legacy archive contains a symlink, hard link or special file. Repair it before retrying the data move.");
+    this.name = "UnsafeArchiveError";
+  }
 }

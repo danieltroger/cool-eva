@@ -2,6 +2,8 @@ import { chmod, chown, lstat, readFile } from "fs/promises";
 import { replaceFileDurably } from "../storage/durable.ts";
 import { sweepReplacementFiles } from "../storage/replacement-files.ts";
 import { prepareSettingsDirectories } from "./directories.ts";
+import { readErrorCode } from "./error-code.ts";
+import { sweepArchiveReplacementFiles } from "./replacement-cleanup.ts";
 import { assertSettingsWriterLock, type SettingsWriterLock } from "./writer-lock.ts";
 import {
   degradedSettings,
@@ -24,6 +26,7 @@ export async function openSettingsStore(
   archiveGroupId = await storedArchiveGroup(paths, archiveGroupId);
   await prepareSettingsDirectories(paths, archiveGroupId);
   await sweepReplacementFiles(paths.privateDirectory);
+  await sweepArchiveReplacementFiles(paths, lock);
   let loaded = await loadSettings(paths);
   if (loaded.kind === "ready") {
     await writeInstallationMarker(paths, archiveGroupId);
@@ -160,11 +163,11 @@ async function loadSettings(paths: SettingsPaths): Promise<SettingsState> {
           console.log("settings: no settings document yet; explicit initialisation or legacy import is required");
           return { kind: "missing" };
         }
-        return degradedState(paths, "unreadable");
+        return degradedState(paths, "unreadable", markerError);
       }
       return degradedState(paths, "missing-after-install");
     }
-    return degradedState(paths, "unreadable");
+    return degradedState(paths, "unreadable", error);
   }
   try {
     const value: unknown = JSON.parse(contents);
@@ -174,8 +177,9 @@ async function loadSettings(paths: SettingsPaths): Promise<SettingsState> {
   }
 }
 
-function degradedState(paths: SettingsPaths, fault: SettingsFault): SettingsState {
-  const message = `Settings cannot be loaded (${fault}). The original file is preserved; repair it or use compatible software.`;
+function degradedState(paths: SettingsPaths, fault: SettingsFault, error?: unknown): SettingsState {
+  const code = readErrorCode(error);
+  const message = `Settings cannot be loaded (${fault}${code ? `, ${code}` : ""}). The original file is preserved; repair it or use compatible software.`;
   console.warn(`settings: ${message}`);
   return { kind: "degraded", fault, message, configuration: degradedSettings(paths) };
 }
@@ -205,6 +209,10 @@ async function writeInstallationMarker(paths: SettingsPaths, archiveGroupId: num
     existing = record(JSON.parse(await readFile(paths.installationMarker, "utf-8")), "installation marker");
     if (existing.installed !== true || existing.archiveGroupId !== archiveGroupId) {
       throw new Error("The installation marker or archive group needs repair; it was not overwritten.");
+    }
+    const metadata = await lstat(paths.installationMarker);
+    if (metadata.uid === process.getuid!() && metadata.gid === process.getgid!() && (metadata.mode & 0o777) === 0o600) {
+      return;
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {

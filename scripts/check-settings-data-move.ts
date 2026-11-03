@@ -10,11 +10,10 @@ import {
   type DataMoveCheckpoint,
   type DataMoveOptions,
 } from "../src/settings/data-move.ts";
-import { importLegacyEnvironment } from "../src/settings/legacy.ts";
 import { migrateLegacySettings } from "../src/settings/migration.ts";
 import { effectiveHubAddress, pendingSettings } from "../src/settings/schema.ts";
 import { openSettingsStore } from "../src/settings/store.ts";
-import { closeSettingsFixture, settingsFixture, type SettingsFixture } from "./settings-check-fixtures.ts";
+import { closeSettingsFixture, moveFixture, settingsFixture, type SettingsFixture } from "./settings-check-fixtures.ts";
 
 await checkMoves();
 for (const step of [
@@ -24,11 +23,13 @@ for (const step of [
   "permissions-applied",
   "link-created",
   "linked",
+  "permissions-synced",
   "committed",
 ] as const) {
   await checkInterruptedMove(step);
 }
 await checkConflictAndOverride();
+await checkPermissionSyncFailure();
 await checkFullMigration();
 console.log("settings data-move checks passed");
 
@@ -38,14 +39,21 @@ async function checkMoves(): Promise<void> {
     const options = await moveFixture(fixture);
     const before = await stat(join(options.sourceDirectories.rideLogDirectory, "synthetic.celog"));
     let afterRename = 0;
+    let permissionSyncs = 0;
+    options.flushPermissions = async () => {
+      permissionSyncs += 1;
+    };
     options.checkpoint = async step => {
-      if (step === "renamed") afterRename = durabilityCounters().directorySyncs;
+      if (step === "renamed") {
+        afterRename = durabilityCounters().directorySyncs;
+      }
       if (step === "parents-synced") {
         assert.equal(durabilityCounters().directorySyncs - afterRename, 2);
       }
     };
     const moved = await moveLegacyData(options);
     assert.deepEqual(moved, expectedDirectories(fixture));
+    assert.equal(permissionSyncs, 1);
     assert.equal((await stat(join(moved.rideLogDirectory, "synthetic.celog"))).ino, before.ino);
     for (const key of Object.keys(moved) as (keyof typeof moved)[]) {
       const destination = moved[key];
@@ -130,7 +138,9 @@ async function checkInterruptedMove(step: DataMoveCheckpoint): Promise<void> {
       };
     }
     const moved = await moveLegacyData(options);
-    if (step === "link-created") assert.equal(resumedLinkChecked, true);
+    if (step === "link-created") {
+      assert.equal(resumedLinkChecked, true);
+    }
     await finishLegacyDataMove(options);
     for (const key of Object.keys(moved) as (keyof typeof moved)[]) {
       assert.equal(
@@ -191,7 +201,7 @@ async function checkFullMigration(): Promise<void> {
       CHARGE_AUTO_ENABLED: "0",
       RIDE_LOG_PUBKEY: join(fixture.directory, "later-key.pem"),
     };
-    let prepared = false;
+    let preparationCalls = 0;
     const options = {
       store: fixture.store,
       lock: fixture.lock,
@@ -202,21 +212,40 @@ async function checkFullMigration(): Promise<void> {
         captureDirectory: moveOptions.legacyCaptureDirectory,
       },
       environment,
-      archiveGroupId: process.getgid!(),
+      flushPermissions: moveOptions.flushPermissions,
       beforeDataMove: async () => {
-        prepared = true;
+        preparationCalls += 1;
       },
     };
     const pending = await migrateLegacySettings(options);
-    assert.equal(prepared, true);
+    assert.equal(preparationCalls, 1);
+    assert.equal(pending.migrationFault?.code, "recording-key-unavailable");
     assert.equal(pending.kind, "ready");
-    if (pending.kind !== "ready") throw new Error("migration did not create settings");
+    if (pending.kind !== "ready") {
+      throw new Error("migration did not create settings");
+    }
     assert.equal(pending.document.values.coolantProbesEnabled, false);
     assert.equal(pending.document.values.radiatorFanEnabled, true);
     assert.equal(pending.document.values.customBmsConfigurationFlashed, true);
     assert.equal(pending.document.values.automaticDcChargingEnabled, false);
     assert.equal(pending.document.migration.complete, false);
     assert.equal(pending.document.migration.pendingPublicKeyPath, environment.RIDE_LOG_PUBKEY);
+    const completedJournal = await readFile(fixture.paths.moveJournal, "utf-8");
+    const completedJournalInode = (await stat(fixture.paths.moveJournal)).ino;
+    for (let restart = 0; restart < 2; restart += 1) {
+      const retry = await migrateLegacySettings({
+        ...options,
+        store: await openSettingsStore(fixture.paths, fixture.lock, process.getgid!()),
+      });
+      assert.equal(retry.migrationFault?.code, "recording-key-unavailable");
+      assert.equal(
+        retry.migrationFault && "errorCode" in retry.migrationFault ? retry.migrationFault.errorCode : null,
+        "ENOENT"
+      );
+      assert.equal(preparationCalls, 1);
+      assert.equal(await readFile(fixture.paths.moveJournal, "utf-8"), completedJournal);
+      assert.equal((await stat(fixture.paths.moveJournal)).ino, completedJournalInode);
+    }
     const { publicKey } = await promisify(generateKeyPair)("x25519");
     await writeFile(environment.RIDE_LOG_PUBKEY, publicKey.export({ type: "spki", format: "pem" }));
     const resumedStore = await openSettingsStore(fixture.paths, fixture.lock, process.getgid!());
@@ -226,7 +255,11 @@ async function checkFullMigration(): Promise<void> {
       environment: { FAN_ENABLED: "0" },
     });
     assert.equal(completed.kind, "ready");
-    if (completed.kind !== "ready") throw new Error("migration did not complete");
+    assert.equal(completed.migrationFault, null);
+    assert.equal(preparationCalls, 1);
+    if (completed.kind !== "ready") {
+      throw new Error("migration did not complete");
+    }
     assert.equal(completed.document.migration.complete, true);
     assert.equal(completed.document.values.radiatorFanEnabled, true);
     assert.equal(completed.document.values.automaticDcChargingEnabled, false);
@@ -235,7 +268,9 @@ async function checkFullMigration(): Promise<void> {
     const revision = completed.document.revision;
     await resumedStore.learnHub("02:00:00:00:00:10");
     const firstRide = resumedStore.read();
-    if (firstRide.kind !== "ready") throw new Error("first ride lost settings");
+    if (firstRide.kind !== "ready") {
+      throw new Error("first ride lost settings");
+    }
     assert.equal(effectiveHubAddress(firstRide.document), "02:00:00:00:00:10");
     assert.deepEqual(pendingSettings(firstRide.document.values, active), []);
     assert.equal(firstRide.document.revision, revision);
@@ -250,30 +285,32 @@ async function checkFullMigration(): Promise<void> {
   }
 }
 
-async function moveFixture(fixture: SettingsFixture): Promise<DataMoveOptions> {
-  const codeDirectory = join(fixture.directory, "legacy-code");
-  const legacyCaptureDirectory = join(fixture.directory, "legacy-captures");
-  await mkdir(codeDirectory);
-  const imported = importLegacyEnvironment(
-    {},
-    { codeDirectory, workingDirectory: codeDirectory, paths: fixture.paths, captureDirectory: legacyCaptureDirectory }
-  );
-  for (const key of Object.keys(imported.sourceDirectories) as (keyof typeof imported.sourceDirectories)[]) {
-    const directory = imported.sourceDirectories[key];
-    await mkdir(directory);
-    await writeFile(
-      join(directory, key === "rideLogDirectory" ? "synthetic.celog" : "synthetic.txt"),
-      `synthetic ${key}`
+async function checkPermissionSyncFailure(): Promise<void> {
+  const fixture = await settingsFixture();
+  try {
+    const options = await moveFixture(fixture);
+    await assert.rejects(
+      moveLegacyData({
+        ...options,
+        flushPermissions: async () => {
+          throw new Error("synthetic permission sync failure");
+        },
+      }),
+      /synthetic permission sync failure/
     );
+    await assert.rejects(finishLegacyDataMove(options), /not ready to commit/);
+    assert.equal(JSON.parse(await readFile(fixture.paths.moveJournal, "utf-8")).complete, false);
+    for (const key of Object.keys(options.sourceDirectories) as (keyof typeof options.sourceDirectories)[]) {
+      assert.equal(await readlink(options.sourceDirectories[key]), fixture.paths[key]);
+    }
+    await moveLegacyData(options);
+    await finishLegacyDataMove(options);
+    console.log(
+      "  failed permission sync leaves rollback links intact and cannot commit; retry flushes once and completes"
+    );
+  } finally {
+    await closeSettingsFixture(fixture);
   }
-  return {
-    paths: fixture.paths,
-    codeDirectory,
-    sourceDirectories: imported.sourceDirectories,
-    legacyCaptureDirectory,
-    archiveGroupId: process.getgid!(),
-    lock: fixture.lock,
-  };
 }
 
 function expectedDirectories(fixture: SettingsFixture) {

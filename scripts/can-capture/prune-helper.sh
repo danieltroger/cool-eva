@@ -2,6 +2,8 @@
 set -eu
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
+LC_ALL=C
+export LC_ALL
 
 if [ "$#" -ne 0 ] || [ "$(id -u)" -ne 0 ]; then
   echo 'capture prune requires root and no arguments' >&2

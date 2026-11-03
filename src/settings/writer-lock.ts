@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import { dirname, isAbsolute } from "path";
 import { ensureDirectory } from "./directories.ts";
+import { readErrorCode } from "./error-code.ts";
 
 export async function acquireSettingsWriterLock(
   path: string,
@@ -15,9 +16,8 @@ export async function acquireSettingsWriterLock(
     "--exclusive",
     "--nonblock",
     path,
-    process.execPath,
-    "--input-type=module",
-    "--eval",
+    "/bin/sh",
+    "-c",
     HOLDER,
   ]);
   const ended = childEnded(child);
@@ -54,7 +54,7 @@ export interface LockCommand {
 
 const HELD_LOCKS = new WeakSet<SettingsWriterLock>();
 const READY = "cool-eva-settings-lock\n";
-const HOLDER = 'process.stdout.write("cool-eva-settings-lock\\n"); process.stdin.resume();';
+const HOLDER = 'printf "cool-eva-settings-lock\\n"; exec /bin/cat >/dev/null';
 const HOLDER_TIMEOUT_MS = 5_000;
 
 export function assertSettingsWriterLock(lock: SettingsWriterLock): void {
@@ -66,7 +66,12 @@ export function assertSettingsWriterLock(lock: SettingsWriterLock): void {
 
 function childEnded(child: ChildProcessWithoutNullStreams): Promise<void> {
   return new Promise((resolve, reject) => {
-    child.once("error", () => reject(new Error("The settings writer-lock utility could not start.")));
+    child.once("error", error => {
+      const code = readErrorCode(error);
+      reject(
+        Object.assign(new Error(`The settings writer-lock utility could not start (${code ?? "unknown"}).`), { code })
+      );
+    });
     child.once("close", code => {
       if (code === 0) {
         resolve();

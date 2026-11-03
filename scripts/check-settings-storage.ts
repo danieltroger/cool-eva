@@ -13,6 +13,7 @@ import { closeSettingsFixture, settingsFixture } from "./settings-check-fixtures
 
 await checkLegacyLiterals();
 await checkStore();
+await checkStoreLockRefusals();
 await checkDegradedAndUnknownFields();
 await checkReplacement();
 console.log("settings storage checks passed");
@@ -99,7 +100,9 @@ async function checkStore(): Promise<void> {
     assert.equal(await fixture.store.learnHub("02:00:00:00:00:02"), true);
     const learned = fixture.store.read();
     assert.equal(learned.kind, "ready");
-    if (learned.kind !== "ready") throw new Error("settings did not load");
+    if (learned.kind !== "ready") {
+      throw new Error("settings did not load");
+    }
     assert.equal(learned.document.revision, revision);
     assert.equal(effectiveHubAddress(learned.document), "02:00:00:00:00:02");
     assert.deepEqual(pendingSettings(learned.document.values, active), []);
@@ -114,17 +117,54 @@ async function checkStore(): Promise<void> {
     assert.equal(interleaving.filter(result => result.status === "rejected").length, 1);
     assert.equal((await stat(fixture.paths.settingsFile)).mode & 0o777, 0o600);
     await chmod(fixture.paths.settingsFile, 0o644);
+    const markerInode = (await stat(fixture.paths.installationMarker)).ino;
     const reloaded = await openSettingsStore(fixture.paths, fixture.lock, process.getgid!() + 1000);
     assert.equal(reloaded.read().kind, "ready");
     assert.equal(reloaded.archiveGroupId, process.getgid!());
     assert.equal((await stat(fixture.paths.dataRoot)).gid, process.getgid!());
     assert.equal((await stat(fixture.paths.settingsFile)).mode & 0o777, 0o600);
+    assert.equal((await stat(fixture.paths.installationMarker)).ino, markerInode);
     await assert.rejects(acquireSettingsWriterLock(join(fixture.directory, "locks", "settings.lock"), fixture.command));
     console.log(
       `  learned hub is active without pending/revision churn; writers serialise (${process.platform === "linux" ? "kernel flock" : "holder protocol; kernel flock runs in Linux CI"})`
     );
   } finally {
     await closeSettingsFixture(fixture);
+  }
+}
+
+async function checkStoreLockRefusals(): Promise<void> {
+  const fixture = await settingsFixture();
+  try {
+    const foreign = { assertHeld: () => {}, release: async () => {} };
+    await assert.rejects(openSettingsStore(fixture.paths, foreign, process.getgid!()), /acquired writer lock/);
+    await assert.rejects(
+      acquireSettingsWriterLock(join(fixture.directory, "locks", "missing.lock"), {
+        executable: join(fixture.directory, "missing-flock"),
+        arguments: [],
+      }),
+      (error: unknown) => {
+        assert.equal((error as NodeJS.ErrnoException).code, "ENOENT");
+        assert.match((error as Error).message, /ENOENT/);
+        return true;
+      }
+    );
+    await fixture.lock.release();
+    await assert.rejects(fixture.store.initialise(freshSettings(fixture.paths)), /acquired writer lock/);
+    await assert.rejects(readFile(fixture.paths.settingsFile), { code: "ENOENT" });
+  } finally {
+    await closeSettingsFixture(fixture);
+  }
+  const ready = await settingsFixture();
+  try {
+    await ready.store.initialise(freshSettings(ready.paths));
+    const before = await readFile(ready.paths.settingsFile, "utf-8");
+    await ready.lock.release();
+    await assert.rejects(ready.store.update(0, { radiatorFanEnabled: true }), /acquired writer lock/);
+    assert.equal(await readFile(ready.paths.settingsFile, "utf-8"), before);
+    console.log("  store refuses foreign/released locks; spawn error retains ENOENT");
+  } finally {
+    await closeSettingsFixture(ready);
   }
 }
 
@@ -148,7 +188,9 @@ async function checkDegradedAndUnknownFields(): Promise<void> {
     const oldBranch = await openSettingsStore(fixture.paths, fixture.lock, process.getgid!());
     const degraded = oldBranch.read();
     assert.equal(degraded.kind, "degraded");
-    if (degraded.kind !== "degraded") throw new Error("future document did not degrade");
+    if (degraded.kind !== "degraded") {
+      throw new Error("future document did not degrade");
+    }
     assert.equal(degraded.configuration.automaticDcChargingEnabled, false);
     assert.equal(degraded.configuration.dashboardBluetoothSecret, "");
     assert.equal(degraded.configuration.rideLogPublicKeyPem, null);
@@ -165,7 +207,7 @@ async function checkDegradedAndUnknownFields(): Promise<void> {
     );
     await writeFile(
       join(futureBuild, "public-key.ts"),
-      await readFile(new URL("../src/settings/public-key.ts", import.meta.url))
+      `export { validatePublicKey } from ${JSON.stringify(new URL("../src/settings/public-key.ts", import.meta.url).href)};\n`
     );
     const futureReader = (await import(
       pathToFileURL(join(futureBuild, "schema.ts")).href
@@ -195,6 +237,20 @@ async function checkDegradedAndUnknownFields(): Promise<void> {
     await writeFile(fixture.paths.settingsFile, JSON.stringify(document));
     const returned = await openSettingsStore(fixture.paths, fixture.lock, process.getgid!());
     assert.equal(returned.read().kind, "ready");
+    const fileParent = join(fixture.paths.dataRoot, "synthetic-file-parent");
+    await writeFile(fileParent, "not a directory");
+    const ioFault = (
+      await openSettingsStore(
+        { ...fixture.paths, settingsFile: join(fileParent, "settings.json") },
+        fixture.lock,
+        process.getgid!()
+      )
+    ).read();
+    assert.equal(ioFault.kind, "degraded");
+    if (ioFault.kind !== "degraded") {
+      throw new Error("expected a named read fault");
+    }
+    assert.match(ioFault.message, /ENOTDIR/);
     const { unlink } = await import("fs/promises");
     await unlink(fixture.paths.settingsFile);
     const absentAfterInstall = await openSettingsStore(fixture.paths, fixture.lock, process.getgid!());
@@ -244,6 +300,29 @@ async function checkReplacement(): Promise<void> {
     await mkdir(join(fixture.directory, ".cool-eva-replace-00000000-0000-0000-0000-000000000001.tmp"));
     assert.equal(await sweepReplacementFiles(fixture.directory), 1);
     assert.ok((await readdir(fixture.directory)).includes("unrelated.tmp"));
+    const archiveOrphan = ".cool-eva-replace-00000000-0000-0000-0000-000000000002.tmp";
+    for (const directory of [
+      fixture.paths.rideLogDirectory,
+      fixture.paths.vcuParameterDirectory,
+      fixture.paths.wifiDiagnosticDirectory,
+      fixture.paths.captureDirectory,
+    ]) {
+      await mkdir(join(directory, "nested"), { recursive: true });
+      await writeFile(join(directory, archiveOrphan), "interrupted replacement");
+      await writeFile(join(directory, "nested", archiveOrphan), "interrupted nested replacement");
+      await writeFile(join(directory, "unrelated.tmp"), "keep archive file");
+    }
+    await openSettingsStore(fixture.paths, fixture.lock, process.getgid!());
+    for (const directory of [
+      fixture.paths.rideLogDirectory,
+      fixture.paths.vcuParameterDirectory,
+      fixture.paths.wifiDiagnosticDirectory,
+      fixture.paths.captureDirectory,
+    ]) {
+      await assert.rejects(readFile(join(directory, archiveOrphan)), { code: "ENOENT" });
+      await assert.rejects(readFile(join(directory, "nested", archiveOrphan)), { code: "ENOENT" });
+      assert.equal(await readFile(join(directory, "unrelated.tmp"), "utf-8"), "keep archive file");
+    }
     console.log("  concurrent atomic replacements, flushes, private modes and selective orphan sweep");
   } finally {
     await closeSettingsFixture(fixture);
