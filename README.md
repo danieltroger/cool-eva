@@ -52,7 +52,7 @@ git checkout -- package-lock.json
 
 ### 4. Enable saved ride history — on your computer
 
-<!-- for-now: hosted ride-log key page -->
+<!-- for-now: #327 -->
 
 For now, follow the [computer key setup](docs/manual-install.md#4-enable-saved-ride-history--on-your-computer): run `node --experimental-strip-types scripts/generate-log-key.ts`, back up the private key and copy only the public key to the Pi; without it, the dashboard works but no rides are saved.
 
@@ -75,7 +75,7 @@ With the **bike awake and parked**, open the dashboard below and check for live 
 
 ## Open the dashboard
 
-- **Bluetooth:** [Connect over BLE](docs/connecting-over-bluetooth.md) using **Chrome on Android** or **Bluefy on iPhone**. The experimental [iOS app](docs/ios-app.md) requires an Xcode build and has not been tested on a phone. After initial setup over Wi-Fi, Bluetooth avoids waiting on the hotspot settings page; a browser must first load the hosted page online.
+- **Bluetooth:** [Connect over BLE](docs/connecting-over-bluetooth.md) using **Chrome on Android** or **Bluefy on iPhone**. The experimental [iOS app](docs/ios-app.md) requires an Xcode build and has not been tested on a phone. Bluetooth needs a [secret set on the Pi over Wi-Fi](docs/dashboard.md) first; after that, it avoids waiting on the hotspot settings page. A browser must first load the hosted page online.
 - **Wi-Fi/hotspot:** open **[http://cool-eva.local](http://cool-eva.local)** on the same network in any browser. Viewing works without internet. The Pi still needs Wi-Fi internet for **Menu → Update**, even when the phone uses Bluetooth. See [dashboard details and IP fallback](docs/dashboard.md) or [update help](docs/deploy.md#running-it).
 
 Use the phone while parked. Missing coolant or detailed cell readings on a stock bike is normal; see [what each screen shows](docs/dashboard.md).

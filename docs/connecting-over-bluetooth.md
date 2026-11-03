@@ -22,7 +22,11 @@ Do this with the bike parked in wifi range, over ssh.
 
 1. **Use the current software.** The BLE server is already on `main`; a fresh installation needs no branch change. For an older installation, follow the [update guide](deploy.md#running-it).
 
-2. **Choose a secret** of at least 12 characters. You will type it on the phone once, so a phrase you can type is better than random characters. Add it to the service's environment file:
+2. **Choose a secret** of at least 12 characters. You will type it on the phone once, so a phrase you can type is better than random characters.
+
+   <!-- for-now: #317 -->
+
+   For now, add it to the service's environment file:
 
    ```
    sudo nano /etc/default/cool-eva
@@ -105,7 +109,11 @@ In Bluefy and Chrome, open the page while you still have signal and leave the ta
 
 ## Who can connect
 
-Only a phone that knows the secret. Anyone in range can see that a `cool-eva` is advertising, but without the secret the Pi refuses everything except the handshake, and everything it sends after that is encrypted under a key derived from the secret. The secret lives in `/etc/default/cool-eva` on the Pi and in the browser or app on your phone, nowhere else. To lock out a phone, change `BLE_SECRET` and restart the service.
+Only a phone that knows the secret. Anyone in range can see that a `cool-eva` is advertising, but without the secret the Pi refuses everything except the handshake, and everything it sends after that is encrypted under a key derived from the secret.
+
+<!-- for-now: #317 -->
+
+For now, the secret lives in `/etc/default/cool-eva` on the Pi and in the browser or app on your phone, nowhere else; to lock out a phone, change `BLE_SECRET` and restart the service.
 
 ## Earlier branch instructions
 
