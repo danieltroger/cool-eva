@@ -2,7 +2,7 @@ import { readFile, stat } from "fs/promises";
 import { spawn } from "child_process";
 import { dirname, isAbsolute, join } from "path";
 import { homedir } from "os";
-import { CAPTURE_DIRECTORY } from "./can-capture/unit.ts";
+import { captureDirectoryCommand, deleteCaptureCommand } from "./can-capture/remote-directory.ts";
 import {
   planCaptureDeletions,
   type DeletionPlan,
@@ -174,7 +174,7 @@ async function probeThePi(
 ): Promise<{ remote: Map<string, RemoteFile>; bootId: string | null }> {
   const hash = options.strict ? 'printf "\\t%s" "$(sha256sum "$name" | cut -d" " -f1)"' : ":";
   const script = `set -eu
-cd ${CAPTURE_DIRECTORY}
+${captureDirectoryCommand()}
 printf 'BOOT\\t%s\\n' "$(cut -c1-8 /proc/sys/kernel/random/boot_id)"
 while IFS= read -r name; do
   if [ -f "$name" ]; then
@@ -204,13 +204,7 @@ done`;
 async function deleteOnThePi(plan: DeletionPlan, options: Options): Promise<void> {
   const names = plan.deletable.map(entry => entry.name);
   console.log(`\ndeleting ${names.length} files on ${options.host}…`);
-  const script = `set -eu
-cd ${CAPTURE_DIRECTORY}
-while IFS= read -r name; do
-  rm -f -- "$name"
-  if [ -e "$name" ]; then printf 'STILL\\t%s\\n' "$name"; else printf 'GONE\\t%s\\n' "$name"; fi
-done
-df -Pk . | tail -1`;
+  const script = deleteCaptureCommand();
   const answer = await ssh(options.host, script, names.join("\n") + "\n");
 
   const gone = new Set<string>();

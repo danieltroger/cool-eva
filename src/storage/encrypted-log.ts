@@ -1,10 +1,11 @@
-import { createCipheriv, createPublicKey, diffieHellman, generateKeyPair, hkdf, randomBytes } from "crypto";
+import { createCipheriv, diffieHellman, generateKeyPair, hkdf, randomBytes } from "crypto";
 import type { KeyObject } from "crypto";
 import { mkdir, readFile } from "fs/promises";
 import { join } from "path";
 import { promisify } from "util";
 import { gzip } from "zlib";
 import { appendDurably } from "./durable.ts";
+import { parseRideLogPublicKey } from "./ride-log-key.ts";
 import { splitByTrust } from "./trust-runs.ts";
 import type { ClockTrust } from "../gps/clock.ts";
 import type { SignalSource } from "../db.ts";
@@ -137,10 +138,7 @@ export async function initEncryptedLog(options: EncryptedLogOptions): Promise<bo
   // Everything below builds locals first. Assigning recipientPublicKey before
   // these can throw would leave appendReading() buffering into an array that has
   // no timer to drain it — unbounded growth behind a "logging disabled" message.
-  const publicKey = createPublicKey(pem);
-  if (publicKey.asymmetricKeyType !== "x25519") {
-    throw new Error(`ride-log: expected an X25519 public key, got ${publicKey.asymmetricKeyType}`);
-  }
+  const { publicKey } = parseRideLogPublicKey(pem);
   // The raw 32 bytes sit at the end of the SPKI DER for X25519; binding both
   // public keys into the HKDF salt is standard ECIES practice.
   const publicRaw = publicKey.export({ type: "spki", format: "der" }).subarray(-EPHEMERAL_KEY_BYTES);
