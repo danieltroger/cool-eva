@@ -6,7 +6,7 @@ import { copyBundleArtifacts } from "./release/build.ts";
 import { hashFile, selectSourcePaths, validateArchivePath, writeFileInventory } from "./release/files.ts";
 import { parseBundleInputs, readBundleInputs, validateBuildIdentity } from "./release/inputs.ts";
 import { createReleaseMetadata, renderReleaseManifest } from "./release/manifest.ts";
-import { validateArm64Elf } from "./release/native.ts";
+import { selectNativeBinaries, validateArm64Elf } from "./release/native.ts";
 
 export async function checkReleaseBundle(): Promise<void> {
   const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -79,6 +79,11 @@ export async function checkReleaseBundle(): Promise<void> {
   arm32Header[4] = 1;
   assert.throws(() => validateArm64Elf(arm32Header, "ARM32 fixture"));
   assert.throws(() => validateArm64Elf(header.subarray(0, 10), "truncated fixture"));
+  assert.deepEqual(selectNativeBinaries("better-sqlite3", ["better_sqlite3.node", "test_extension.node"]), [
+    "better_sqlite3.node",
+  ]);
+  assert.throws(() => selectNativeBinaries("better-sqlite3", ["test_extension.node"]), /missing production native/);
+  assert.throws(() => selectNativeBinaries("socketcan", ["can.node"]), /can_signals/);
 
   const temporaryParent = join(root, ".preview-shots");
   await mkdir(temporaryParent, { recursive: true });

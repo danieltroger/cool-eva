@@ -5,7 +5,7 @@ import { captureCommand, runCommand } from "./commands.ts";
 import { hashFile, writeFileInventory } from "./files.ts";
 import { readBundleInputs } from "./inputs.ts";
 import { createReleaseMetadata, renderReleaseManifest } from "./manifest.ts";
-import { NATIVE_MODULES, verifyNativeModules } from "./native.ts";
+import { NATIVE_MODULES, selectNativeBinaries, verifyNativeModules } from "./native.ts";
 
 export async function assembleBundle(sourceDirectory: string, outputDirectory: string): Promise<void> {
   if (process.platform !== "linux" || process.arch !== "arm64") {
@@ -66,6 +66,7 @@ export async function assembleBundle(sourceDirectory: string, outputDirectory: s
     await captureCommand("dpkg-query", ["-W", "-f=${binary:Package}\t${Version}\n"], options)
   );
   await writeFile(join(sourceDirectory, "release.json"), JSON.stringify(metadata, null, 2) + "\n");
+  await keepNativeBinaries(sourceDirectory);
   await verifyNativeModules(sourceDirectory);
   await runCommand(
     join(runtimeDirectory, "bin/node"),
@@ -75,7 +76,6 @@ export async function assembleBundle(sourceDirectory: string, outputDirectory: s
     ],
     options
   );
-  await keepNativeBinaries(sourceDirectory);
   await writeFileInventory(sourceDirectory);
 
   const archive = join(outputDirectory, "bundle.tar.zst");
@@ -131,7 +131,7 @@ async function keepNativeBinaries(directory: string): Promise<void> {
   for (const moduleName of NATIVE_MODULES) {
     const buildDirectory = join(directory, "node_modules", moduleName, "build");
     const releaseDirectory = join(buildDirectory, "Release");
-    const nativeFiles = (await readdir(releaseDirectory)).filter(filename => filename.endsWith(".node"));
+    const nativeFiles = selectNativeBinaries(moduleName, await readdir(releaseDirectory));
     const savedDirectory = await mkdtemp("/work/native-");
     for (const filename of nativeFiles) {
       await copyFile(join(releaseDirectory, filename), join(savedDirectory, filename));

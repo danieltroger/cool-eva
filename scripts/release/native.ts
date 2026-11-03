@@ -17,10 +17,7 @@ export async function verifyNativeModules(bundleDirectory: string): Promise<void
   await verifyBinary(join(bundleDirectory, "runtime/bin/node"), bundleDirectory, inputs.runtimeLibraries);
   for (const moduleName of NATIVE_MODULES) {
     const buildDirectory = join(bundleDirectory, "node_modules", moduleName, "build/Release");
-    const nativeFiles = (await readdir(buildDirectory)).filter(filename => filename.endsWith(".node"));
-    if (nativeFiles.length === 0) {
-      throw new Error(`${moduleName}: no compiled native module`);
-    }
+    const nativeFiles = selectNativeBinaries(moduleName, await readdir(buildDirectory));
     for (const filename of nativeFiles) {
       const modulePath = join(buildDirectory, filename);
       await verifyBinary(modulePath, bundleDirectory, inputs.runtimeLibraries);
@@ -32,6 +29,25 @@ export async function verifyNativeModules(bundleDirectory: string): Promise<void
 }
 
 export const NATIVE_MODULES = ["socketcan", "better-sqlite3", "spi-device", "usocket"] as const;
+
+export function selectNativeBinaries(
+  moduleName: (typeof NATIVE_MODULES)[number],
+  availableFiles: string[]
+): readonly string[] {
+  // SQLite's test_extension.node implements SQLite's extension API, not the Node addon API.
+  const runtimeBinaries = {
+    "socketcan": ["can.node", "can_signals.node"],
+    "better-sqlite3": ["better_sqlite3.node"],
+    "spi-device": ["spi.node"],
+    "usocket": ["uwrap.node"],
+  }[moduleName];
+  for (const filename of runtimeBinaries) {
+    if (!availableFiles.includes(filename)) {
+      throw new Error(`${moduleName}: missing production native binary ${filename}`);
+    }
+  }
+  return runtimeBinaries;
+}
 
 export function validateArm64Elf(header: Uint8Array, name: string): void {
   if (
