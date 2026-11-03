@@ -167,13 +167,22 @@ const CHECKS: SelfCheck[] = [
   {
     script: "scripts/check-ble-server.ts",
     covers:
-      "the Pi's BLE GATT server end to end, with a stand-in radio and a real loopback HTTP server: that a short " +
-      "secret is refused at startup, a wrong secret is refused and arms the cooldown that then refuses even the " +
-      "right one, a sealed message with no session is refused and never answered, the right secret gets a sealed " +
-      "WELCOME, a tunnelled POST reaches the endpoint with its method, path, body and X-Cool-Eva gate header while " +
-      "Host is the tunnel's own, a 150 kB incompressible body arrives whole and in order through the paced queue, " +
-      "a replayed counter is dropped, SUBSCRIBE answers with a snapshot and coalesces ten changes into fewer " +
-      "patches, UNSUBSCRIBE stops them, and a GATT unsubscribe ends the session",
+      "the real BLE server with a stand-in radio and loopback: generated-key startup, immediate recovery after a wrong proof, unchanged HTTP header/body gates, whole paced downloads, replay rejection, telemetry coalescing and unsubscribe cleanup",
+  },
+  {
+    script: "scripts/check-ble-hardening.ts",
+    covers:
+      "stateless pre-auth framing, no refusal backlog, proof-before-owner-read, per-device ownership/MTU, zero-payload storage guard, stale handshake commits, independent admission/output/seal budgets and suppression accounting",
+  },
+  {
+    script: "scripts/check-ble-client.ts",
+    covers:
+      "the actual browser/server link: exact origins and native scheme, normalized CSPRNG keys, production HELLO replay, advisory recovery without re-entering the key, same-radio service restart and fresh read/write chains, authenticated download liveness and request inactivity cleanup without POST replay",
+  },
+  {
+    script: "scripts/check-ble-gatt.ts",
+    covers:
+      "actual D-Bus watcher and advertisement exports behind a fake bus: trusted device/removal/adapter/daemon signals, registration recovery, bounded read-only owner liveness and no advertised name",
   },
   {
     script: "scripts/check-ble-wire.ts",

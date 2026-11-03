@@ -10,7 +10,9 @@ import {
   reconnect,
   rememberSecret,
   storedSecret,
+  originAllowed,
 } from "../lib/ble-link.js";
+import { BLE_ORIGIN_MESSAGE } from "../lib/ble-origin.js";
 
 // The controls a BLE-served dashboard needs and a wifi-served one does not: a way to pick
 // the Pi (Web Bluetooth will only open its chooser from a tap) and somewhere to type the
@@ -36,51 +38,14 @@ const SECRET_FIELD_ID = "ble-secret";
 
 /** Set when a connect was refused for want of a secret; the menu's note says what to do. */
 const secretWanted = van.state(false);
-
-/**
- * Connects, or — when there is no secret yet, or the Pi refused the one there is — sends
- * the rider to the field instead. The chooser is only shown with a secret in hand, and
- * only once per page: correcting a secret reconnects to the Pi already chosen.
- * @param {() => void} [openMenu] how to get the field on screen, when it is not already
- */
-function connectNow(openMenu) {
-  if (storedSecret() === "") {
-    askForSecret(openMenu);
-    return;
-  }
-  secretWanted.val = false;
-  const attempt = deviceChosen() && bleStatus.val !== "connected" ? reconnect() : chooseAndConnect();
-  attempt.catch(error => {
-    // The chooser being dismissed is a rider changing their mind, not a fault.
-    if (/** @type {Error} */ (error).name === "NotFoundError") {
-      console.log("ble: device chooser dismissed");
-      return;
-    }
-    console.warn("ble: connect failed", error);
-    if (bleStatus.val === "refused") {
-      askForSecret(openMenu);
-      return;
-    }
-    bleDetail.val = /** @type {Error} */ (error).message;
-  });
-}
-
-/** @param {(() => void) | undefined} openMenu */
-function askForSecret(openMenu) {
-  secretWanted.val = true;
-  openMenu?.();
-  // After the sheet has rendered open: a field still under `visibility: hidden` takes no
-  // focus. iOS will not raise the keyboard for a focus outside a tap, but the cursor is
-  // there and the note below says what it is for.
-  setTimeout(() => document.getElementById(SECRET_FIELD_ID)?.focus(), 150);
-}
+const entryError = van.state("");
 
 /**
  * In the header, beside the link dot, until the link is up.
  * @param {() => void} openMenu opens the menu sheet, where the secret is typed
  */
 export function BleHeaderButton(openMenu) {
-  if (!BLE_MODE) {
+  if (!BLE_MODE || !originAllowed()) {
     return span();
   }
   return () =>
@@ -93,6 +58,9 @@ export function BleHeaderButton(openMenu) {
 export function BleSection() {
   if (!BLE_MODE) {
     return div();
+  }
+  if (!originAllowed()) {
+    return div(h2({ class: "sheet-heading" }, "Bluetooth"), div({ class: "action-note caution" }, BLE_ORIGIN_MESSAGE));
   }
   if (!bluetoothAvailable()) {
     return div(
@@ -113,8 +81,14 @@ export function BleSection() {
         onsubmit: (/** @type {SubmitEvent} */ event) => {
           event.preventDefault();
           const field = /** @type {HTMLFormElement} */ (event.target).elements.namedItem("secret");
-          rememberSecret(/** @type {HTMLInputElement} */ (field).value);
-          connectNow();
+          try {
+            rememberSecret(/** @type {HTMLInputElement} */ (field).value);
+            entryError.val = "";
+            connectNow();
+          } catch (error) {
+            console.log("ble: generated key entry rejected");
+            entryError.val = /** @type {Error} */ (error).message;
+          }
         },
       },
       // Hidden, and fixed: password managers file a secret under a username, and without
@@ -126,21 +100,55 @@ export function BleSection() {
         type: "password",
         name: "secret",
         autocomplete: "current-password",
-        placeholder: "BLE secret (BLE_SECRET on the Pi)",
+        placeholder: "Paste the Pi’s generated Bluetooth key",
         value: storedSecret(),
       }),
       button({ class: "action", type: "submit" }, () =>
         bleStatus.val === "connected" ? "Connected — choose another Pi" : "Connect to the Pi"
       )
     ),
+    () => (entryError.val ? div({ class: "action-note failure" }, entryError.val) : span()),
     () =>
       secretWanted.val && bleStatus.val !== "refused"
-        ? div({ class: "action-note caution" }, "Enter the Pi's BLE secret above, then tap Connect to the Pi.")
+        ? div({ class: "action-note caution" }, "Paste the Pi’s generated key above, then tap Connect to the Pi.")
         : div(
             { class: bleStatus.val === "refused" ? "action-note failure" : "action-note" },
             describe(bleStatus.val, bleDetail.val)
           )
   );
+}
+
+/**
+ * Web Bluetooth needs a tap to open its chooser. Keep the chosen device for reconnects;
+ * a connected rider can explicitly choose another Pi.
+ * @param {() => void} [openMenu] how to get the field on screen, when it is not already
+ */
+function connectNow(openMenu) {
+  if (storedSecret() === "") {
+    askForSecret(openMenu);
+    return;
+  }
+  secretWanted.val = false;
+  const attempt = deviceChosen() && bleStatus.val !== "connected" ? reconnect() : chooseAndConnect();
+  attempt.catch(error => {
+    // The chooser being dismissed is a rider changing their mind, not a fault.
+    if (/** @type {Error} */ (error).name === "NotFoundError") {
+      console.log("ble: device chooser dismissed");
+      return;
+    }
+    console.warn("ble: connect failed", error);
+    bleDetail.val = /** @type {Error} */ (error).message;
+  });
+}
+
+/** @param {(() => void) | undefined} openMenu */
+function askForSecret(openMenu) {
+  secretWanted.val = true;
+  openMenu?.();
+  // After the sheet has rendered open: a field still under `visibility: hidden` takes no
+  // focus. iOS will not raise the keyboard for a focus outside a tap, but the cursor is
+  // there and the note below says what it is for.
+  setTimeout(() => document.getElementById(SECRET_FIELD_ID)?.focus(), 150);
 }
 
 /**
@@ -156,7 +164,7 @@ function describe(status, detail) {
     case "connected":
       return detail ? `Connected to ${detail}.` : "Connected.";
     case "refused":
-      return `Refused by the Pi: ${detail}. Correct the secret above and tap Connect again.`;
+      return `Connection attempt refused: ${detail}. Retrying while this page is open.`;
     case "lost":
       return detail ? `Link lost: ${detail}. Reconnecting while this page is open.` : "Link lost. Reconnecting.";
   }

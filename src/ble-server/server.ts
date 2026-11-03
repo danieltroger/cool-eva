@@ -1,140 +1,252 @@
 import {
   FrameAssembler,
-  MessageKind,
   type Bytes,
+  MessageKind,
   type DashboardMessage,
   type RequestHeader,
 } from "../../public/lib/ble-wire.js";
+import { validBleSecret } from "../../public/lib/ble-secret.js";
 import { setTimeout as delay } from "timers/promises";
 import { monotonicNow } from "../monotonic.ts";
 import { startGattApplication, type GattApplication, type GattHandlers } from "./gatt-app.ts";
-import { OutboundQueue } from "./outbound.ts";
-import { BleSession } from "./session.ts";
+import { Admission } from "./admission.ts";
+import type { DeadlineTimers } from "./dbus-link.ts";
+import { OutboundQueue, DEFAULT_ATT_MTU } from "./outbound.ts";
+import { Owner } from "./owner.ts";
+import { Rejections } from "./rejections.ts";
+import { BleSession, refused, type ReceiveResult } from "./session.ts";
 import { startTelemetryStream, type TelemetryStream } from "./stream.ts";
 import { MAX_REQUEST_BODY_BYTES, forwardRequest } from "./tunnel.ts";
 
-// The BLE face of the service: the dashboard, over GATT, for a phone that shares no
-// network with the Pi. Wires the layers together — gatt-app.ts (BlueZ), session.ts
-// (who may talk), tunnel.ts (what they may ask), stream.ts (live telemetry) — and owns
-// the two orderings they depend on. docs/ble-server.md.
-
-/** The secret is typed into a phone once; below this it is guessable even rate-limited. */
-export const MIN_SECRET_LENGTH = 12;
-
-/** A request message is a header and a small body; this is a generous ceiling on both. */
-const MAX_INBOUND_MESSAGE_BYTES = MAX_REQUEST_BODY_BYTES + 4 * 1024;
-
-/**
- * Concurrent tunnelled requests. The dashboard fires a handful on open (status, faults,
- * fan); more than this at once is a stuck client, and each slot holds a loopback socket.
- */
-const MAX_REQUESTS_IN_FLIGHT = 6;
-
-/** A response body pauses while more than this is queued for the radio. */
-const RESPONSE_HIGH_WATER_BYTES = 32 * 1024;
-const DRAIN_POLL_MS = 25;
-
-export interface BleServerOptions {
-  secret: string;
-  httpPort: number;
-  /** BlueZ by default; scripts/check-ble-server.ts passes a stand-in radio. */
-  startGatt?: (handlers: GattHandlers) => Promise<GattApplication>;
-}
-
-export interface BleServer {
-  stop: () => Promise<void>;
-}
-
-interface ServerContext {
-  options: BleServerOptions;
-  session: BleSession;
-  outbound: OutboundQueue;
-  assembler: FrameAssembler;
-  stream: TelemetryStream | null;
-  requestsInFlight: number;
-  /**
-   * Both chains exist for ORDER. Inbound: a sealed envelope's counter must be checked
-   * against the one before it, so envelopes open one at a time. Outbound: the phone drops
-   * any counter not above the last, so seal-and-enqueue must happen in the order the
-   * counters were taken — two concurrent seals could otherwise swap places in the queue.
-   */
-  inboundChain: Promise<void>;
-  outboundChain: Promise<void>;
-}
-
 export async function startBleServer(options: BleServerOptions): Promise<BleServer> {
-  if (options.secret.length < MIN_SECRET_LENGTH) {
-    throw new Error(`BLE_SECRET must be at least ${MIN_SECRET_LENGTH} characters`);
+  if (!validBleSecret(options.secret)) {
+    throw new Error("BLE_SECRET must be a generated 64-character lowercase-hex key (openssl rand -hex 32)");
   }
   let app: GattApplication | null = null;
   const context: ServerContext = {
     options,
-    session: new BleSession(options.secret),
+    session: options.session ?? new BleSession(options.secret),
+    owner: new Owner(options.timers),
     outbound: new OutboundQueue({ send: frame => app?.notify(frame) }),
     assembler: new FrameAssembler(MAX_INBOUND_MESSAGE_BYTES),
+    inbound: new Admission(),
+    hellos: new Admission(),
+    rejections: new Rejections(options.timers, options.now),
     stream: null,
     requestsInFlight: 0,
+    pendingSeals: 0,
+    subscribed: false,
+    stopped: false,
     inboundChain: Promise.resolve(),
     outboundChain: Promise.resolve(),
+    app: null,
   };
-
-  const startGatt = options.startGatt ?? startGattApplication;
-  app = await startGatt({
+  app = await (options.startGatt ?? startGattApplication)({
     onRead: () => new TextEncoder().encode(JSON.stringify(context.session.info())),
-    onWrite: (frame, mtu) => receiveFrame(context, frame, mtu),
+    onWrite: (frame, mtu, device) => receiveFrame(context, frame, mtu, device),
     onSubscribed: subscribed => {
+      context.subscribed = subscribed;
       if (subscribed) {
         context.outbound.start();
-        return;
+      } else {
+        endSession(context, "TX unsubscribed");
+        context.outbound.stop();
       }
-      endSession(context, "phone unsubscribed or disconnected");
     },
+    onDeviceDisconnected: device => {
+      if (context.owner.device === device) {
+        endSession(context, "owner disconnected");
+      }
+    },
+    onReset: reason => endSession(context, reason),
   });
-
+  context.app = app;
   return {
     stop: async () => {
+      context.stopped = true;
       endSession(context, "service stopping");
       context.outbound.stop();
+      context.rejections.flush();
       await app?.stop();
     },
+    stats: () => ({
+      inbound: context.inbound.count,
+      inboundBytes: context.inbound.bytes,
+      hellos: context.hellos.count,
+      seals: context.pendingSeals,
+      queuedBytes: context.outbound.bufferedBytes,
+      owner: context.owner.device,
+    }),
   };
 }
 
-function receiveFrame(context: ServerContext, frame: Bytes, mtu: number | undefined): void {
-  if (mtu !== undefined) {
-    context.outbound.mtu = mtu;
+export interface BleServerOptions {
+  secret: string;
+  httpPort: number;
+  startGatt?: (handlers: GattHandlers) => Promise<GattApplication>;
+  now?: () => number;
+  /** Check clock for owner deadlines and rejection-summary flushes; native timers by default. */
+  timers?: DeadlineTimers;
+  /** Allows checks to stall or fail session work without a radio or unbounded heap assertions. */
+  session?: BleSession;
+}
+export interface BleServer {
+  stop: () => Promise<void>;
+  stats: () => {
+    inbound: number;
+    inboundBytes: number;
+    hellos: number;
+    seals: number;
+    queuedBytes: number;
+    owner: string | null;
+  };
+}
+interface ServerContext {
+  options: BleServerOptions;
+  session: BleSession;
+  owner: Owner;
+  outbound: OutboundQueue;
+  assembler: FrameAssembler;
+  inbound: Admission;
+  hellos: Admission;
+  rejections: Rejections;
+  stream: TelemetryStream | null;
+  requestsInFlight: number;
+  pendingSeals: number;
+  subscribed: boolean;
+  stopped: boolean;
+  // Both chains exist for ordering authenticated counters; see docs/ble-server.md §"Key and protocol".
+  inboundChain: Promise<void>;
+  outboundChain: Promise<void>;
+  app: GattApplication | null;
+}
+
+// A request includes a small header as well as the tunnel's capped upload body.
+const MAX_INBOUND_MESSAGE_BYTES = MAX_REQUEST_BODY_BYTES + 4 * 1024;
+// Each concurrent request holds a loopback socket; six covers the dashboard's opening burst.
+const MAX_REQUESTS_IN_FLIGHT = 6;
+// Awaiting the radio above this backlog keeps a download out of the Pi's heap.
+const RESPONSE_HIGH_WATER_BYTES = 32 * 1024;
+// The paced queue drains on ticks; polling must yield to its timer without busy-waiting.
+const DRAIN_POLL_MS = 25;
+
+function receiveFrame(context: ServerContext, frame: Bytes, mtu: number | undefined, device: string | undefined): void {
+  if (context.stopped) return;
+  if (!device || frame.length < 2 || frame.length > 512) {
+    reject(context, "invalid frame or missing device");
+    return;
+  }
+  const complete = frame[0] === 3;
+  if (complete && frame[2] === 0) {
+    if (!context.hellos.take(frame.length)) {
+      reject(context, "HELLO admission full");
+      return;
+    }
+    // A complete HELLO needs no assembler. Its crypto/liveness work cannot stall owner RX.
+    void receiveHello(context, frame.subarray(2), device, mtu)
+      .catch(error => console.warn(`ble-server: HELLO failed (device ${device})`, error))
+      .finally(() => context.hellos.release(frame.length));
+    return;
+  }
+  if (context.owner.device !== device) {
+    reject(context, "only a complete HELLO may precede authentication");
+    return;
   }
   const { envelope, problem } = context.assembler.push(frame);
   if (problem) {
-    console.log(`ble-server: inbound frame: ${problem}`);
+    reject(context, problem);
   }
   if (!envelope) return;
+  if (!context.inbound.take(envelope.length)) {
+    reject(context, "owner admission full");
+    return;
+  }
+  const epoch = context.owner.epoch;
   context.inboundChain = context.inboundChain
-    .then(() => receiveEnvelope(context, envelope))
-    .catch(error => {
-      console.warn(`ble-server: inbound envelope handling failed: ${(error as Error).message}`);
-    });
+    .then(async () => {
+      if (context.stopped || context.owner.epoch !== epoch) return;
+      const result = await context.session.receive(envelope, () => !context.stopped && context.owner.epoch === epoch);
+      if (context.owner.epoch !== epoch || context.stopped) return;
+      report(context, result);
+      for (const message of result.messages) {
+        dispatch(context, message.kind, message.header, message.body);
+      }
+    })
+    .catch(error => console.warn(`ble-server: inbound message failed (owner ${device}, epoch ${epoch})`, error))
+    .finally(() => context.inbound.release(envelope.length));
 }
 
-async function receiveEnvelope(context: ServerContext, envelope: Bytes): Promise<void> {
-  const result = await context.session.receive(envelope, monotonicNow());
+async function receiveHello(
+  context: ServerContext,
+  envelope: Bytes,
+  device: string,
+  mtu: number | undefined
+): Promise<void> {
+  let epoch = context.owner.epoch;
+  let result = await context.session.verifyHello(envelope);
+  if (context.stopped || context.owner.epoch !== epoch) return;
+  if (!result.hello) {
+    report(context, result);
+    return;
+  }
+  // A keyless writer must never initiate a read whose failure can release the rider.
+  if (context.owner.device !== null && context.owner.device !== device) {
+    const connected = await context.owner.connected(owner => {
+      if (!context.app) {
+        throw new Error("GATT application unavailable");
+      }
+      return context.app.isDeviceConnected(owner);
+    });
+    if (context.stopped || context.owner.epoch !== epoch) return;
+    if (connected !== false) {
+      report(context, refused(result.hello.clientNonce, "another phone is connected"));
+      return;
+    }
+    endSession(context, "previous owner is no longer connected");
+    epoch = context.owner.epoch;
+    result = await context.session.verifyHello(envelope);
+    if (!result.hello || context.stopped || context.owner.epoch !== epoch) return;
+  }
+  const committed = await context.session.commitHello(
+    result.hello,
+    () => !context.stopped && context.owner.epoch === epoch
+  );
+  if (!committed.startedSession) {
+    report(context, committed);
+    return;
+  }
+  stopStream(context);
+  context.outbound.clear();
+  context.assembler.reset();
+  context.owner.claim(device);
+  context.outbound.mtu = DEFAULT_ATT_MTU;
+  if (mtu !== undefined) {
+    context.outbound.mtu = mtu;
+  }
+  for (const welcome of committed.replies) {
+    if (context.subscribed && !context.outbound.enqueue(welcome)) {
+      endSession(context, "WELCOME output overflow");
+    }
+  }
+  console.log("ble-server: phone authenticated, session started");
+}
+
+function report(context: ServerContext, result: ReceiveResult): void {
   if (result.problem) {
-    console.log(`ble-server: ${result.problem}`);
+    reject(context, result.problem);
   }
-  if (result.startedSession) {
-    // The old session's queued frames are sealed under a key the new phone does not
-    // have, and its stream belongs to a subscription nobody now holds.
-    stopStream(context);
-    context.outbound.clear();
-    context.assembler.reset();
-    console.log("ble-server: phone authenticated, session started");
-  }
+  if (!context.subscribed) return;
   for (const reply of result.replies) {
-    context.outbound.enqueue(reply);
+    if (context.rejections.allowRefusal(now(context))) {
+      context.outbound.enqueue(reply, DEFAULT_ATT_MTU);
+    }
   }
-  for (const message of result.messages) {
-    dispatch(context, message.kind, message.header, message.body);
-  }
+}
+function reject(context: ServerContext, reason: string): void {
+  context.rejections.problem(reason, now(context));
+}
+function now(context: ServerContext): number {
+  return (context.options.now ?? monotonicNow)();
 }
 
 function dispatch(context: ServerContext, kind: number, header: unknown, body: Bytes): void {
@@ -145,50 +257,54 @@ function dispatch(context: ServerContext, kind: number, header: unknown, body: B
   if (kind === MessageKind.SUBSCRIBE) {
     if (context.stream !== null) return;
     context.stream = startTelemetryStream({
-      send: message => sendSealed(context, MessageKind.STREAM, message satisfies DashboardMessage),
+      send: message => {
+        void sendSealed(context, MessageKind.STREAM, message satisfies DashboardMessage);
+      },
       bufferedBytes: () => context.outbound.bufferedBytes,
     });
-    return;
-  }
-  if (kind === MessageKind.UNSUBSCRIBE) {
+  } else if (kind === MessageKind.UNSUBSCRIBE) {
     stopStream(context);
-    return;
+  } else {
+    reject(context, `unknown message kind ${kind}`);
   }
-  console.log(`ble-server: ignoring message kind ${kind}`);
 }
-
 function startRequest(context: ServerContext, header: RequestHeader, body: Bytes): void {
   const id = header.id;
+  const generation = context.session.generation;
   if (context.requestsInFlight >= MAX_REQUESTS_IN_FLIGHT) {
-    sendSealed(context, MessageKind.RESPONSE_HEAD, { id, status: 503, headers: {} });
-    sendSealed(context, MessageKind.RESPONSE_END, {
+    void sendSealed(context, MessageKind.RESPONSE_HEAD, { id, status: 503, headers: {} });
+    void sendSealed(context, MessageKind.RESPONSE_END, {
       id,
       error: `${MAX_REQUESTS_IN_FLIGHT} requests already in flight`,
     });
     return;
   }
   context.requestsInFlight++;
-  const generation = context.session.generation;
-  console.log(`ble-server: ${header.method} ${header.path}`);
   void forwardRequest(context.options.httpPort, header, body, {
-    head: async (status, headers) => sendSealed(context, MessageKind.RESPONSE_HEAD, { id, status, headers }),
+    head: async (status, headers) => {
+      await sendSealed(context, MessageKind.RESPONSE_HEAD, { id, status, headers }, undefined, generation);
+    },
     body: async chunk => {
       await waitForRoom(context, generation);
-      sendSealed(context, MessageKind.RESPONSE_BODY, { id }, chunk);
+      await sendSealed(context, MessageKind.RESPONSE_BODY, { id }, chunk, generation);
     },
-    end: async error => sendSealed(context, MessageKind.RESPONSE_END, error === undefined ? { id } : { id, error }),
-  }).finally(() => {
-    context.requestsInFlight--;
-  });
+    end: async error => {
+      await sendSealed(
+        context,
+        MessageKind.RESPONSE_END,
+        error === undefined ? { id } : { id, error },
+        undefined,
+        generation
+      );
+    },
+  })
+    .catch(error => console.warn(`ble-server: tunnel failed (request ${id}, generation ${generation})`, error))
+    .finally(() => {
+      context.requestsInFlight--;
+    });
 }
-
-/**
- * Holds a response body back until the queue has room, which is what makes the tunnel's
- * `for await` a real backpressure chain from the radio to the loopback socket. Throws
- * once the session it was sending for is gone, so the tunnel aborts its request instead
- * of draining a download into a queue nobody will read.
- */
 async function waitForRoom(context: ServerContext, generation: number): Promise<void> {
+  // This backpressures the loopback socket; see docs/ble-server.md §"Pacing".
   while (context.outbound.bufferedBytes > RESPONSE_HIGH_WATER_BYTES) {
     if (context.session.generation !== generation) {
       throw new Error("session ended");
@@ -199,31 +315,51 @@ async function waitForRoom(context: ServerContext, generation: number): Promise<
     throw new Error("session ended");
   }
 }
-
-function sendSealed(context: ServerContext, kind: number, header: unknown, body?: Bytes): void {
-  const generation = context.session.generation;
-  context.outboundChain = context.outboundChain
+function sendSealed(
+  context: ServerContext,
+  kind: number,
+  header: unknown,
+  body?: Bytes,
+  generation = context.session.generation
+): Promise<void> {
+  if (context.stopped || context.session.generation !== generation || !context.subscribed) return Promise.resolve();
+  if (context.pendingSeals >= 32) {
+    reject(context, "pending seal overflow");
+    endSession(context, "pending seal overflow");
+    return Promise.resolve();
+  }
+  context.pendingSeals++;
+  const work = context.outboundChain
     .then(async () => {
-      if (context.session.generation !== generation) return;
+      if (context.stopped || context.session.generation !== generation) return;
       const envelope = await context.session.seal(kind, header, body);
-      if (envelope === null || context.session.generation !== generation) return;
-      context.outbound.enqueue(envelope);
+      if (!envelope || context.stopped || context.session.generation !== generation) return;
+      if (!context.outbound.enqueue(envelope)) {
+        reject(context, "output overflow");
+        endSession(context, "output overflow");
+      }
     })
-    .catch(error => {
-      console.warn(`ble-server: could not seal message kind ${kind}: ${(error as Error).message}`);
+    .catch(error => console.warn(`ble-server: seal failed (kind ${kind}, generation ${generation})`, error))
+    .finally(() => {
+      context.pendingSeals--;
     });
+  context.outboundChain = work;
+  return work;
 }
-
 function stopStream(context: ServerContext): void {
   context.stream?.stop();
   context.stream = null;
 }
-
 function endSession(context: ServerContext, reason: string): void {
-  if (!context.session.authenticated && context.stream === null) return;
+  const hadOwner = context.owner.device !== null;
   stopStream(context);
+  context.owner.clear();
   context.session.end();
   context.outbound.clear();
   context.assembler.reset();
-  console.log(`ble-server: session ended (${reason})`);
+  context.inboundChain = Promise.resolve();
+  context.outboundChain = Promise.resolve();
+  if (hadOwner) {
+    console.log(`ble-server: session ended (${reason})`);
+  }
 }
