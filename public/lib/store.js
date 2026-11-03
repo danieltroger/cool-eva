@@ -6,7 +6,7 @@ import { ringFor } from "./ring.js";
 import { monotonicNow } from "./clock.js";
 import { observeAndPublish } from "./pack-resistance-live.js";
 import { POLL_MS, createConnection } from "./connection.js";
-import { BLE_MODE, openStream } from "./ble-link.js";
+import { BLE_MODE, openStream, abandonSilentSession } from "./ble-link.js";
 
 /** @typedef {import("../../src/can/signals.ts").LiveValue} LiveValue */
 /** @typedef {import("../../src/ws.ts").DashboardMessage} DashboardMessage */
@@ -218,6 +218,7 @@ function isStaleWith(reading, now, maxAgeMs, linkIsLive) {
  */
 export function connect() {
   const link = createConnection({
+    silence: BLE_MODE ? abandonSilentSession : undefined,
     hidden: () => document.hidden,
     now: monotonicNow,
     report: status => {

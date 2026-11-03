@@ -13,12 +13,12 @@
 
 /** @typedef {Uint8Array<ArrayBuffer>} Bytes */
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export const SERVICE_UUID = "7c0e0001-5f3a-4c8e-9d2b-c00e7a000001";
 /** Phone → Pi. Written with response, so a value may be up to 512 bytes whatever the MTU. */
 export const RX_CHARACTERISTIC_UUID = "7c0e0002-5f3a-4c8e-9d2b-c00e7a000001";
-/** Pi → phone, by notification. Values are at most MTU − 3 bytes. */
+/** Pi → phone. MTU − 5 also fits BlueZ's multiple-notification path. */
 export const TX_CHARACTERISTIC_UUID = "7c0e0003-5f3a-4c8e-9d2b-c00e7a000001";
 /** Read-only JSON: `{ version, serverNonce }`. See HelloInfo. */
 export const INFO_CHARACTERISTIC_UUID = "7c0e0004-5f3a-4c8e-9d2b-c00e7a000001";
@@ -43,7 +43,7 @@ export const MessageKind = Object.freeze({
 
 /** @typedef {{ version: number, serverNonce: string }} HelloInfo */
 /** @typedef {{ version: number, clientNonce: string, proof: string }} HelloHeader */
-/** @typedef {{ reason: string }} RefusedHeader */
+/** @typedef {{ reason: string, clientNonce: string }} RefusedHeader */
 /** @typedef {{ version: number }} WelcomeHeader */
 /** @typedef {{ id: number, method: string, path: string, headers: Record<string, string> }} RequestHeader */
 /** @typedef {{ id: number, status: number, headers: Record<string, string> }} ResponseHeadHeader */
@@ -121,6 +121,10 @@ export class FrameAssembler {
     const flags = frame[0];
     const messageId = frame[1];
     const payload = frame.subarray(FRAME_HEADER_BYTES);
+    if (!(flags & FRAME_FIRST) && payload.length === 0) {
+      this.reset();
+      return { problem: "empty continuation" };
+    }
     /** @type {string | undefined} */
     let problem;
 

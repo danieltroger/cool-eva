@@ -12,7 +12,7 @@ struct DevicePickerView: View {
                 if bridge.candidates.isEmpty {
                     HStack(spacing: 12) {
                         ProgressView()
-                        Text("Looking for the Pi… it advertises as “cool-eva” while BLE_SECRET is set.")
+                        Text("Looking for the Pi’s dashboard service… an unnamed device may appear as “Unnamed Pi”.")
                             .foregroundStyle(.secondary)
                     }
                 }
