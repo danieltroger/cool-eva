@@ -12,6 +12,7 @@ import {
 } from "./ble-wire.js";
 import { createBleState, setBleStatus } from "./ble-state.js";
 import { ensureBleSession } from "./ble-handshake.js";
+import { SILENCE_LIMIT_MS } from "./connection.js";
 import {
   bleOriginAllowed,
   purgeBleSecret,
@@ -53,8 +54,10 @@ export function createBleLink(environment = {}) {
     openStream: listener => subscribeStream(state, listener),
     /** All authenticated messages count; a busy download must survive telemetry starvation. */
     abandonSilentSession: () => {
-      if (state.lastAuthenticated !== null && state.environment.now() - state.lastAuthenticated <= 12_000) return false;
-      linkLost(state, "no authenticated Bluetooth message for 12 s");
+      if (state.lastAuthenticated !== null && state.environment.now() - state.lastAuthenticated <= SILENCE_LIMIT_MS) {
+        return false;
+      }
+      linkLost(state, `no authenticated Bluetooth message for ${SILENCE_LIMIT_MS / 1000} s`);
       return true;
     },
     pendingRequests: () => state.requests.count(),
@@ -80,11 +83,16 @@ export const reconnect = client.reconnect;
 export const tunnelRequest = client.tunnelRequest;
 export const openStream = client.openStream;
 export const abandonSilentSession = client.abandonSilentSession;
+// HTTPS/native pages have no Pi at their origin; transport is fixed by the page's source.
+// The exact-origin gate still applies; see docs/ble-server.md §"Where the page comes from".
 export const BLE_MODE =
   typeof location !== "undefined" &&
   (location.protocol === "https:" ||
     nativeShell() !== undefined ||
     new URLSearchParams(location.search).get("transport") === "ble");
+
+// Fits iOS's usual 185-byte MTU without a long write; smaller MTUs use BlueZ's long-write assembly.
+const WRITE_FRAME_BYTES = 180;
 
 /** @param {BleState} state */
 async function chooseDevice(state) {
@@ -171,6 +179,7 @@ function receiveNotification(state, event) {
   }
   if (!envelope) return;
   const epoch = state.epoch;
+  // Opening is asynchronous, so counters must be checked in arrival order.
   state.readChain = state.readChain
     .then(() => receiveEnvelope(state, envelope, epoch))
     .catch(error => console.warn("ble: could not handle a message from the Pi", error));
@@ -214,6 +223,7 @@ async function receiveEnvelope(state, envelope, epoch) {
 /** @param {BleState} state @param {Session} session @param {number} kind @param {unknown} header @param {Bytes} [body] */
 function send(state, session, kind, header, body) {
   const epoch = state.epoch;
+  // Take counters inside the chain so asynchronous sealing cannot reorder the radio queue.
   state.writeChain = state.writeChain
     .then(async () => {
       if (state.epoch !== epoch || state.session !== session) return;
@@ -243,8 +253,9 @@ function writeFrames(state, rx, envelope, epoch) {
 }
 /** @param {BleState} state @param {BleCharacteristic} rx @param {Bytes} envelope @param {number} epoch */
 async function writeEach(state, rx, envelope, epoch) {
+  // Web Bluetooth rejects a second GATT write while one is pending; callers share writeChain.
   state.messageId = (state.messageId + 1) & 0xff;
-  for (const frame of splitIntoFrames(envelope, state.messageId, 180)) {
+  for (const frame of splitIntoFrames(envelope, state.messageId, WRITE_FRAME_BYTES)) {
     if (state.epoch !== epoch) return;
     await rx.writeValueWithResponse(frame);
   }

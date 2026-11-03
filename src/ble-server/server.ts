@@ -10,6 +10,7 @@ import { setTimeout as delay } from "timers/promises";
 import { monotonicNow } from "../monotonic.ts";
 import { startGattApplication, type GattApplication, type GattHandlers } from "./gatt-app.ts";
 import { Admission } from "./admission.ts";
+import type { DeadlineTimers } from "./dbus-link.ts";
 import { OutboundQueue, DEFAULT_ATT_MTU } from "./outbound.ts";
 import { Owner } from "./owner.ts";
 import { Rejections } from "./rejections.ts";
@@ -25,12 +26,12 @@ export async function startBleServer(options: BleServerOptions): Promise<BleServ
   const context: ServerContext = {
     options,
     session: options.session ?? new BleSession(options.secret),
-    owner: new Owner(),
+    owner: new Owner(options.timers),
     outbound: new OutboundQueue({ send: frame => app?.notify(frame) }),
-    assembler: new FrameAssembler(MAX_REQUEST_BODY_BYTES + 4 * 1024),
+    assembler: new FrameAssembler(MAX_INBOUND_MESSAGE_BYTES),
     inbound: new Admission(),
     hellos: new Admission(),
-    rejections: new Rejections(),
+    rejections: new Rejections(options.timers, options.now),
     stream: null,
     requestsInFlight: 0,
     pendingSeals: 0,
@@ -84,7 +85,9 @@ export interface BleServerOptions {
   httpPort: number;
   startGatt?: (handlers: GattHandlers) => Promise<GattApplication>;
   now?: () => number;
-  /** Allows checks to stall real crypto work without a radio or unbounded heap assertions. */
+  /** Check clock for owner deadlines and rejection-summary flushes; native timers by default. */
+  timers?: DeadlineTimers;
+  /** Allows checks to stall or fail session work without a radio or unbounded heap assertions. */
   session?: BleSession;
 }
 export interface BleServer {
@@ -112,10 +115,20 @@ interface ServerContext {
   pendingSeals: number;
   subscribed: boolean;
   stopped: boolean;
+  // Both chains exist for ordering authenticated counters; see docs/ble-server.md §"Why seal".
   inboundChain: Promise<void>;
   outboundChain: Promise<void>;
   app: GattApplication | null;
 }
+
+// A request includes a small header as well as the tunnel's capped upload body.
+const MAX_INBOUND_MESSAGE_BYTES = MAX_REQUEST_BODY_BYTES + 4 * 1024;
+// Each concurrent request holds a loopback socket; six covers the dashboard's opening burst.
+const MAX_REQUESTS_IN_FLIGHT = 6;
+// Awaiting the radio above this backlog keeps a download out of the Pi's heap.
+const RESPONSE_HIGH_WATER_BYTES = 32 * 1024;
+// The paced queue drains on ticks; polling must yield to its timer without busy-waiting.
+const DRAIN_POLL_MS = 25;
 
 function receiveFrame(context: ServerContext, frame: Bytes, mtu: number | undefined, device: string | undefined): void {
   if (context.stopped) return;
@@ -131,7 +144,7 @@ function receiveFrame(context: ServerContext, frame: Bytes, mtu: number | undefi
     }
     // A complete HELLO needs no assembler. Its crypto/liveness work cannot stall owner RX.
     void receiveHello(context, frame.subarray(2), device, mtu)
-      .catch(error => reject(context, `HELLO failed: ${(error as Error).message}`))
+      .catch(error => console.warn(`ble-server: HELLO failed (device ${device})`, error))
       .finally(() => context.hellos.release(frame.length));
     return;
   }
@@ -159,7 +172,7 @@ function receiveFrame(context: ServerContext, frame: Bytes, mtu: number | undefi
         dispatch(context, message.kind, message.header, message.body);
       }
     })
-    .catch(error => reject(context, `inbound message failed: ${(error as Error).message}`))
+    .catch(error => console.warn(`ble-server: inbound message failed (owner ${device}, epoch ${epoch})`, error))
     .finally(() => context.inbound.release(envelope.length));
 }
 
@@ -258,9 +271,12 @@ function dispatch(context: ServerContext, kind: number, header: unknown, body: B
 function startRequest(context: ServerContext, header: RequestHeader, body: Bytes): void {
   const id = header.id;
   const generation = context.session.generation;
-  if (context.requestsInFlight >= 6) {
+  if (context.requestsInFlight >= MAX_REQUESTS_IN_FLIGHT) {
     void sendSealed(context, MessageKind.RESPONSE_HEAD, { id, status: 503, headers: {} });
-    void sendSealed(context, MessageKind.RESPONSE_END, { id, error: "6 requests already in flight" });
+    void sendSealed(context, MessageKind.RESPONSE_END, {
+      id,
+      error: `${MAX_REQUESTS_IN_FLIGHT} requests already in flight`,
+    });
     return;
   }
   context.requestsInFlight++;
@@ -282,17 +298,18 @@ function startRequest(context: ServerContext, header: RequestHeader, body: Bytes
       );
     },
   })
-    .catch(error => reject(context, `tunnel failed: ${(error as Error).message}`))
+    .catch(error => console.warn(`ble-server: tunnel failed (request ${id}, generation ${generation})`, error))
     .finally(() => {
       context.requestsInFlight--;
     });
 }
 async function waitForRoom(context: ServerContext, generation: number): Promise<void> {
-  while (context.outbound.bufferedBytes > 32 * 1024) {
+  // This backpressures the loopback socket; see docs/ble-server.md §"Pacing".
+  while (context.outbound.bufferedBytes > RESPONSE_HIGH_WATER_BYTES) {
     if (context.session.generation !== generation) {
       throw new Error("session ended");
     }
-    await delay(25);
+    await delay(DRAIN_POLL_MS);
   }
   if (context.session.generation !== generation) {
     throw new Error("session ended");
@@ -322,7 +339,7 @@ function sendSealed(
         endSession(context, "output overflow");
       }
     })
-    .catch(error => reject(context, `seal failed: ${(error as Error).message}`))
+    .catch(error => console.warn(`ble-server: seal failed (kind ${kind}, generation ${generation})`, error))
     .finally(() => {
       context.pendingSeals--;
     });

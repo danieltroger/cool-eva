@@ -31,7 +31,7 @@ export function createBleState(options) {
     pendingSession: null,
     connecting: null,
     handshake: null,
-    assembler: new FrameAssembler(256 * 1024),
+    assembler: new FrameAssembler(MAX_INBOUND_MESSAGE_BYTES),
     requests: createBleRequests(environment),
     stream: null,
     writeChain: Promise.resolve(),
@@ -41,6 +41,7 @@ export function createBleState(options) {
     lastAuthenticated: null,
     status: "off",
     statusListeners: new Set(),
+    // Chrome reuses characteristic objects; retain one listener per object across reconnects.
     listened: new WeakSet(),
     receive: () => {
       throw new Error("BLE receiver not installed");
@@ -52,11 +53,19 @@ export function createBleState(options) {
   return state;
 }
 
+// Responses are chunked; an individual inbound envelope above this size is a fault, not a download.
+const MAX_INBOUND_MESSAGE_BYTES = 256 * 1024;
+
 /** @typedef {import("./ble-wire.js").Bytes} Bytes */
+
 /** @typedef {ReturnType<typeof setTimeout> | number} TimerHandle */
+
 /** @typedef {"off" | "connecting" | "connected" | "refused" | "lost"} BleStatus */
+
 /** @typedef {{ getItem: (key: string) => string | null, setItem: (key: string, value: string) => void, removeItem: (key: string) => void }} BleStorage */
+
 /** @typedef {{ platform: "ios", saveFile: (name: string, bytes: Bytes, mimeType: string) => Promise<void> }} NativeShell */
+
 /**
  * @typedef {object} BleCharacteristic
  * @property {DataView | undefined} value
@@ -65,7 +74,9 @@ export function createBleState(options) {
  * @property {() => Promise<BleCharacteristic>} startNotifications
  * @property {(type: "characteristicvaluechanged", listener: (event: Event) => void) => void} addEventListener
  */
+
 /** @typedef {{ getCharacteristic: (uuid: string) => Promise<BleCharacteristic> }} BleService */
+
 /**
  * @typedef {object} BleGattServer
  * @property {boolean} connected
@@ -73,13 +84,16 @@ export function createBleState(options) {
  * @property {() => void} disconnect
  * @property {(uuid: string) => Promise<BleService>} getPrimaryService
  */
+
 /**
  * @typedef {object} BleDevice
  * @property {string | undefined} name
  * @property {BleGattServer | undefined} gatt
  * @property {(type: "gattserverdisconnected", listener: () => void) => void} addEventListener
  */
+
 /** @typedef {{ requestDevice: (options: { filters: { services: string[] }[] }) => Promise<BleDevice> }} WebBluetooth */
+
 /**
  * @typedef {object} BleEnvironment
  * @property {() => number} now
@@ -91,9 +105,13 @@ export function createBleState(options) {
  * @property {() => boolean} secure
  * @property {() => NativeShell | undefined} shell
  */
+
 /** @typedef {{ key: CryptoKey, nextOutboundCounter: number, lastInboundCounter: number, rx: BleCharacteristic }} Session */
+
 /** @typedef {{ method?: string, headers?: HeadersInit, body?: string, onProgress?: (received: number, total: number | null) => void }} TunnelRequestInit */
+
 /** @typedef {{ onOpen: () => void, onMessage: (message: import("./ble-wire.js").DashboardMessage) => void, onClose: () => void }} StreamListener */
+
 /**
  * @typedef {object} BleTransportState
  * @property {BleEnvironment} environment

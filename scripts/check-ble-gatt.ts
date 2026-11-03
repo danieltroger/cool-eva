@@ -5,6 +5,7 @@ import { watchDevices } from "../src/ble-server/device-watch.ts";
 import type { BusLink } from "../src/ble-server/dbus-link.ts";
 import { Owner } from "../src/ble-server/owner.ts";
 import { until } from "./ble-check-rig.ts";
+import { bleClock } from "./ble-check-clock.ts";
 
 export async function checkBleGatt(): Promise<void> {
   const bus = new FakeBus();
@@ -107,12 +108,16 @@ export async function checkBleGatt(): Promise<void> {
     assert.equal(boundOwner.device, null, "GATT application did not forward daemon replacement");
     await until(() => applicationBus.registrations >= 2, "daemon return registered application");
     assert.ok(applicationResets.includes("bluetoothd owner changed"));
+    boundOwner.claim(device);
+    applicationBus.replaceOwner("");
+    assert.equal(boundOwner.device, null, "daemon disappearance did not release owner");
     assert.ok(applicationBus.rules.every(rule => rule.includes("type='signal'")));
   } finally {
     await app.stop();
   }
   assert.equal(applicationBus.listeners.get("message")?.size ?? 0, 0);
-  const timeoutOwner = new Owner();
+  const clock = bleClock();
+  const timeoutOwner = new Owner(clock);
   timeoutOwner.claim(device);
   let reads = 0;
   const hanging = () => {
@@ -124,6 +129,7 @@ export async function checkBleGatt(): Promise<void> {
   const first = timeoutOwner.connected(hanging);
   assert.equal(await timeoutOwner.connected(hanging), null, "duplicate owner read was not coalesced");
   assert.equal(reads, 1);
+  await clock.advance(3_000);
   assert.equal(await first, false, "owner read timeout never released stale owner");
   console.log("check-ble-gatt: all checks passed");
 }

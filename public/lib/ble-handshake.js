@@ -53,6 +53,7 @@ async function handshake(state, epoch) {
     const infoCharacteristic = await service.getCharacteristic(INFO_CHARACTERISTIC_UUID);
     current(state, epoch);
     state.assembler.reset();
+    // Chrome may return the same characteristic on reconnect; duplicate listeners duplicate every frame.
     if (!state.listened.has(tx)) {
       state.listened.add(tx);
       tx.addEventListener("characteristicvaluechanged", state.receive);
@@ -75,9 +76,13 @@ async function handshake(state, epoch) {
     /** @type {import("./ble-state.js").Session} */
     const session = { key, nextOutboundCounter: 0, lastInboundCounter: -1, rx };
     const welcomed = new Promise((resolve, reject) => {
-      const timer = state.environment.setTimer(() => reject(new Error("no answer to HELLO in 10 s")), 10_000);
+      const timer = state.environment.setTimer(
+        () => reject(new Error("no answer to HELLO in 10 s")),
+        HANDSHAKE_TIMEOUT_MS
+      );
       state.handshake = { nonce: clientNonce, resolve: () => resolve(undefined), reject, timer };
     });
+    // WELCOME needs this key before it arrives, but requests must wait for the Pi to prove possession.
     state.pendingSession = session;
     // Attach the rejection handler before beginning a write, which may fail immediately.
     void state
@@ -112,6 +117,10 @@ async function handshake(state, epoch) {
     }
   }
 }
+
+// A missing WELCOME must settle the attempt so the normal connection policy can retry it.
+const HANDSHAKE_TIMEOUT_MS = 10_000;
+
 /** @param {import("./ble-state.js").BleState} state @param {number} epoch */
 function current(state, epoch) {
   if (state.epoch !== epoch) {

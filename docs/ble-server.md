@@ -2,6 +2,18 @@
 
 To connect a phone, follow [connecting-over-bluetooth.md](connecting-over-bluetooth.md). The Pi's GATT server carries the existing dashboard HTTP endpoints and live `DashboardMessage` stream. Endpoint header gates, confirmation tokens, write locks, and audit behavior remain in the existing handlers because requests go through loopback HTTP.
 
+## Why a tunnel
+
+The Pi does not reimplement endpoints over GATT. `src/ble-server/tunnel.ts` forwards each authenticated request to this process's HTTP server on loopback and streams its response back. The existing `X-Cool-Eva` header gates, `SERVICE_WRITE_ENABLED`, confirmation tokens, write locks, table gate and audit behavior apply because the handler receives an actual HTTP request. Adding an endpoint therefore needs no separate BLE handler.
+
+Live telemetry deliberately bypasses the tunnel: `stream.ts` subscribes directly to `src/can/signals.ts`, as `src/ws.ts` does, instead of opening a loopback WebSocket. The tunnel owns hop-by-hop headers, including `Host`, `Content-Length`, `Connection` and transfer encoding; the phone cannot supply them or receive loopback-specific values. Uploads are capped at 16 KiB. At most six concurrent requests cover the dashboard's opening burst while bounding the loopback sockets they retain, and the socket inactivity timeout is 180 seconds.
+
+## Why seal
+
+The endpoint's `X-Cool-Eva` headers prevent cross-origin requests; they are not secrets. Anything in radio range can reach GATT, so authentication must precede operations such as `/vcu-write`. A login gate alone cannot protect the responses: BlueZ sends notifications to every subscriber, including devices that never authenticated. Both directions therefore seal every post-handshake message with AES-256-GCM over deflate-raw.
+
+The characteristics deliberately omit `encrypt-*` flags. Application sealing supplies confidentiality and integrity; requiring a BLE bond would add an OS pairing prompt on first connection. The generated HMAC key is the access control. These unpaired links do not give the phone the Pi's IRK; the consequences for optional address privacy are documented below.
+
 ## Key and protocol
 
 `BLE_SECRET` is a generated **32-byte key encoded as 64 lowercase hexadecimal characters**. Generate it once with `openssl rand -hex 32`, store it on the Pi, and paste it into the phone. Onboarding (#317) uses `generateBleSecret()` from `public/lib/ble-secret.js` and persists it; restarting the service or rebuilding the app must not change it. A format validator cannot prove random provenance. Human phrases are rejected before BLE starts, while the rest of telemetry continues.
@@ -13,9 +25,23 @@ Unset, BLE stays off and the Pi does not advertise. Keys are never put in URLs o
 1. Read INFO: `{ version, serverNonce }`.
 2. Send a clear HELLO: `{ version, clientNonce, proof }`. Each nonce is exactly 16 bytes encoded as 32 lowercase hex characters. The proof is HMAC-SHA256 over `"cool-eva/hello" ‖ serverNonce ‖ clientNonce`.
 3. Verify the proof without changing any session state. A successful commit derives the AES key with the separate `"cool-eva/session"` HMAC label, rotates the server nonce, and returns a sealed WELCOME. A captured successful HELLO cannot establish another session after `end()`.
-4. Later messages use AES-256-GCM over deflate-raw. Direction-specific IVs and strictly increasing authenticated counters reject reflection/replay. There is no forward secrecy.
+4. Later messages use AES-256-GCM over deflate-raw. Each direction has a strictly increasing 64-bit counter; direction and counter form the IV, and the envelope prefix containing the counter is authenticated as additional data. Separate direction bytes prevent IV reuse between the two directions, and accepted counters must exceed the previous one to reject reflection/replay. There is no forward secrecy.
+
+The proof comparison does not short-circuit. Sealed WELCOME proves that the Pi knows the shared key too: the browser keeps the derived key as pending so it can decrypt WELCOME, but no request uses it before confirmation. The server nonce rotates **only after a successful commit**. Rotating it on failure would let a stranger invalidate a rider's in-flight HELLO by sending garbage first. A failed or stale proof cannot rotate the challenge or replace a session.
+
+Both server chains exist for **ordering**, independently of the work budgets. Inbound envelopes open in arrival order so asynchronous decryption cannot race the previous authenticated counter. Outbound sealing and enqueue run in the order counters are allocated; otherwise concurrent crypto work could reverse two valid envelopes and make the phone reject one as replayed. The browser applies the same ordering to decryption and outbound sealing. Its write chain also ensures one GATT write at a time: Web Bluetooth rejects a second write while one is pending.
 
 BlueZ broadcasts notifications to every subscribed device, so possession of the key separates the intended phone from other listeners. The GATT characteristics remain unpaired (`read`, `write`, `notify`, without `encrypt-*`). A clear REFUSED includes the HELLO's client nonce; it is an advisory for that pending attempt, never proof that a key is invalid. An established phone ignores clear refusals. There is no credential blacklist or wrong-HELLO lockout; generated keys remove the reason to tolerate guessable phrases. Existing browser connection policy paces retries, and requests that might have written are never automatically resent by the BLE transport.
+
+## Where the page comes from
+
+Web Bluetooth requires a secure context. The ordinary Pi dashboard at `http://cool-eva.local` cannot open Web Bluetooth, so browser BLE needs a second copy of `public/` over HTTPS. `.github/workflows/pages.yml` publishes those files as-is on pushes to `main` or manual dispatch; repository **Settings → Pages → Source = GitHub Actions** enables it. The iOS app instead bundles `public/`, the native bridge and a file-sharing interface, so it can load without reception. There is one BLE link per loaded page. A browser device chooser requires a tap, which is why initial selection is an explicit Connect action rather than an automatic retry.
+
+`BLE_MODE` is fixed by the page's source: Pi HTTP uses fetch/WebSocket; HTTPS and the native app have no Pi at their origin and use BLE, subject to the exact-origin gate. Explicit localhost `?transport=ble` supports development. The hosted page comes from GitHub; subsequent dashboard data travels directly between phone and Pi over BLE.
+
+Assets in `index.html`, `params.html` and the manifest use relative paths so the same tree loads under `/cool-eva/`. The original BLE-server documentation recorded a headless Chrome subpath check: modules, stylesheet and manifest resolved below that path, nothing escaped it, and the page entered BLE mode. That is historical validation, not a fresh test of the deployed Pages build. The current local checks and hardware/deployment limits are listed below.
+
+Every endpoint call must go through **`request()` in `public/lib/transport.js`**. A stray `fetch` works on the Pi's Wi-Fi origin but requests the wrong server, typically returning 404 on Pages. The transport preserves the Pi handler's HTTP status; a rejected tunnel promise means transport failure, not an endpoint refusal. An error response with headers and no body can be complete, while an error after BODY data is a truncated download and must never be saved as a whole file.
 
 ## Hosted pages and origin isolation
 
@@ -41,28 +67,46 @@ Phone → Pi kinds are HELLO, REQUEST, SUBSCRIBE, UNSUBSCRIBE. Pi → phone kind
 
 Before authentication only a complete single FIRST|LAST frame, at most 512 bytes, containing HELLO is considered. No partial assembly or per-peer MTU table is retained. The browser's HELLO fits one 180-byte application frame; at smaller ATT MTUs, write-with-response long writes are assembled by BlueZ before WriteValue. Only the authenticated device path can contribute to the one 20 KiB inbound assembler. Zero-payload continuations reset it, bounding fragment storage separately from the payload-byte ceiling without imposing a transfer-duration limit.
 
+The 180-byte phone write frame fits the usual 185-byte iOS ATT MTU without needing a long write. The frame-layer message ID need only differ from its neighbour; crypto counters provide replay protection. Browser responses are split into small messages, so its 256 KiB inbound-envelope ceiling identifies a fault rather than limiting the total size of a progressing download.
+
 Notifications use **`min(owner MTU − 5, 512)`** bytes per value: 18 at MTU 23, 180 at MTU 185, and 512 at MTU 517. MTU−5 accounts for BlueZ's multiple-notification format as well as ordinary notifications. Clear refusals use the default-MTU bound without changing the owner's MTU.
 
-| resource                               | bound                                                    |
-| -------------------------------------- | -------------------------------------------------------- |
-| queued output, including frame headers | 128 KiB; whole-envelope rejection                        |
-| pending seals                          | 32                                                       |
-| ordered owner inbound work             | 32 envelopes / 128 KiB                                   |
-| independent HELLO work                 | 32 envelopes / 128 KiB; each frame ≤512 bytes            |
-| concurrent loopback requests           | 6                                                        |
-| response body chunk                    | 4 KiB                                                    |
-| loopback response timeout              | 180 s                                                    |
-| phone request inactivity deadline      | 195 s                                                    |
-| clear refusals                         | burst of 4 per 2 s, only while TX is notifying           |
-| rejected-input diagnostics             | one summary per 2 s, with final suppressed count on stop |
+| resource                               | bound                                                       |
+| -------------------------------------- | ----------------------------------------------------------- |
+| queued output, including frame headers | 128 KiB; whole-envelope rejection                           |
+| pending seals                          | 32                                                          |
+| ordered owner inbound work             | 32 envelopes / 128 KiB                                      |
+| independent HELLO work                 | 32 envelopes / 128 KiB; each frame ≤512 bytes               |
+| concurrent loopback requests           | 6                                                           |
+| response body chunk                    | 4 KiB                                                       |
+| loopback response timeout              | 180 s                                                       |
+| phone request inactivity deadline      | 195 s                                                       |
+| clear refusals                         | burst of 4 per 2 s, only while TX is notifying              |
+| rejected-input diagnostics             | one summary per 2 s, with a tail-flush timer and stop flush |
+
+The rejection limiter is only for peer input. Internal HELLO, inbound handling, tunnel and sealing exceptions log immediately under their own operation and context; a stranger's flood cannot hide them behind the last bad-frame reason. The summary's timer flushes a quiet tail at the next window even if no later frame arrives, and shutdown cancels that timer while flushing its final count.
+
+## Pacing
+
+A BlueZ server notification is a `PropertiesChanged` signal without radio flow control. Emitting faster than the radio drains lets bluetoothd queue data outside this process's view. `outbound.ts` therefore paces emission; its own byte queue is the backlog telemetry shedding and response backpressure can observe.
 
 Response producers await sealing/enqueue and pause above a 32 KiB output high-water mark. Output overflow ends that session rather than emitting a partial envelope. Unsubscribe/stop clears output and stops pacing even if no phone authenticated. There is no unauthenticated refusal backlog to replay when a subscriber appears.
 
+The tunnel pulls the loopback response with `for await` and awaits the body sink. Above the high-water mark the sink yields on a 25 ms drain poll, then rechecks the session generation. This propagates backpressure from the visible radio queue to the HTTP socket rather than reading a multi-megabyte `/dl` into memory ahead of the link. Session loss aborts that wait instead of draining a file for a phone that no longer owns it.
+
 The 24 kB/s pacing is an **unmeasured** starting value. It bounds application emission, not bluetoothd's hidden radio backlog. Framing checks at MTU 23 do not establish achievable throughput. WiFi and the existing hub connection share the adapter.
+
+Already-encrypted ride-log ciphertext does not compress meaningfully; the JSON stream's compression savings do not predict download throughput. Byte pacing alone is not a bound on notification rate at small MTUs. Both throughput and simultaneous radio roles still need separately authorised hardware verification.
 
 Telemetry still coalesces patches over 100 ms, sheds them above 16 KiB queued, and enqueues a heartbeat snapshot every 5 seconds. Those are enqueue intervals; a slow radio can delay their arrival. Authenticated response messages therefore count toward liveness independently of snapshots.
 
-The GATT service is `7c0e0001-5f3a-4c8e-9d2b-c00e7a000001`. RX, TX, and INFO use the same UUID with the first group ending `0002`, `0003`, and `0004`, respectively. RX accepts writes, TX notifies, and INFO is read-only. BlueZ registration calls are bounded at 10 seconds; a 15-second supervisor retries failed registration, alongside explicit adapter/daemon lifecycle signals.
+## BlueZ objects
+
+`gatt-app.ts` exports an ObjectManager application at `/org/cooleva/ble`, one `GattService1`, three `GattCharacteristic1` objects and an `LEAdvertisement1`. The advertisement is `peripheral`, carries the service UUID and deliberately omits LocalName and `local-name` includes. Both application and advertisement register through `GattManager1` / `LEAdvertisingManager1` on `/org/bluez/hci0`.
+
+The GATT service is `7c0e0001-5f3a-4c8e-9d2b-c00e7a000001`. RX, TX, and INFO use the same UUID with the first group ending `0002`, `0003`, and `0004`, respectively. RX accepts write-with-response frames, TX notifies, and INFO is read-only JSON that never contains the key. BlueZ supplies the WriteValue MTU; only a successfully authenticated owner's HELLO commits it to notification framing, starting at ATT's 23-byte floor.
+
+BlueZ calls are bounded because dbus-next has no application-level call timeout of its own: registration uses 10 seconds, owner lookup 3 seconds. Adapter power loss, the existing adapter recovery power-cycle and bluetoothd restarts invalidate registrations. The device/daemon watcher releases ownership and re-registers when BlueZ returns; a 15-second supervisor also retries while unregistered. Registration generation checks keep an old callback from reviving replaced state.
 
 ## Existing deployment limits
 
@@ -76,7 +120,9 @@ A valid proof selects the device owner and its MTU. Foreign data frames cannot c
 
 Device disconnection/removal, adapter loss, bluetoothd name-owner changes, and registration replacement invalidate ownership. Aggregate StopNotify is insufficient: another subscriber can keep it from firing when the owner leaves. Old async proof/decryption/response work cannot commit into a new generation.
 
-The phone's 12-second silence check counts **all successfully authenticated messages**, including download responses, not only telemetry. If none arrives, it drops crypto/session state while retaining the selected device and GATT link. Fresh read/write chains prevent a stuck old write from blocking the next HELLO. The existing connection retry reads fresh INFO and re-authenticates; this also recovers when a service restart leaves the radio connection up.
+There is one HELLO path through the server's complete-frame handler. The owner cannot smuggle a multipart clear HELLO through the sealed-message receiver: accepting it there would skip ownership, stream and queue bookkeeping. A successful replacement stops the old stream and clears frames encrypted under the old key before queuing the new WELCOME.
+
+Chrome can return the same characteristic object on reconnect, so the browser's WeakSet attaches one notification listener per object; duplicates would feed every frame through the assembler twice. Stream close is idempotent and also reports an attempt that never opened, keeping the connection policy on one cleanup path. With no chosen device it reports close asynchronously, in the same order as a failed socket connection. The phone's 12-second silence check counts **all successfully authenticated messages**, including download responses, not only telemetry. If none arrives, it drops crypto/session state while retaining the selected device and GATT link. Fresh read/write chains prevent a stuck old write from blocking the next HELLO. The existing connection retry reads fresh INFO and re-authenticates; this also recovers when a service restart leaves the radio connection up.
 
 Each request's 195-second inactivity deadline advances only on matching authenticated HEAD/BODY progress. Unrelated telemetry cannot keep a missing END pending forever; a progressing download can last longer than 195 seconds overall. END/error/disconnect/timeout releases the entry, parts, and timer. A lost response means a write's outcome may be unknown: check status before repeating it. The transport never replays that operation.
 

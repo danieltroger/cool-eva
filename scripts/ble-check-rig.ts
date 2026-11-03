@@ -150,6 +150,7 @@ export async function createRig(options: RigOptions = {}) {
       secret: KEY,
       httpPort: (loopback.address() as AddressInfo).port,
       now: clock.now,
+      timers: clock,
       session: options.session,
       startGatt: async given => {
         handlers = given;

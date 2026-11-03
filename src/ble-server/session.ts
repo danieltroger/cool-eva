@@ -80,7 +80,7 @@ export class BleSession {
     );
     if (!this.#currentHello(hello, current)) return problem("stale HELLO");
     this.#active = { key, lastInboundCounter: -1, nextOutboundCounter: 1 };
-    // Failed attempts never rotate the public challenge; only a committed session does.
+    // A stranger could invalidate an in-flight proof if failures rotated it; docs/ble-server.md §"Why seal".
     this.#serverNonce = randomNonce();
     this.#generation++;
     return { messages: [], replies: [welcome], startedSession: true };
@@ -94,8 +94,7 @@ export class BleSession {
       return problem(`unreadable envelope: ${(error as Error).message}`);
     }
     if (!parsed.sealed) {
-      const result = await this.verifyHello(envelope);
-      return result.hello ? this.commitHello(result.hello, current) : result;
+      return problem("HELLO requires the server's complete-frame authentication path");
     }
     const active = this.#active;
     if (active === null) return problem("sealed envelope with no session");

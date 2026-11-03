@@ -1,9 +1,14 @@
-import { bounded } from "./dbus-link.ts";
+import { bounded, SYSTEM_TIMERS, type DeadlineTimers } from "./dbus-link.ts";
 
 export class Owner {
   device: string | null = null;
   epoch = 0;
   #checking = false;
+  #timers: DeadlineTimers;
+
+  constructor(timers: DeadlineTimers = SYSTEM_TIMERS) {
+    this.#timers = timers;
+  }
 
   claim(device: string): void {
     this.device = device;
@@ -22,10 +27,10 @@ export class Owner {
     const device = this.device;
     const epoch = this.epoch;
     try {
-      const connected = await bounded(read(device), "owner connection lookup", 3_000);
+      const connected = await bounded(read(device), "owner connection lookup", 3_000, this.#timers);
       return this.epoch === epoch ? connected : null;
     } catch (error) {
-      console.warn(`ble-server: owner connection read failed: ${(error as Error).message}`);
+      console.warn(`ble-server: owner connection read failed (${device}): ${(error as Error).message}`);
       return this.epoch === epoch ? false : null;
     } finally {
       this.#checking = false;

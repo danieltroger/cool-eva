@@ -1,6 +1,6 @@
 // @ts-check
 import { BLE_ORIGIN_MESSAGE } from "./ble-origin.js";
-import { normalizeBleSecret } from "./ble-secret.js";
+import { normalizeBleSecret, validBleSecret } from "./ble-secret.js";
 
 /** @param {import("./ble-state.js").BleState} state */
 export function storedBleSecret(state) {
@@ -8,7 +8,8 @@ export function storedBleSecret(state) {
     purgeBleSecret(state);
     return "";
   }
-  return state.environment.storage.getItem(SECRET_STORAGE_KEY) ?? "";
+  const secret = state.environment.storage.getItem(SECRET_STORAGE_KEY) ?? "";
+  return validBleSecret(secret) ? secret : "";
 }
 /** @param {import("./ble-state.js").BleState} state @param {string} secret */
 export function rememberBleSecret(state, secret) {

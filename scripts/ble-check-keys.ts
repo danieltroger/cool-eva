@@ -72,6 +72,8 @@ function originsAndKeys(): void {
       shell: () => ({ platform: "ios", saveFile: async () => undefined }),
     });
     assert.equal(client.originAllowed(), true, `allowed origin rejected ${url}`);
+    values.set("cool-eva.ble-secret", "a legacy typed phrase");
+    assert.equal(client.storedSecret(), "", "legacy phrase was offered for authentication");
     client.rememberSecret(`\n ${KEY.toUpperCase()} \n`);
     assert.equal(client.storedSecret(), KEY);
     assert.throws(() => client.rememberSecret("not a generated key"));
@@ -109,17 +111,21 @@ async function productionReplay(): Promise<void> {
   try {
     const session = new BleSession(KEY);
     const frame = await helloFrame(rig);
-    const first = await session.receive(frame.subarray(2));
+    const first = await session.verifyHello(frame.subarray(2));
     // The separate session has its own challenge; construct a proof for that session.
-    assert.equal(first.startedSession, undefined);
+    assert.equal(first.hello, undefined);
     const own = new BleSession(KEY);
     const { helloProof } = await import("../public/lib/ble-wire.js");
     const clientNonce = randomNonce();
     const proof = await helloProof(KEY, own.info().serverNonce, clientNonce);
     const envelope = clearEnvelope(encodeMessage(MessageKind.HELLO, { version: PROTOCOL_VERSION, clientNonce, proof }));
-    assert.equal((await own.receive(envelope)).startedSession, true);
+    const verified = await own.verifyHello(envelope);
+    assert.ok(verified.hello);
+    assert.equal((await own.commitHello(verified.hello)).startedSession, true);
     own.end();
-    assert.equal((await own.receive(envelope)).startedSession, undefined, "recorded HELLO restarted a session");
+    const replay = await own.verifyHello(envelope);
+    const result = replay.hello ? await own.commitHello(replay.hello) : replay;
+    assert.equal(result.startedSession, undefined, "recorded HELLO restarted a session");
   } finally {
     await rig.close();
   }

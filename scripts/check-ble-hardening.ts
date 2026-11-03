@@ -1,5 +1,7 @@
 import { checkNotificationSizes } from "./ble-check-framing.ts";
 import { checkBleBudgets } from "./ble-check-budgets.ts";
+import { checkBleOwner } from "./ble-check-owner.ts";
+import { checkBleFailures } from "./ble-check-errors.ts";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import {
@@ -19,6 +21,7 @@ import { createRig, helloFrame, capturedKey, within, settle, until, KEY, PHONE, 
 export async function checkBleHardening(): Promise<void> {
   await preAuthentication();
   await ownerIsolation();
+  await checkBleOwner();
   for (const mtu of [23, 185, 517]) {
     await checkNotificationSizes(mtu);
   }
@@ -26,6 +29,7 @@ export async function checkBleHardening(): Promise<void> {
   await ownerLifetime();
   await staleCommit();
   await checkBleBudgets();
+  await checkBleFailures();
   console.log("check-ble-hardening: all checks passed");
 }
 
@@ -59,7 +63,7 @@ async function preAuthentication(): Promise<void> {
     rig.subscribe();
     await settle();
     assert.equal(rig.frames.length, 0, "subscription replayed an unauthenticated backlog");
-    const nonce = rig.server.stats().owner;
+    const initialOwner = rig.server.stats().owner;
     for (const invalid of ["", "00", "0".repeat(30), "0".repeat(34)]) {
       rig.write(await helloFrame(rig, KEY, invalid));
     }
@@ -75,7 +79,7 @@ async function preAuthentication(): Promise<void> {
       );
     }
     await settle();
-    assert.equal(rig.server.stats().owner, nonce, "invalid nonce established a session");
+    assert.equal(rig.server.stats().owner, initialOwner, "invalid nonce established a session");
     for (let index = 0; index < 8; index++) {
       rig.write(await helloFrame(rig, "f".repeat(64)), OTHER);
     }
