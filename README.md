@@ -165,7 +165,7 @@ For now, state-changing CAN commands also require `SERVICE_WRITE_ENABLED=1`; lea
 
 <!-- for-now: #317 -->
 
-For now, use the DC Charge tab's **"Automatic charge current"** tile (visible when writes are enabled) for session controls, or set `CHARGE_AUTO_ENABLED=0` in `/etc/default/cool-eva` to disable the controller across boots.
+For now, use the Charge tab's **"Automatic charge current"** tile (visible during a DC charge when writes are enabled) for session controls, or set `CHARGE_AUTO_ENABLED=0` in `/etc/default/cool-eva` to disable the controller across boots.
 
 The optional fan can start by itself once enabled. Keep hands clear while it has power; see the [cooling hardware guide](docs/cooling-hardware.md).
 

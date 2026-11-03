@@ -4,7 +4,7 @@ Holds the pack under the thermal cliff during a DC fast charge by lowering the c
 
 ## Stock BMS configuration
 
-Daniel reported on **2026-11-03** that with the stock BMS configuration the bike is already down to about **6 kW at 54 °C** and stays around that level. In that state, the controller only changes the maximum-current figure on the bike's dash; it does not control the actual DC charge current. The VCU's derating to about **22 A at a reported 54 °C** is consistent with his observation. This is Daniel's report about the stock configuration; the bounded-clamp measurements below concern the custom BMS configuration.
+Daniel reported on **2026-11-03** that with the stock BMS configuration the bike is already down to about **6 kW at 54 °C** and stays around that level. In that state, the controller only changes the maximum-current figure on the bike's dash; it does not control the actual DC charge current. This is Daniel's report about the stock configuration; the bounded-clamp measurements below concern the custom BMS configuration.
 
 ## The cliff, and what it costs
 
