@@ -57,6 +57,8 @@ The frames below only exist once the pack's LiBAL BMS has been reflashed with th
 
 The custom config lowers the pack temperatures the VCU reads, so that its DC-charge derate knee — which starts at a reported 36 °C, far too early for a watercooled pack — is not reached while the pack is merely warm. How much lower is not a constant, and depends on which config is flashed. The newest one (`15-bounded-clamp`, built 2026-08-09 and not yet flashed — the bike currently runs `14-signbit-clamp`) is a **bounded** clamp: the true temperature below 35 °C, a flat **35 °C** from 35 to 54 °C, and the **true temperature again from 55 °C up**. That upper bound is the point — the VCU enters limp mode at 55 °C battery (`LIMP_B_TEMP`), and its predecessor `14-signbit-clamp`, which pinned the reading at 35 for _any_ temperature above 35, did not delay that protection so much as disable it. An earlier config shifted by a flat −15 °C instead; it broke charging and is retired. Whichever is loaded, this changes what `0x200`'s temperature bytes mean, so the app has to be told:
 
+**Historical status:** The statement that config 15 was not yet flashed records the 2026-08-09 state. Later [charging measurements](charge-auto.md#the-cliff-and-what-it-costs) record its bounded-clamp behavior from September; the temperature decoder follows the received frames rather than that old flash-status statement.
+
 ```bash
 CUSTOM_BMS_CONFIG=1   # only with the custom BMS config flashed. Default: unset = stock.
 ```

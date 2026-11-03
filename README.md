@@ -81,22 +81,29 @@ git clone https://github.com/danieltroger/cool-eva.git /home/pi/cool-eva
 cd /home/pi/cool-eva
 rm package-lock.json
 npm install
+git checkout -- package-lock.json
 ls node_modules/socketcan/build/Release/can.node
 ```
 
-The lockfile step is for this first Linux installation; [why it is needed and what to do if a build fails](docs/pi-install-prerequisites.md). The final command must find `can.node`. Do not use `sudo` for the clone or `npm install`.
+Removing the lockfile is for this first Linux installation; [why it is needed](docs/deploy.md#running-it). `git checkout -- package-lock.json` restores the tracked file while leaving the freshly built `node_modules` in place, so Menu → Update can pull later lockfile changes. The final command must find `can.node`. See [build troubleshooting](docs/pi-install-prerequisites.md) if it fails. Do not use `sudo` for the clone or `npm install`.
 
 ### 4. Enable saved ride history — on your computer
 
-Keep your Pi session open. Open a **second computer terminal**, install **Node 24** from [nodejs.org](https://nodejs.org/en/download) on the computer if needed, then run:
+Keep your Pi session open. Install **Node 24** from [nodejs.org](https://nodejs.org/en/download) on the computer if needed.
+
+On your computer, open the [GitHub repository](https://github.com/danieltroger/cool-eva), choose **Code → Download ZIP**, and extract it (on Windows, use **Extract All**). Find the extracted project folder containing `README.md` and `scripts/`. Open a **second computer terminal** and change to that folder, replacing the example path with its actual location:
 
 ```sh
-git clone https://github.com/danieltroger/cool-eva.git
-cd cool-eva
+cd "path/to/extracted/cool-eva-main"
+```
+
+If Git is already installed, you can instead run `git clone https://github.com/danieltroger/cool-eva.git` followed by `cd cool-eva`. An existing checkout also works. From the project folder, run:
+
+```sh
 node --experimental-strip-types scripts/generate-log-key.ts
 ```
 
-If you already have a clone, use it instead of cloning again. **Back up `ride-log-key.private.pem` in a password manager before continuing.** It is the only way to read your saved rides; losing it makes them permanently unreadable. Keep it off the Pi. Copy only the public half:
+**Back up `ride-log-key.private.pem` in a password manager before continuing.** It is the only way to read your saved rides; losing it makes them permanently unreadable. Keep it off the Pi. Copy only the public half:
 
 ```sh
 scp ride-log-key.public.pem pi@cool-eva.local:/home/pi/cool-eva/
@@ -148,17 +155,17 @@ For later software updates, use **Menu → Update**. [Updating and troubleshooti
 
 Reading telemetry includes transmitting diagnostic **read requests**; this is not a completely silent tap. Bluetooth enrollment changes the hub's pairing as explained before first start.
 
-Manual charging and service actions use a two-tap arm and vehicle-state checks. They can change charge limits, stop charging, write calibration parameters, set a service point, sync the bike's clock or clear trouble codes. Parameter writes also require a matching parameter table. Some actions are irreversible; the gates do not establish that a calibration value is suitable for your motorcycle.
+Manual charging and service actions use a two-tap arm and vehicle-state checks. They can change charge limits, stop charging, write calibration parameters, set a service point, sync the bike's clock, clear trouble codes or **Reset the VCU** (restart both processors). Parameter writes also require a matching parameter table. Some actions are irreversible; the gates do not establish that a calibration value is suitable for your motorcycle.
 
 <!-- for-now: #317 -->
 
 For now, state-changing CAN commands also require `SERVICE_WRITE_ENABLED=1`; leave it unset for a first installation.
 
-**Automatic DC charge management starts in automatic mode** and can adjust the requested current without a confirmation for each adjustment. The setting is **“Manage DC charge current automatically”**, default **on**. On a stock BMS configuration, it only changes the maximum-current figure the bike's dash shows; it does not control the actual DC charging current. [Automatic charging details](docs/charge-auto.md).
+**Automatic DC charge management starts in automatic mode** and can adjust the requested current without a confirmation for each adjustment. When the dashboard setting **"Allow automatic current reduction"** is available, it defaults **on**. On a stock BMS configuration, it only changes the maximum-current figure the bike's dash shows; it does not control the actual DC charging current. See [Daniel's stock-bike observation](docs/charge-auto.md#stock-bms-configuration) and the [automatic charging details](docs/charge-auto.md).
 
 <!-- for-now: #317 -->
 
-For now, `CHARGE_AUTO_ENABLED=0` in `/etc/default/cool-eva` disables that controller across boots, and it cannot transmit while the write switch above is unset.
+For now, use the DC Charge tab's **"Automatic charge current"** tile (visible when writes are enabled) for session controls, or set `CHARGE_AUTO_ENABLED=0` in `/etc/default/cool-eva` to disable the controller across boots.
 
 The optional fan can start by itself once enabled. Keep hands clear while it has power; see the [cooling hardware guide](docs/cooling-hardware.md).
 

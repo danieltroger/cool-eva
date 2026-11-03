@@ -29,7 +29,7 @@ import { declarationBody, withoutCommentLines } from "./source-blocks.ts";
 // machine has. A refused request answers 403; one that got past the guard reaches
 // restartCanLink() and comes back 500 `Restart failed: …`, which only that catch writes.
 // That pair is the evidence the guard returns BEFORE the `ip link` commands — and `can0`
-// is untouched on macOS (no `ip` at all), on CI and on the Pi. docs/development.md’s "no bike, no
+// is untouched on macOS (no `ip` at all), on CI and on the Pi. docs/development.md's "no bike, no
 // can0, no capture" is a promise this check keeps.
 
 let failures = 0;

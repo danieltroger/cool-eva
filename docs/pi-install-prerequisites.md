@@ -236,6 +236,8 @@ Nothing else to do for those compiles: the repo ships an `.npmrc` allowlisting t
 
 **5. Only if you have the coolant probes: enable SPI.** `sudo raspi-config` → Interface Options → SPI → Yes, then reboot. **Don't enable it if you have no probes wired**: with SPI on and nothing attached the reads succeed and return −242 °C forever. The app notices and retires the probe after a minute, but it's noise you don't need.
 
+**Historical status:** The current [probe loop](../src/sensors/max31865.ts) backs off a faulted probe and retries it once a minute; it does not retire it for the rest of the boot.
+
 **6. Generate the ride-log keypair — on your laptop, not the Pi.** Nothing is persisted until the Pi has a public key. See [Encrypted ride log](ride-log.md#encrypted-ride-log) for why it works this way.
 
 ```bash

@@ -1316,6 +1316,8 @@ node --experimental-strip-types scripts/check-kwp-multiframe.ts   # no bike
 
 Reading it off the actual bike is `scripts/read-freeze-frame.ts`, and that script is **the only way to run this** — a First Frame has to be answered within milliseconds, which is not something you can type into `cansend` in time. Stop the service first and bring `can0` up ACTIVE yourself; the script's header has the exact commands and the reason it does not do it for you.
 
+**Historical status:** The CLI-only claim predates [in-service per-code freeze-frame reads](freeze-frame.md#the-read), which use the same multi-frame transport. The standalone script is no longer the only caller.
+
 ```bash
 node --experimental-strip-types scripts/read-freeze-frame.ts --list           # 0x18: which components have a code
 node --experimental-strip-types scripts/read-freeze-frame.ts --component 44   # 0x17: one freeze frame
@@ -1325,8 +1327,12 @@ node --experimental-strip-types scripts/read-freeze-frame.ts --log            # 
 Every reply is printed as **raw hex first**, before any decode. That is the point of the run: the BULK LOG reply layout (`0x35`/`0x36`/`0x37`) is still unverified — `0x17` and `0x18` are now both captured and confirmed, so the bytes are the result and the decode is a hypothesis printed beside them.
 
 > ⚠️ **For the bulk log, the request side is proven and the reply side is not.** (`0x17` and `0x18` are settled — see above and §11.3.1. This box is about `0x35`/`0x36`/`0x37`.) The check asserts that this repo's segmenter reproduces `A8 10 0C 35 12 FF FF FF` — a frame captured off this bike — byte for byte, and that the `0x18` request matches the one recovered from the manufacturer's code. This box used to say that **no multi-frame reply and no flow-control frame had ever been captured on this channel**, in either direction. That is no longer true, and was already false when written: the 2026-08-08 capture holds 1229 First Frames and 43 786 Consecutive Frames on `7E0`, plus 1229 flow-control frames on `7C0`. Twenty-eight of those replies are committed in `scripts/captured-freeze-frames.ts` and replayed through the production reassembler. The one reply replayed with real bytes behind it is A8's bank-2 identifier `0x2001`, reconstructed from two independent live records that had to agree and did. Everything else is constructed from the documented framing.
->
+
+**Historical status:** [The later bulk-log findings](#11-the-freeze-frame-log) record 1198 captured block bodies and a corroborated record layout. The end-of-upload marker remains unresolved; the earlier blanket reply-side assessment above is not the current evidence summary.
+
 > Three things are outright guesses, each marked at its definition: **seven of the ten operand bytes** after `35 12` (only `FF FF FF` was captured, in the First Frame), whether `0x36` carries a block-sequence counter, and whether the micro sends a flow control before our request's Consecutive Frames. All three are settleable **offline**, from `capture-20260808-182129-600daf87.log` on the Pi — the census that produced these notes filtered by service byte, and a Consecutive Frame has none, so the bytes are still in that file.
+
+**Historical status:** All three listed request/transport questions were subsequently settled from the capture: [multi-frame reads](#10-multi-frame-reads) records the complete upload operand, the transfer-data request and the micro's flow-control reply.
 
 ## VCU parameters, by name
 
@@ -1406,6 +1412,8 @@ node --experimental-strip-types scripts/check-vcu-params.ts   # on a laptop, no 
 
 ### Changing something on the bike
 
+**Historical status:** The following warning is from 2026-08-16. The write path was subsequently exercised on the bike on 2026-08-27/28; [the established results](#1-what-is-proven-and-what-is-not) and [write sequencing](#7-securityaccess-and-the-write-sequence) record that evidence.
+
 > ⚠️ **Nothing in this section has ever been transmitted by this repo** (as of 2026-08-16 — the bike is away for about a week). The write _service_, its framing and its authentication rule are proven: `obd-garage/DIAG_ADDRESSES.md` §9 is a passive capture of **Energica's own diagnostic software** writing to this bike's A8, and `obd-garage/VCU_PARAM_CHANGES.md` records five parameters written to this bike with a scratch tool on 2026-08-09, surviving a power cycle. What has not been exercised is _this code_. Treat every claim below as reasoning until a real bike answers.
 
 Writing is **off unless you ask for it**: `SERVICE_WRITE_ENABLED=1`. It is one of the two switches here that default to off — `FAN_ENABLED` is the other, and it drives an accessory off the Pi's own GPIO rather than anything on the bike — and it is separate from `SERVICE_MODE_ENABLED` on purpose: reads and writes are not the same risk and must not share an off button.
@@ -1435,15 +1443,21 @@ So `src/vcu/table-gate.ts` refuses a parameter write unless **both** micros have
 | `unusable` | a micro answered with a record the width column forbids, so it named nothing | the framing of that whole sweep is in question |
 | `unread` | one or both micros have never been asked | **a sweep.** The refusal names the read: parameter 277 `TABLE_TYPE_uS` on the A8, `22 11 15`, read-only, no SecurityAccess |
 
+**Historical status:** This gate state is a 2026-08-18 snapshot, not a current report from the motorcycle. The [table gate](#4-the-table-gate) evaluates the latest recorded sweep and both micros' answers.
+
 > ⚠️ **This bike is in the `unread` state today (2026-08-18), so the gate is shut.** The A9's copy (276) was read on 2026-06-14 and says 16407; the A8's copy (277) has never been read by anyone — and id 249, the one id where the two candidate tables disagree, is an A8 parameter. The two micros hold separate EEPROMs, so one answering is not confirmation of the other.
 >
 > ⚠️ **Seeing the answer and recording it are different acts.** The gate reads the last **sweep's** snapshot (`vcu-params/latest.json`, written in exactly one place: the end of a sweep). A one-identifier probe (`/vcu-probe`) performs precisely this read and returns it in an HTTP response that nothing persists — so it is the one-frame way to find out what the bike says, and it cannot open the gate on its own. Run the parameter read and let it finish. The A8 is swept second and 277 is the highest index in the table, so it is the very last thing a sweep asks about — a run the safety gate cuts short is exactly the run that misses it.
+
+**Historical status:** Parameter 277 is no longer the last identifier a sweep asks for: sweeps also include the [25 additional A8 bank-1 identifiers](#2-paramsecf-the-text-and-its-provenance). A completed sweep is still required to persist the table evidence.
 
 The gate applies to the **two parameter actions and nothing else**. The service actions below are deliberately exempt: `31 FC` takes a routine local identifier that appears in none of the 28 parameter tables (it comes from the service tool's shared library), Mode 04 and the `0x120` clock broadcast carry no identifier at all, and the service stamp reads ids 1000-1003, outside `params.ecf` entirely. Gating them would be a refusal resting on evidence with no bearing on the action — and reads stay ungated for the reason that matters most: the way out of `unread` **is** a read.
 
 A name that is not a parameter, or one of the four duplicated names, is rejected **in the pure codec**, not in the UI — `planWrite("NOT_A_PARAMETER_AT_ALL", …)` returns a refusal, and so does any plan whose index does not match its name, or whose index means something else on the bike's own table. `CELL_OVERVOLTAGE` now plans; what stops a careless write is the warning and the table check, not absence. And `src/vcu/write-codec.ts` re-derives the plan from the allowlist immediately before building the frame, so a plan assembled by hand or arriving over HTTP cannot become bytes. The table gate is enforced in the same place and on the same terms: `buildWriteFrame` re-judges the table-type report from the **raw words the bike sent**, never from the report's own `confirmed` flag, so forging one is useless — you would have to claim the bike answered `0x4017`, and if it did then the write was correct. `VSM_CONFIG_1` is offered as a **bit toggle and never as a word**: the same word carries the PSU type (`0x0760`) and the Bluetooth variant (`0x3000`), and a fat-fingered word write would reconfigure both. The new word is computed from the one the bike currently holds, and the pure layer asserts that only the one mask moved.
 
 Every write is a **compare-and-swap with a read-back**:
+
+**Scope note:** This sequence describes parameter writes. Clock, service and charging actions have their own checks and confirmation behavior; see [the current action summary](../README.md#what-can-change-the-bike).
 
 ```
 10 81   open a session          22 CID   read what it holds NOW  →  refuse if it is not what you were shown
@@ -1473,3 +1487,5 @@ Each parameter carries three kinds of prose and they are shown at the three mome
 ## Notes
 
 - The CAN bus is **read-only unless you switch writing on**. Everything that runs by itself — passive broadcast decode, the OBD-II poller, the trouble-code reads, the KWP `0x22` parameter reads — cannot change anything in an ECU, and is built so it cannot express one: `src/vcu/param-codec.ts`'s request union has three members and nowhere to put a value, and `src/can/obd-dtc.ts` can emit only modes `03`, `07` and `0A`. That is unchanged and is meant to stay that way. The writes live behind `SERVICE_WRITE_ENABLED`, which is **off by default** — see [Changing something on the bike](#changing-something-on-the-bike). `0x11` ECUReset, `0x2F` InputOutputControl (the factory tool's actuator-test channel), `0x3B` and `0x3D` are implemented **nowhere**, and should stay that way.
+
+**Historical status:** The read-only codec constraints still describe those read codecs, but the blanket automatic-write and unsupported-reset claims are obsolete: automatic charge control can command current, and "Reset the VCU" restarts both processors. See [current actions and gates](../README.md#what-can-change-the-bike).

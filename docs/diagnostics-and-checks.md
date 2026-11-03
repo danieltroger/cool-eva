@@ -1132,6 +1132,8 @@ The bike keeps several completely different fault records, and the Faults tab sh
 | **Freeze frames** | The conditions the bike recorded _at the moment_ one specific code latched | not read yet | KWP `0x17` on the A8 micro. Decoder, tables and transport are in, and the wire format is verified against 29 captured replies. See [Freeze frames](freeze-frame.md#freeze-frames) |
 | **Freeze-frame log** | The whole stored history of the above, **with timestamps** | not read yet | KWP `0x35`/`0x36`/`0x37` bulk upload on A8 — the factory tool pulled 1198 records in one ~7-minute transfer. See [The multi-frame transport](vcu-parameters.md#the-multi-frame-transport) |
 
+**Historical status:** These counts and "not read yet" entries describe the old snapshot. [Stored codes were later cleared on 2026-09-13](clear-dtcs.md#1-it-works--2026-09-13-parked-nothing-plugged-in), and the service now offers [per-code recorded-value reads](freeze-frame.md#the-read).
+
 Mode 03's reply is 80 bytes, so it needs ISO-TP: a First Frame, a flow-control frame back from us, then eleven Consecutive Frames. `src/can/iso-tp.ts` reassembles it and `src/diagnostics/obd-dtc.ts` decodes it — both pure, bytes in and codes out, so a captured transfer replays on a laptop:
 
 ```bash

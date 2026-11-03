@@ -159,6 +159,7 @@ cd /home/pi/cool-eva
 cd /home/pi/cool-eva
 rm -f package-lock.json # IMPORTANT — see note below
 npm install             # builds better-sqlite3 + socketcan + spi-device (~4 min)
+git checkout -- package-lock.json # restore the tracked file; keep the native builds
 
 # Verify the Linux-only native CAN module actually built:
 ls node_modules/socketcan/build/Release/can.node
@@ -186,6 +187,8 @@ npm rebuild
 ⚠️ Second choice for a reason: `approve-scripts` writes a **version-pinned** `allowScripts` into `package.json`, which is tracked. That makes the Update button (`git pull --ff-only`) refuse on any commit changing a dependency range, and `package.json#allowScripts` then **silently supersedes** the repo's `.npmrc` for good — pinning that Pi to the versions it had that day. The version boundaries and the measurements are in [`docs/pi-install-prerequisites.md`](docs/pi-install-prerequisites.md) §1.
 
 **WHY rm the lockfile:** `package-lock.json` is committed but generated on macOS, where socketcan (a Linux-only optionalDependency) is skipped. Installing on the Pi against that lockfile prunes the real native build and the service then dies on boot with `ERR_MODULE_NOT_FOUND: socketcan`. `npm install socketcan --force` will not fix it — it insists it's already up to date. The reliable fix is `rm package-lock.json && npm install` on the Pi.
+
+After the build, `git checkout -- package-lock.json` restores the repository's lockfile without changing `node_modules`. Leaving a regenerated lockfile modified can make Menu → Update refuse when an upstream commit changes that file; see [deploying updates](docs/deploy.md#running-it).
 
 Only re-run `npm install` on the Pi when a dependency actually changed; a plain `git pull` never touches `node_modules` and is always safe.
 
@@ -280,6 +283,7 @@ sudo systemctl restart cool-eva
 
 # ONLY if a dependency changed:
 rm package-lock.json && npm install
+git checkout -- package-lock.json
 # then re-verify node_modules/socketcan/build/Release/can.node exists
 ```
 

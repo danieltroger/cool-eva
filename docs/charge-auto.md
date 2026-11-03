@@ -2,6 +2,10 @@
 
 Holds the pack under the thermal cliff during a DC fast charge by lowering the charge current, and gives it back when there is room. `src/charge/auto-curve.ts` decides (pure), `src/charge/rate.ts` measures the heating (pure), `src/charge/auto.ts` reads the bus and transmits, `scripts/check-charge-auto.ts` replays it.
 
+## Stock BMS configuration
+
+Daniel reported on **2026-11-03** that with the stock BMS configuration the bike is already down to about **6 kW at 54 °C** and stays around that level. In that state, the controller only changes the maximum-current figure on the bike's dash; it does not control the actual DC charge current. The VCU's derating to about **22 A at a reported 54 °C** is consistent with his observation. This is Daniel's report about the stock configuration; the bounded-clamp measurements below concern the custom BMS configuration.
+
 ## The cliff, and what it costs
 
 At a **true 55 °C** the config-15 BMS clamp releases, the VCU finally sees the real pack temperature, and the DC current collapses to **~19.5 A**. Measured 2026-09-07 at two stops: **42 minutes lost**. The pack reached exactly 55.0 and never exceeded it.

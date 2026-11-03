@@ -33,8 +33,6 @@ The bike's Connectivity Hub holds one authorized-device pairing. Starting the se
 
 ## Former README reference
 
-The following original text is preserved with its dated compatibility and implementation claims. In particular, its old default/opt-out descriptions are being replaced by dashboard settings; use the current README and configuration reference for installation.
-
 > The following sections preserve the former README at commit `58c7eba` (2026-11-03), including dated measurements and limitations. For first installation, use the [current README](../README.md). Older validation/status claims are historical; the existing subsystem findings and current code take precedence.
 
 ## Original project overview
@@ -45,6 +43,9 @@ Telemetry for a **watercooled 2021 Energica Eva Ribelle**. A Raspberry Pi inside
 
 - **Raspberry Pi Zero 2 W** running the app as a `systemd` service (Node.js, runs as root).
 - **[8devices Korlan USB2CAN](https://shop.8devices.com/usb2can/korlan/)** plugged into the bike's OBD port → `can0` (in-kernel `usb_8dev`, no driver install). 500 kbit, 11-bit. The app reads broadcast frames _and_ actively polls standard OBD-II PIDs (**read-only** — no diagnostic writes).
+
+  **Historical status:** "No diagnostic writes" describes the read poller, not the whole application: manual service actions and automatic charge control can transmit state-changing commands. See [what can change the bike](../README.md#what-can-change-the-bike).
+
 - **2× MAX31865 + PT100 probes** over SPI — coolant **in** and **out** of the custom battery watercooling loop. **Optional**: this is the one piece of hardware most Energicas don't have. Without it everything else works and the coolant tiles simply don't appear.
 - **Networking:** the Pi joins my **phone's hotspot**, so it's reachable at **`http://cool-eva.local`** from the phone's browser. It's a bit janky (have to open hotspot page in phone settings for ~20s at the start of every ride), but it works for an at-a-glance dash while riding/charging.
 
@@ -57,4 +58,10 @@ Two caveats worth knowing before you spend money:
 - It is developed against a **2021 Eva Ribelle**. The pack shape is hardcoded in places — 81 cells in 11 modules, a 400 A discharge and 120 A regen ceiling, a 130 kW power bar — and nothing detects a mismatch. On another bike in the same pack family the readings are right and those scale limits may not be; on a differently-packed model (Experia) treat the whole thing as untested. Reports welcome. The **VCU parameter names are not** in that category any more: all 28 of Energica's parameter tables are shipped and the bike's own `TABLE_TYPE` picks one, so [that half works on your bike](vcu-parameters.md#vcu-parameters-by-name) whichever it is — and if your table is newer than the 28, [adding it is one command](vcu-parameters.md#adding-your-bikes-vcu-parameter-table).
 - The bike's **CAN bus is not a toy**. This app only ever reads, but it does transmit standard OBD-II _read_ requests to do so (see [Notes](vcu-parameters.md#notes)). If you would rather it never spoke at all, `OBD_ENABLED=0` makes it passive-only.
 
+  **Historical status:** "This app only ever reads" predates the CAN write features. The [current safety guide](../README.md#what-can-change-the-bike) explains their triggers and gates.
+
+## Notes — Bluetooth enrollment
+
 - The one thing that _does_ write to the bike is the Bluetooth handshake: enrolling with the Connectivity Hub claims its single authorised-device slot, and after several unanswered attempts the client also tries the hub's own address. If the bike is already paired to something else, that pairing can be replaced, and the way back is clearing the stored device from the bike's own dashboard. `BLE_ENABLED=0` avoids the whole question.
+
+**Historical status:** Bluetooth enrollment is no longer the only bike-changing operation. For CAN actions and the temporary Bluetooth opt-out, use the [current first-start and safety instructions](../README.md#5-before-the-first-service-start).

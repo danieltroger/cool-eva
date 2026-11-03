@@ -38,6 +38,8 @@ That rebuilds an ordinary SQLite file, so Grafana and the dashboards work agains
 
 Each segment uses a fresh ephemeral X25519 key (ECDH → HKDF-SHA256 → AES-256-GCM), so compromising the Pi cannot retroactively decrypt anything already written. Segments are independently sealed, so damage is contained: the reader resyncs on the next segment and reports what it couldn't read rather than stopping. **There is deliberately no recovery path: lose the private key and every logged ride is gone forever.** That is exactly what makes the SD card worthless to a thief.
 
+**Scope note:** The claim about the SD card applies only to the sealed readings. Optional [raw CAN captures](can-capture.md) and [legacy plaintext history](#notes--legacy-plaintext-history) remain readable if they are also on the card.
+
 ### What this does and doesn't hide
 
 Holds up: the readings themselves — routes, coordinates, the key-fob ID, everything in the tables above. Whoever takes the SD card, or intercepts a `/dl` download, gets ciphertext.
@@ -48,5 +50,10 @@ Does not:
 - **No cross-segment integrity.** Each segment is authenticated on its own, so tampering within one is detected — but segments can be deleted or reordered without the reader noticing. It protects confidentiality, not completeness.
 - **`/dl` is unauthenticated** on port 80, like the rest of the server. The payload is sealed, so the exposure is the metadata above rather than the data — but it's a wider audience than "whoever holds the SD card".
 
+## Notes — pre-CAN coolant history
+
 - Coolant history predating the CAN integration is preserved (migrated into the current schema; the original table is kept as a backup).
+
+## Notes — legacy plaintext history
+
 - Any `temperatures.db` left on the Pi from before the encrypted log is **plaintext history** — copy it off and delete it from the bike, or the SD card still gives up every route you rode before the switch.

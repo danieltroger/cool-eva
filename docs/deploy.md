@@ -113,3 +113,13 @@ A restart no longer re-initialises a healthy can0: since #160 the service reads 
 The dashboard menu's **Update** button does exactly that pull and restart from the phone, showing git's output. It runs the pull as the checkout's **owner** rather than as root — never `sudo git pull`, which poisons `.git` and makes the _next_ pull fail silently. [`docs/deploy.md`](deploy.md) has the why; [INSTALL.md §3](../INSTALL.md) has what to type.
 
 > ⚠️ **Don't run `npm install` or `npm ci` on the Pi unless a dependency actually changed.** `package-lock.json` is generated on macOS, where `socketcan`'s Linux-only native build is skipped as an optionalDependency; installing against that lockfile on the Pi deletes the real one, and the service then dies on boot with `ERR_MODULE_NOT_FOUND: socketcan`. `npm install socketcan` will insist it's "up to date" even with `--force` — the fix is `rm package-lock.json && npm install` **on the Pi** (~4 min). A plain `git pull` never touches `node_modules` and is always safe.
+
+### Keep the checkout ready for updates after a dependency build
+
+After deliberately rebuilding the Pi's dependencies with `rm package-lock.json` and `npm install`, run:
+
+```sh
+git checkout -- package-lock.json
+```
+
+This restores only the tracked lockfile. The freshly compiled native modules in `node_modules` remain in place. A regenerated lockfile left modified can make Menu → Update's `git pull --ff-only` refuse a later upstream lockfile change. The [current first-install steps](../README.md#3-install-the-software--on-the-pi) include this restoration; do not run another dependency install merely because the tracked file has been restored.
