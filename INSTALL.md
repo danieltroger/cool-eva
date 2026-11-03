@@ -4,10 +4,12 @@ Telemetry service for a watercooled Energica Eva Ribelle. This installs the `coo
 
 Everything below runs **ON THE PI** unless a step says "on the laptop".
 
+For a first installation, follow the [README Setup](README.md#setup), including hotspot compatibility and Bluetooth pairing **before the first service start**. This file keeps the detailed OS/build recipes; [optional cooling hardware](docs/cooling-hardware.md) is not required on a stock bike.
+
 ## 0. Hardware
 
 - Raspberry Pi Zero 2 W (or any Pi with SPI + USB).
-- 2x MAX31865 + PT100 (4-wire) boards on SPI0:
+- (Optional) 2x MAX31865 + PT100 (4-wire) boards on SPI0:
   - `coolant_in` -> `/dev/spidev0.0` (CE0, inlet)
   - `coolant_out` -> `/dev/spidev0.1` (CE1, outlet)
   - Board reference resistor is 430 ohm (Adafruit); PT100 nominal 100 ohm.
@@ -18,7 +20,7 @@ Everything below runs **ON THE PI** unless a step says "on the laptop".
 
 ## 1. Base OS setup
 
-Flash Raspberry Pi OS (64-bit, Bookworm or newer) and boot it. Then:
+Flash Raspberry Pi OS (64-bit, Bookworm or newer) and boot it. Skip the SPI commands below unless probes are wired; a stock bike needs no enabled SPI interface. Then:
 
 ```sh
 # Enable SPI for the MAX31865 probes
@@ -200,39 +202,19 @@ node --experimental-strip-types scripts/generate-log-key.ts # writes both keys
 scp ride-log-key.public.pem pi@cool-eva.local:/home/pi/cool-eva/
 ```
 
-The service looks for `ride-log-key.public.pem` in the project dir by default (or set `RIDE_LOG_PUBKEY`). Without it, logging still runs but is not encrypted.
+The service looks for `ride-log-key.public.pem` in the project dir by default (or set `RIDE_LOG_PUBKEY`). Without it, the live dashboard works but **nothing is persisted**. See the [ride-log guide](docs/ride-log.md#encrypted-ride-log).
 
 ## 6. Configuration (environment variables — optional)
 
-Defaults are correct for a stock bike; skip this section unless you need one. All are read by `src/index.ts`:
+Use the [configuration reference](docs/configuration.md) for the current environment-variable table and the [README](README.md#what-can-change-the-bike) for the manual/automatic actions that can change the bike. The interface is being simplified; do not copy an old example that turns on bike writes as part of a stock installation.
 
-- `FAN_ENABLED=1` — drive the IBT-2 cooling fan and serve `/fan`. **Opt IN**, unlike every other flag here: unset means no `/sys/class/pwm`, no `pinctrl`, no endpoint. With it set the fan follows the pack temperature automatically from boot. Needs the §1 `config.txt` lines first. See `docs/fan-control.md`
-- `CAN_ENABLED=0` — skip CAN entirely (coolant only)
-- `OBD_ENABLED=0` — passive/listen-only: decode broadcasts, don't TX OBD polls
-- `ELOCK_ENABLED=0` — skip the one-shot keys-paired read from the E-LOCK ECU
-- `BLE_ENABLED=0` — skip the Bluetooth link to the Connectivity Hub
-- `BLE_MAC=<addr>` — pin the hub's BLE address (default: discover by name)
-- `GPS_TIME_SYNC=0` — never step the system clock from satellite time
-- `CUSTOM_BMS_CONFIG=1` — ONLY if the pack's LiBAL BMS is flashed with the custom config. Leave UNSET on a stock Energica. See README.
-- `RIDE_LOG_PUBKEY=…` — path to the X25519 public key (default: `./ride-log-key.public.pem`)
-- `RIDE_LOG_DIR=…` — where sealed `.celog` segments go (default: `./ride-logs`)
-- `VCU_PARAM_DIR=…` — where read-vcu-params.ts snapshots live (default: `./vcu-params`)
-
-The install script (next step) does NOT bake env vars into the unit. To set any, add a systemd drop-in AFTER installing the service:
-
-```sh
-sudo systemctl edit cool-eva
-# then add, e.g.:
-# [Service]
-# Environment=CUSTOM_BMS_CONFIG=1
-sudo systemctl restart cool-eva
-```
+The installer already reads the optional `/etc/default/cool-eva` file. Keep configuration there, not in the generated service unit, which the installer rewrites. For custom BMS temperature handling, see [the signal reference](docs/signals.md#custom_bms_config--set-this-only-if-you-flashed-the-custom-config).
 
 ## 7. Install and start the service
 
 ```sh
 cd /home/pi/cool-eva
-sudo node scripts/setup-service.ts
+sudo "$(command -v node)" --experimental-strip-types scripts/setup-service.ts
 ```
 
 This writes `/etc/systemd/system/cool-eva.service` (running as root, so it can bring up can0), then enables it at boot and starts it. Upgrading a Pi from before the 2026-08 rename needs nothing by hand — the script stops, disables and deletes the old `thermometer` unit itself. Useful commands it prints:
@@ -303,33 +285,13 @@ rm package-lock.json && npm install
 
 Notes:
 
-- Restarting the service re-initialises can0, which kills any other raw-CAN socket (scratch scripts) with `OSError 100 Network is down`. Expected.
+- Restarting the service leaves a correctly configured CAN link alone. When it needs to reconfigure the link, other raw-CAN sockets lose it; see [CAN bring-up and capture](docs/can-capture.md#what-is-skipped-now).
 - The Connectivity Hub accepts one BLE connection at a time and the service holds it. Stop the service before running a scratch BLE probe.
 - There's no reception in the garage; the Pi is only reachable when parked in wifi range.
 
 ## 10. Setting up config file for cool-eva
 
-On my Raspberry Pi, ensure `EnvironmentFile` is set up in the service unit:
-
-```ini
-[Service]
-Type=simple
-WorkingDirectory=/home/pi/cool-eva
-EnvironmentFile=/etc/default/cool-eva
-ExecStart=/usr/bin/node --experimental-strip-types /home/pi/cool-eva/src/index.ts
-Restart=on-failure
-RestartSec=5
-User=root
-```
-
-Then create `/etc/default/cool-eva`:
-
-```sh
-COOLANT_ENABLED=0
-BLE_MAC=<mac address>
-SERVICE_WRITE_ENABLED=1
-CUSTOM_BMS_CONFIG=0
-```
+The setup script supplies `EnvironmentFile=-/etc/default/cool-eva` itself. Do not edit the unit by hand or use an example that enables writes. Follow the [configuration reference](docs/configuration.md#configuration) for the supported file and the [first-start instructions](README.md#5-before-the-first-service-start) for pairing and automatic actions.
 
 ## 11. Quick tips on bringing CAN back online
 
@@ -344,17 +306,10 @@ ip -details link show can0
 
 ## 12. Optional: Grafana on the laptop (post-ride analysis)
 
-Grafana runs on the LAPTOP, not the Pi. Download a sealed log from the Pi, then:
-
-```sh
-node --experimental-strip-types scripts/decrypt-log.ts <file>.celog --out temperatures.db
-docker compose up -d # Grafana at http://localhost:3000
-```
-
-See `README.md` "Encrypted ride log" and "Grafana" for the datasource caveat (temperatures.db vs rides.db) and dashboard details.
+Grafana runs on the laptop, not the Pi. Follow [Grafana and the ride-log import](docs/grafana.md#grafana) to build `rides.db`, recover waypoints and materialise its route track before starting Grafana. The [encrypted ride-log guide](docs/ride-log.md#encrypted-ride-log) covers the key and download; the datasource is configured for `rides.db`.
 
 ## Safety
 
-The CAN bus is read-only here: passive broadcast decode, standard OBD-II READ requests, and KWP 0x22 parameter reads. No writes of any kind. Only touch hardware you own and are authorized to modify.
+Diagnostic reads transmit requests. Manual charging and service actions can change the motorcycle, and automatic DC current management can act without a per-adjustment prompt. Read [what can change the bike](README.md#what-can-change-the-bike) before starting the service. Only touch hardware you own and are authorized to modify.
 
-With `FAN_ENABLED=1` the fan starts **on its own** whenever the pack is warm, and the dashboard can start it from a phone with one drag — there is no two-tap arm on it (`docs/fan-control.md` §4 "The slider"), only the `X-Cool-Eva: fan` header a POST needs. Keep fingers out of the duct while the Pi is powered: a `SIGKILL` leaves the bridge driving until the service restarts itself, which `Restart=on-failure` / `RestartSec=5` makes about **five seconds** later — long enough to matter with a hand in the duct, and only that long because the unit restarts (`docs/fan-control.md` §8).
+Once enabled, the optional fan starts **on its own** whenever the pack is warm, and the dashboard can start it from a phone with one drag — there is no two-tap arm on it (`docs/fan-control.md` §4 "The slider"), only the `X-Cool-Eva: fan` header a POST needs. Keep fingers out of the duct while the Pi is powered: a `SIGKILL` leaves the bridge driving until the service restarts itself, which `Restart=on-failure` / `RestartSec=5` makes about **five seconds** later — long enough to matter with a hand in the duct, and only that long because the unit restarts (`docs/fan-control.md` §8).

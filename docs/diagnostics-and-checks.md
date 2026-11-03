@@ -457,6 +457,22 @@ Two more guards on the same line: the stream can carry the time sub-frame _befor
 
 ---
 
+### Clock
+
+The Pi has no RTC. Without a network it boots with whatever date the filesystem left behind, so satellite UTC off the Connectivity Hub is the only real time source out on the road, and the service steps its own system clock to it (`date -u -s`).
+
+Trusting a single frame to do that turned out to be expensive. A corrupted year byte reading 60 decoded as **2060**, the clock was stepped 34 years forward, and the five-minute anti-thrash cooldown then blocked the correction that would have undone it — so one bad frame cost five minutes of rows, not one row. Four such frames are in the history and two of them landed while the service could set the time: **49 772 rows in `rides.db` are stamped 2060** because of them.
+
+What decides a step now (`src/gps/clock-gate.ts`, pure, replayed against the real frames by `scripts/check-gps-clock.ts`):
+
+- **Five consecutive readings must agree**, each within 3 s of the others once carried forward by the **monotonic** clock. The corruption is always a single frame — the frames either side of all four are sane — so a lone bad one can never corroborate itself. Costs 1.4–5 s of a cold boot.
+- **A floor, and no ceiling.** Nothing before 2026 is a real fix (that catches the GPS week-number rollover, which reads 1980 or 1999, and a zeroed date field, which reads 2000). There is deliberately **no upper bound on the calendar** — a "2024 to 2035" window would just be a fix with an expiry date. 2060 is refused because nothing agrees with it, not because 2060 is a year we disbelieve, and the check proves that by replaying every case ten years on and requiring identical verdicts.
+- **Cold boot is not drift.** With no confirmed time yet, a step of many hours is expected and allowed — two real ones in the history are 20 h 46 m and 20 h 38 m. Once there _is_ a confirmed time, a candidate must also stay within 10 s of it carried forward, which is what refuses a 34-year jump mid-session. That anchor expires after 5 minutes without reconfirmation, so a session can always re-derive its time rather than being locked out.
+- **The cooldown is recoverable.** It still holds off small corrections so we don't fight `systemd-timesyncd`, but a disagreement over an hour bypasses it — that is not thrashing, that is a broken clock, and waiting it out is what made one frame cost five minutes.
+- **Refusing to sync is not allowed to be quiet.** Every non-step state is one the clock could in principle sit in forever, so the reason is logged on every change and repeated every 5 minutes while it persists — a window that keeps contradicting itself warns, rather than looking exactly like the two seconds of start-up that print the same line.
+
+Satellite count deliberately is **not** part of this. It reads 9 and 10 at the corrupt frames, against a population where 41 % of all readings are below 8, so no threshold separates them; the floor of 4 in the decoder stays as a receiver sanity check. The wall clock is only one of the two clocks recorded anyway — `gps_epoch_s` is logged raw against every row's own timestamp, and every row now carries a write-order counter as well (see below), so both order and true time stay recoverable even from rows already stamped wrong.
+
 ## 9. The sealed ride log
 
 ### 9.1 Design
@@ -496,7 +512,7 @@ Counting segments instead would mean walking every file's framing (a 56-byte hea
 
 **`/dl` — the transfer, not the bytes.** Short path because it gets typed on a phone. No snapshot dance is needed (unlike the old `/db`, which had to work around SQLite's WAL to avoid serving a torn file): segments are immutable once appended, and each one is self-framing with its own magic header, so the files can simply be concatenated in order and fed straight to `scripts/decrypt-log.ts`.
 
-The payload is ciphertext: without the laptop's private key it is noise, which is what makes serving it over garage wifi acceptable. **That is a property of the bytes, though, not of the transfer**, and the difference is worth keeping straight — the dashboard caption above this button used to blur the two and claimed the log was "safe over any network". `/dl` authenticates nobody, so anyone on the network can pull the whole log and keep the ciphertext against the day the key leaks; and segments can be dropped or truncated in flight by someone holding no key at all, because each is sealed on its own and nothing binds them into a sequence. README, "What this does and doesn't hide", has the full list.
+The payload is ciphertext: without the laptop's private key it is noise, which is what makes serving it over garage wifi acceptable. **That is a property of the bytes, though, not of the transfer**, and the difference is worth keeping straight — the dashboard caption above this button used to blur the two and claimed the log was "safe over any network". `/dl` authenticates nobody, so anyone on the network can pull the whole log and keep the ciphertext against the day the key leaks; and segments can be dropped or truncated in flight by someone holding no key at all, because each is sealed on its own and nothing binds them into a sequence. docs/ride-log.md, "What this does and doesn't hide", has the full list.
 
 ### 9.5 `/waypoint`
 
@@ -1063,7 +1079,7 @@ So `check-service-preview.ts`'s `new Script()` owns the first two rows with a be
 
 ## 12. Extracting Energica's VCU parameter tables
 
-`scripts/extract-vcu-tables.ts` pulls the tables out of the manufacturer's service-tool executable and writes `src/vcu/table-catalog.data.ts`. README §"Adding your bike's VCU parameter table" is the operator-facing walkthrough.
+`scripts/extract-vcu-tables.ts` pulls the tables out of the manufacturer's service-tool executable and writes `src/vcu/table-catalog.data.ts`. docs/vcu-parameters.md §"Adding your bike's VCU parameter table" is the operator-facing walkthrough.
 
 **⚠️ This is the script that makes this repo usable on somebody else's bike.** A VCU addresses its calibration parameters BY INDEX, and what an index means comes from the table the VCU is running. Energica ships many; the 2024 service-tool build has 28 and another owner has reported a build with roughly five more, including one for a Corsa. If this repo does not carry your bike's table it will refuse to write anything (`src/vcu/table-gate.ts`) — correctly, because it would otherwise be writing a number into whichever parameter our table happens to give your name to.
 
@@ -1101,3 +1117,30 @@ Each emitted table carries a FINGERPRINT taken by the extractor, from the bundle
 **⚠️ Every reply is printed as raw hex first.** That is the point of the run, not the decode. The reply layout of all three services is unverified (see `src/vcu/multiframe-codec.ts` for which bytes are guessed), so the bytes are the evidence and the decode is a hypothesis printed beside them. **If the two disagree, the bytes are right.**
 
 **⚠️ Read-only.** Everything goes through the same closed union as the rest of the client: `0x10`, `0x3E`, `0x17`, `0x18`, `0x35`, `0x36`, `0x37`. There is no argument that names a service and none that names a value.
+
+> The following sections preserve the former README at commit `58c7eba` (2026-11-03), including dated measurements and limitations. For first installation, use the [current README](../README.md). Older validation/status claims are historical; the existing subsystem findings and current code take precedence.
+
+## Trouble codes
+
+The bike keeps several completely different fault records, and the Faults tab shows them apart because merging them would be wrong — they answer different questions:
+
+|  | What it is | How many, right now | Where from |
+| --- | --- | --- | --- |
+| **Active** | What the bike says is wrong _at this moment_. It flickers — one code was present on 2 of 8 consecutive polls at a standstill | 0-1 | Connectivity-Hub message type 25, over Bluetooth and on CAN `0x410`, which the instrument cluster transmits |
+| **Stored** | Everything that has _ever_ been wrong and not been cleared. It only climbs | **39** | OBD-II **mode 03**, over ISO-TP |
+| **Pending / permanent** | Would be OBD-II modes 07 and 0A | — | **no response.** See below |
+| **Freeze frames** | The conditions the bike recorded _at the moment_ one specific code latched | not read yet | KWP `0x17` on the A8 micro. Decoder, tables and transport are in, and the wire format is verified against 29 captured replies. See [Freeze frames](freeze-frame.md#freeze-frames) |
+| **Freeze-frame log** | The whole stored history of the above, **with timestamps** | not read yet | KWP `0x35`/`0x36`/`0x37` bulk upload on A8 — the factory tool pulled 1198 records in one ~7-minute transfer. See [The multi-frame transport](vcu-parameters.md#the-multi-frame-transport) |
+
+Mode 03's reply is 80 bytes, so it needs ISO-TP: a First Frame, a flow-control frame back from us, then eleven Consecutive Frames. `src/can/iso-tp.ts` reassembles it and `src/diagnostics/obd-dtc.ts` decodes it — both pure, bytes in and codes out, so a captured transfer replays on a laptop:
+
+```bash
+node --experimental-strip-types scripts/decode-dtc-response.ts
+# → replays a real 2026-08-04 transfer and checks it still decodes to the same 39 codes
+```
+
+Codes are named from Energica's own type-approval table, reconciled against the manufacturer's service-tool copy of it (`src/diagnostics/dtc-table.ts`, 154 codes). All 39 of this bike's are in it. **Mode 01 PID 02** — the freeze-frame code, i.e. the one the bike captured when it lit the lamp — reads `P0514`, _"Error reading temperature"_, which is why the warning light is on.
+
+**Modes 07 and 0A return nothing at all** — silence, not a refusal, across six attempts. That means "not implemented" and "implemented but withheld" cannot be told apart from here, so the dashboard says **"no response"** rather than "none pending". Those are different claims and only one of them is true.
+
+The transfer is not reliable — the First Frame arrives every time and the Consecutive Frames sometimes never do, at somewhere between 25 % and 70 % per attempt. It is retried, and it is read once a minute from inside the sequential OBD poll loop so nothing else of ours is on the bus while it runs.

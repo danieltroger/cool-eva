@@ -6,7 +6,7 @@
 // rather than excluded, and the despiker's missing neighbour — rather than re-inheriting them.
 //
 // 🚨 `r.ts < 2000000000000` IS NOW THE ONLY GUARD ON THE 2060 ROWS. A corrupt GPS frame stepped
-// the Pi's clock and stamped 49 772 readings in 2060 (README.md §Clock), on exactly the signals
+// the Pi's clock and stamped 49 772 readings in 2060 (docs/diagnostics-and-checks.md §Clock), on exactly the signals
 // these queries read. The dashboard excluded them twice — by this guard AND by defaulting to a
 // relative `now-90d → now` window that they sort after. Dropping the window drops the second
 // guard, so this one is load-bearing and must not be tidied away.

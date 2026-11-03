@@ -17,7 +17,7 @@ import { pathExists, readTrackAge, runImport, type ImportOptions, type SpawnedSt
 // to materialise — 3 min 53 s from start to the end of the build. The coverage survey and the
 // swap follow and were not timed separately; the survey is a covering-index scan of every
 // reading, measured at 8.8 s standalone on a colder file. Budget four minutes and know that it
-// scales with the ARCHIVE, not with what is new. README.md
+// scales with the ARCHIVE, not with what is new. docs/grafana.md
 // §Grafana has the recipe and which files to point it at; scripts/ride-import.ts has the
 // order and the refusals; docs/waypoints.md §"Not losing the ride log" has why it exists.
 

@@ -229,7 +229,7 @@ listener._dom = dom ?? curNewDerives?.push(listener) ?? alwaysConnectedDom;
 
 At module scope `curNewDerives` is undefined, so the listener gets `alwaysConnectedDom` and lives for the life of the page. Created _inside_ a binding — which is what a `van.derive` in a tile factory would be, since `views/all.js` builds its grid in a function child — it is pushed onto `curNewDerives` and then pinned to that render's DOM node (`for (let l of curNewDerives) l._dom = newDom`, line 71). The next time the grid re-renders, `dom.replaceWith(newDom)` disconnects that node and `keepConnected()` drops the listener permanently.
 
-The ALL grid re-renders on any of: typing in the filter box (which is exactly what you do to watch these — filter to `btn`), any new key arriving, or switching tabs away and back. So a per-tile derive would stop counting on the first keystroke, in total silence, and every tile would sit at `idle` with a frozen count — with the README's "trust the count over the light" advice quietly no longer true. This is the fourth way the feature could switch itself off without failing anything, and unlike the other three it cannot be checked from Node.
+The ALL grid re-renders on any of: typing in the filter box (which is exactly what you do to watch these — filter to `btn`), any new key arriving, or switching tabs away and back. So a per-tile derive would stop counting on the first keystroke, in total silence, and every tile would sit at `idle` with a frozen count — with this document’s “The dashboard” section’s "trust the count over the light" advice quietly no longer true. This is the fourth way the feature could switch itself off without failing anything, and unlike the other three it cannot be checked from Node.
 
 The same rule is why `installHandlebarGestures()` must be called at module top level and never from inside a view or a binding, and why `app.js` calls it next to `connect()`.
 
@@ -1282,3 +1282,21 @@ Adding a second charge-tab write control was the moment to lift the session/stat
 ## The ungated signals
 
 Moved to [`signal-bounds.md`](signal-bounds.md) § "What has no bound, and why". The hand-maintained `KNOWN_UNGATED` list this section described is gone: a signal declares `unbounded` beside itself now, and `scripts/generate-signal-bounds.ts` fails the build on one that declares neither that nor a bound.
+
+> The following sections preserve the former README at commit `58c7eba` (2026-11-03), including dated measurements and limitations. For first installation, use the [current README](../README.md). Older validation/status claims are historical; the existing subsystem findings and current code take precedence.
+
+## The dashboard
+
+Five screens, switched from the tab bar — or by **flashing the high beam three times**, which is the only control that works with both hands on the bars.
+
+| Screen | For |
+| --- | --- |
+| **Ride** | GPS speed, power, pack and coolant temperatures, **coolant ΔT** with the I²R watts going in beside it, charge |
+| **Hypermile** | Weakest cell's headroom above cut-off (instantaneous **and** sag-compensated), the BMS's 60 s cut-off timer, allowed current, rolling Wh/km, resistive loss, all 81 cells as a strip |
+| **Charge** | A / V / kW, what the BMS is granting the charger, balancing state, cell spread trend, pack temperature, isolation |
+| **All** | Every signal the bike is producing, grouped and filterable. Signals whose EDGES are the event render differently from the rest — the whole **buttons** group, plus `horn` and `ignition_button` by name (`public/lib/latched.js`): the handlebar buttons are momentary, and the median press is 140 ms — one or two frames of a 60 Hz display — so a raw 1/0 readout would flicker and be gone. Each button tile latches lit for 600 ms after the bit drops and keeps a press count with the time of the last one. Trust the count over the light: a count that climbs while the tile never visibly lights is a working button whose flash the browser dropped. Since 2026-08-19 the group also holds the indicators, the high beam and the two brakes, which are **not** momentary, so a tile down for over a second says how long instead ("held 4 s") — a clock reading rather than a list of which keys are held states, because the populations overlap in both directions. That also retired the old "a tile stuck lit with a count of 1 is a fault" rule, since it is now what a squeezed brake lever looks like; the duration under the tile is what separates a lever from a stuck bit. The blinkers are the one hand-named exception, because they are lamp outputs that a running indicator toggles, so counting rising edges would overreport a signalled turn by about 6×. The measured durations, the blink rate and the gap histogram behind the thresholds live next to the constants they justify — `public/lib/press.js` and `public/lib/flasher.js` — rather than being restated here |
+| **Faults** | Stored and active trouble codes, named from Energica's own table, with the history behind each. Carries the ⚠ itself, so a code appearing mid-ride is visible without costing space on the screen you're looking at |
+
+**Ride** and **Charge** are what you leave it on; Hypermile and Charge the bike picks for you. It switches to Charge when the BMS reports a charging state, and to Hypermile below 5 % SOC **or** when the weakest cell drops within 150 mV of cut-off — SOC near empty comes from an OCV table that was never re-characterised for these cells, so it can't be the only trigger. The switch is edge-triggered: once it has moved you, you can move back and it stays put.
+
+Design notes for the hypermiling numbers are in `HYPERMILING.md`; the derivations all live in `public/lib/derive.js` and nothing derived is ever logged.

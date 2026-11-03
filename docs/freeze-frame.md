@@ -182,3 +182,27 @@ Mutations are run against it one at a time, each reverted before the next, each 
 **⚠️ The deadline's clock is injectable, and that is a bypass as much as a seam** — a `now` that does not advance defeats the deadline entirely. §2b greps `src/` and asserts no shipping call site passes one, the same guard and the same reasoning as `check-arming.ts` §7. It exists because no double in this repo can burn a worst-case component (replies come back in ~2 ms), so walking the real clock would make the count depend on how loaded the laptop is.
 
 **The first live read has not happened.** Everything above is a laptop replaying bytes this bike sent in August and September 2026.
+
+> The following sections preserve the former README at commit `58c7eba` (2026-11-03), including dated measurements and limitations. For first installation, use the [current README](../README.md). Older validation/status claims are historical; the existing subsystem findings and current code take precedence.
+
+## Freeze frames
+
+A stored code says _what_ went wrong. A freeze frame says what the bike was **doing at the moment it latched** — pack voltage, motor speed, air temperature, and for a water-pump code the measured pump current itself. It is a different service on a different bus from either list above: KWP **`0x17`** with a component number, on the **A8** safety micro, after a `10 81` session.
+
+What makes a freeze frame readable rather than a hex dump is Energica's own data, and both halves are now in this repo:
+
+- **`src/diagnostics/infokey-table.ts`** — the 120 telemetry fields the manufacturer's service tool calls _info keys_, each with a name, a unit, a C datatype and a scaling equation. Transcribed from two independent copies of Energica's own table, which agree on all 120 rows.
+- **`src/diagnostics/fault-infokeys.ts`** — **944 curated references** across 155 faults saying which of those fields to show for each code, _in order_. That order is the payload's byte layout, not a display preference.
+
+Tap any stored code on the Faults tab and it opens to show that shortlist: Energica's own answer to "what should I go and measure for this fault". That part needs no bus at all — it is served from `/fault-infokeys`, static and cached.
+
+```bash
+node --experimental-strip-types scripts/check-freeze-frame.ts
+# → checks the 120 fields and 155 shortlists against dtc-table.ts, then replays
+#   31 freeze-frame transfers (29 captured, 2 constructed) through the real
+#   reassembler and decoder
+```
+
+> ✅ **The wire format is verified.** The _request_ was always proven twice over — the factory tool sent `0x17` to A8 29 times in a 2026-08-08 capture and got 29 positive replies, and Energica's own code builds exactly that frame. This box used to add that the _response layout_ "has never been captured" and that the record-count byte was "genuinely open". Both were wrong: the 29 replies were on `7E0` all along, and the search that missed them looked at `7C0`, which carries only requests. They are committed in `scripts/captured-freeze-frames.ts`, `recordCount` is 1 on all 29 and asserted, and the header is 5 bytes — settled by decoding all 29 against physical bounds, since the lengths alone cannot separate a 5-byte header with a trailer from a 6-byte header without one. One byte per reply is still undecoded. See [§5.1 and §11.3.1](diagnostics-and-checks.md).
+
+- `src/diagnostics/freeze-frame.ts` is built the same way for its own service: a closed one-member request union that can encode `0x17` and nothing else. So the freeze-frame **erase** that sits beside it in the factory tool — `31 FE` with a fixed 8-byte operand and its own SecurityAccess, which wipes the bike's record of _why_ it faulted — is unreachable rather than merely unused, and it stays outside `SERVICE_WRITE_ENABLED` rather than being one more thing that switch turns on.

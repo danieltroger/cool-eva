@@ -22,7 +22,7 @@ import { openFanPwm, type FanPwm } from "./pwm.ts";
  * ⚠️ OPT IN — `=== "1"`, deliberately the opposite of COOLANT_ENABLED and OBD_ENABLED,
  * which are opt-out. Almost no Eva has this fan, so the default has to be a Pi that never
  * opens /sys/class/pwm and never spawns `pinctrl`. One of exactly two opt-in switches in
- * this repo; SERVICE_WRITE_ENABLED is the other, and README's Configuration table says so
+ * this repo; SERVICE_WRITE_ENABLED is the other, and docs/configuration.md says so
  * on both rows.
  */
 const FAN_ENABLED = process.env.FAN_ENABLED === "1";

@@ -96,3 +96,20 @@ Delete `-H` and ssh keeps working, which is exactly how it would get deleted for
 - `scripts/check-update-endpoint.ts` — the checks, including the argv assertions that catch a regression to pulling as root.
 - Issue #146 (the diagnosis and three rounds of review), PR #148.
 - Issue #150 — `/update` now requires `X-Cool-Eva: update`, like `/fan` and `/vcu-write`. Without it a cross-origin `<form method="POST">` on any page the phone opened triggered this sudo pull and restart. ⚠️ It is a CSRF barrier and not authentication — a `curl` on the bike's wifi still reaches it, and so does the restart loop built on that. `docs/wifi-hardening.md`; asserted by `scripts/check-endpoint-headers.ts`.
+
+> The following sections preserve the former README at commit `58c7eba` (2026-11-03), including dated measurements and limitations. For first installation, use the [current README](../README.md). Older validation/status claims are historical; the existing subsystem findings and current code take precedence.
+
+## Running it
+
+The app is the `cool-eva` `systemd` service on the Pi (Node 24, TypeScript run directly via `--experimental-strip-types`), serving `http://<pi>/` on port 80. First install is under [Setup](../README.md#setup); after that, deploying is a pull and a restart:
+
+```bash
+git pull && sudo systemctl restart cool-eva
+sudo journalctl -u cool-eva -f    # follow logs
+```
+
+A restart no longer re-initialises a healthy can0: since #160 the service reads the interface first and leaves it alone when it is already configured the way it would configure it, so a deploy should stop punching a five-second hole in the raw capture. It still bounces the link when it genuinely needs reconfiguring — and because it no longer bounces one that merely _looks_ healthy, "restart the service" is no longer the way to kick a wedged adapter: `sudo ip link set can0 down` first, or use the dashboard's CAN-restart button. ⚠️ **Unverified until the first deploy after this shipped** — the bike was powered down when it was written, so the fixtures behind it are synthetic. [`docs/can-capture.md`](can-capture.md) has the conditions, the residual hole and what that first deploy settles.
+
+The dashboard menu's **Update** button does exactly that pull and restart from the phone, showing git's output. It runs the pull as the checkout's **owner** rather than as root — never `sudo git pull`, which poisons `.git` and makes the _next_ pull fail silently. [`docs/deploy.md`](deploy.md) has the why; [INSTALL.md §3](../INSTALL.md) has what to type.
+
+> ⚠️ **Don't run `npm install` or `npm ci` on the Pi unless a dependency actually changed.** `package-lock.json` is generated on macOS, where `socketcan`'s Linux-only native build is skipped as an optionalDependency; installing against that lockfile on the Pi deletes the real one, and the service then dies on boot with `ERR_MODULE_NOT_FOUND: socketcan`. `npm install socketcan` will insist it's "up to date" even with `--force` — the fix is `rm package-lock.json && npm install` **on the Pi** (~4 min). A plain `git pull` never touches `node_modules` and is always safe.

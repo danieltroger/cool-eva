@@ -357,7 +357,7 @@ This section used to say there was **no 2026-09-07 `.celog` on the laptop**, so 
 node --experimental-strip-types scripts/import-ride-log.ts ~/…/ride-logs/<dump>.celog <newer day files> --out rides.db
 ```
 
-Decrypt into a staging file, re-run this recovery over it, materialise the route map's track, and only then replace `rides.db` — the old one is kept beside it as `rides.db.bak-replaced-<runId>`. Nothing touches the live database until the new one is complete, which matters because the decrypt is a multi-minute operation that can run out of heap: measured 2026-09-15, the whole import took **3 min 55 s** for 26 input files and 45 921 309 readings, and the decrypt alone died with a V8 heap OOM at 8 GB before 24 GB carried it. `README.md` §Grafana has the recipe and which files to point it at; `docs/route-map.md` §"Materialised once, not per load" has the map half.
+Decrypt into a staging file, re-run this recovery over it, materialise the route map's track, and only then replace `rides.db` — the old one is kept beside it as `rides.db.bak-replaced-<runId>`. Nothing touches the live database until the new one is complete, which matters because the decrypt is a multi-minute operation that can run out of heap: measured 2026-09-15, the whole import took **3 min 55 s** for 26 input files and 45 921 309 readings, and the decrypt alone died with a V8 heap OOM at 8 GB before 24 GB carried it. `docs/grafana.md` §Grafana has the recipe and which files to point it at; `docs/route-map.md` §"Materialised once, not per load" has the map half.
 
 ### ⚠️ The swap, and the WAL that replays into a stranger
 
@@ -391,3 +391,13 @@ The one corrupt waypoint is an unlikely coincidence. Eleven corrupt fixes across
 The obvious mechanism is that pressing the handlebar button disturbs the GPS decode. **The archive does not support it.** Counting spikes within ±5 s of a `buttons`-group row: 2 of 11 over the whole archive against a 6.75 % background (p ≈ 0.17), or — honestly, since the buttons were only decoded from 2026-08-19 and 8 of the 11 spikes predate that — 2 of 3 over the buttons era against a 20.1 % background (p ≈ 0.105), which at millisecond rather than whole-second resolution is 1 of 3 (p ≈ 0.49). Nothing there.
 
 So: one suggestive number and one refuted explanation. Two mechanisms nobody has tested are whether the spikes cluster with `/waypoint` requests (no signal records an HTTP request, so this needs a log line added first) and whether they cluster with the ride log's fsync or the WebSocket's snapshot heartbeat. Both are cheap to instrument next time the Pi is in reach.
+
+> The following sections preserve the former README at commit `58c7eba` (2026-11-03), including dated measurements and limitations. For first installation, use the [current README](../README.md). Older validation/status claims are historical; the existing subsystem findings and current code take precedence.
+
+## Saving a waypoint from Siri
+
+`GET /waypoint` stamps the current fix into the ride log and replies with one line of text, which Siri reads back. To set it up: **Shortcuts → new shortcut → Get Contents of URL → `http://cool-eva.local/waypoint`**, then add **Speak Text** with the result. Name it something like "Mark this spot" and it works from the handlebars.
+
+A waypoint is stored as three ordinary signals (`waypoint_seq`, `waypoint_lat`, `waypoint_lon`), so it travels the normal path into the encrypted log and needs no change to the log format. It refuses to save on a fix older than 30 seconds, on an unsynced clock, or on a fix that is not a position on Earth, and says which rather than silently recording the wrong place — though a fix that is wrong while still being a legal coordinate is refused by none of those, only flagged later by the map ([#165](https://github.com/danieltroger/cool-eva/issues/165)).
+
+**Seeing them again:** the route map dashboard draws waypoints as stars, with a table under it listing every one in the window and whether the surrounding track backs its position up; the menu sheet's Waypoints tile shows the last one's position and time. `docs/waypoints.md` covers the gate and what it cannot see.
