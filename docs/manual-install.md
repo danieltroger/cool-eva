@@ -58,6 +58,8 @@ Removing the lockfile is for this first Linux installation; [why it is needed](d
 
 ## 4. Enable saved ride history — on your computer
 
+For browser generation and the phone-only file handoff, see [recording key setup](hosted-pages.md#make-recording-keys). Until its hosted address is published, use the laptop route below.
+
 Keep your Pi session open. Install **Node 24** from [nodejs.org](https://nodejs.org/en/download) on the computer if needed.
 
 On your computer, open the [GitHub repository](https://github.com/danieltroger/cool-eva), choose **Code → Download ZIP**, and extract it (on Windows, use **Extract All**). Find the extracted project folder containing `README.md` and `scripts/`. Open a **second computer terminal** and change to that folder, replacing the example path with its actual location:
