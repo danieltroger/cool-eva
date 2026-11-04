@@ -18,6 +18,8 @@ if (ridingFixture.get("fixture") === "all-installed") {
   SCENE.fan = { ...SCENE.fan, dutyPercent: 68, targetPercent: 68, driverEnabled: true, phase: "running" };
   Object.assign(LIVE, {
     soc: [46, "%", "battery"],
+    odometer_can_km: [40012.4, "km", "drive"],
+    kwh_per_100km: [16.9, "kWh/100km", "energy"],
     bms_remaining_energy_wh: [4800, "Wh", "battery"],
     range_km: [40, "km", "energy"],
     bms_state_charge: [0, "", "battery"],
@@ -47,8 +49,9 @@ if (ridingFixture.get("fixture") === "all-installed") {
     cell_cutoff_mv: [3000, "mV", "cells"],
     cell_min_mv: [3120, "mV", "cells"],
     cell_max_mv: [3158, "mV", "cells"],
+    cell_spread_mv: [38, "mV", "cells"],
     cell_lowest_v_idx: [1, "", "cells"],
-    cell_highest_v_idx: [12, "", "cells"],
+    cell_highest_v_idx: [81, "", "cells"],
     allowed_discharge_a: [210, "A", "battery"],
     allowed_regen_a: [55, "A", "battery"],
     fan_target_pct: [68, "%", "fan", fanChangedAt],
@@ -66,9 +69,15 @@ if (ridingFixture.get("fixture") === "all-installed") {
       charge_manager_state: [35, "", "charge"],
     });
   }
+  let cellPosition = 0;
   for (let module = 1; module <= 11; module += 1) {
     for (let cell = 1; cell <= (module <= 4 ? 8 : 7); cell += 1) {
-      LIVE[`lmu${module}_cell${cell}_mv`] = [3120 + ((module * 7 + cell * 3) % 39), "mV", "battery"];
+      cellPosition++;
+      LIVE[`lmu${module}_cell${cell}_mv`] = [
+        cellPosition === 1 ? 3120 : cellPosition === 81 ? 3158 : 3121 + ((cellPosition * 13) % 37),
+        "mV",
+        "battery",
+      ];
     }
     for (const sensor of ["bat1", "pcb1", "pcb2"]) {
       if (sensor === "bat1" && [6, 8].includes(module)) continue;
@@ -99,6 +108,15 @@ instantiate = function instantiateRidingPreview() {
       imports("lib/ring.js")
         .ringFor("coolant_out")
         .push(at, 40 + sample * 0.12);
+    }
+    if (ridingFixture.get("range-history") !== "empty") {
+      const rings = imports("lib/ring.js");
+      for (let sample = 0; sample <= 60; sample++) {
+        const at = now - 122_000 + sample * 2_000;
+        rings.ringFor("pack_kw").push(at, ridingFixture.get("range-history") === "regen" ? 12.168 : -12.168);
+        rings.ringFor("odometer_can_km").push(at, 40010 + sample * 0.04);
+        rings.ringFor("kwh_per_100km").push(at, 16.9);
+      }
     }
     // The template seeds fanReadings() after the harness; restore the real last-change timestamps before mount.
     for (const key of ["fan_auto_mode", "fan_driver_enabled", "fan_duty_pct", "fan_target_pct"]) {

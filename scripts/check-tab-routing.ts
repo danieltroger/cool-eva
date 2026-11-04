@@ -2,6 +2,7 @@ import {
   DEFAULT_TAB,
   TABS,
   ROUTES,
+  RIDING_CYCLE,
   canonicalHash,
   hashForTab,
   nextViewAfter,
@@ -186,14 +187,14 @@ console.log("\n4. the ring the high-beam gesture rides on");
 
 let walked: (typeof ROUTES)[number]["name"] = ROUTES[0].name;
 const visited: string[] = [walked];
-for (let step = 1; step < ROUTES.length; step += 1) {
+for (let step = 1; step < RIDING_CYCLE.length; step += 1) {
   walked = nextViewAfter(walked);
   visited.push(walked);
 }
 
 check(
-  `${ROUTES.length} advances from ${ROUTES[0].name} visit every view exactly once`,
-  new Set(visited).size === ROUTES.length && visited.join(",") === "ride,cooling,hypermile,charge,all,faults"
+  `${RIDING_CYCLE.length} advances from ${ROUTES[0].name} visit every view exactly once`,
+  new Set(visited).size === RIDING_CYCLE.length && visited.join(",") === "ride,cooling,hypermile,charge,all,faults"
 );
 check(`one more comes back to ${ROUTES[0].name}`, nextViewAfter(walked) === ROUTES[0].name);
 check(
@@ -201,6 +202,16 @@ check(
   canonicalHash("#ride/cooling").view === "cooling" && canonicalHash("#ride/cooling").rewriteTo === null
 );
 
+check(
+  "Cells has a pinned subview bookmark",
+  canonicalHash("#hypermile/cells").view === "cells" &&
+    canonicalHash("#hypermile/cells").tab === "hypermile" &&
+    canonicalHash("#hypermile/cells").rewriteTo === null
+);
+check(
+  "Cells advances to Charge, outside the six-stop cycle",
+  nextViewAfter("cells") === "charge" && RIDING_CYCLE.length === 6
+);
 console.log("");
 if (failures > 0) {
   console.error(`FAILED — ${failures} assertion${failures === 1 ? "" : "s"}`);

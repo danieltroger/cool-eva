@@ -143,11 +143,3 @@ export function lossFraction(percent) {
   }
   return BAD;
 }
-
-/** Power direction and palette history: docs/ride-power.md. @param {number | null} kilowatts */
-export function power(kilowatts) {
-  if (kilowatts == null) {
-    return MUTED;
-  }
-  return kilowatts > 0.5 ? GOOD : FLOW;
-}

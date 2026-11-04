@@ -1,6 +1,6 @@
 # Dashboard view routing
 
-The bottom destinations retain their original addresses, including #hypermile for Range. Cooling adds #ride/cooling; a current-parent tap and an automatic parent arrival restore the overview as real disarming navigations. The six-stop handlebar cycle is the exported view table. New subviews join the table when their actual content lands.
+The bottom destinations retain their original addresses, including #hypermile for Range. Cooling adds #ride/cooling; a current-parent tap and an automatic parent arrival restore the overview as real disarming navigations. The six-stop handlebar cycle is RIDING_CYCLE, separate from the complete ROUTES table. New subviews join the table when their actual content lands.
 
 Browser history is the only history stack. Explicit arrivals start at the top; URL restoration disarms separately because Back/Forward and hash edits bypass the explicit navigation function. Menu pages retain their gesture and automatic-move exclusions and return to the actual subview label.
 
@@ -14,10 +14,11 @@ The parent and subview states are private and have exactly two writers: explicit
 | --- | --- | --- | --- |
 | Ride / Cooling | `#ride` / `#ride/cooling`, riding views | Ride → Cooling → Range | Restore the requested parent overview |
 | Range / Charge / All / Faults | Existing `#hypermile` / `#charge` / `#all` / `#faults` riding views | Continue the six-stop cycle | Charge start → Charge; charge exit while on Charge → Ride; near-empty → Range |
-| Bike information / Session | Existing `panel=bike-information` / `panel=session` menu pages | Excluded; return to the originating view | Excluded; edges are consumed without a queued jump on return |
+| Cells | `#hypermile/cells`, scrolling URL subview | Charge overview | Charge start → Charge; near-empty → Range overview |
+| Bike information / Session / Battery & cooling | Existing `panel=bike-information` / `panel=session` / `panel=battery-cooling` menu pages | Excluded; return to the originating view | Excluded; edges are consumed without a queued jump on return |
 | Settings / Advanced service | Existing `panel=settings` / `panel=advanced-service` menu pages | Excluded | Excluded |
 
-Cells, Charge details, Battery & cooling and the full Fault report are added with their content in later changes. Cells and Charge details are URL subviews whose next handlebar stop is the next parent overview; a charge start restores the Charge overview even from an already-selected Charge detail. Battery & cooling is a menu page with the same exclusions as Session. The Fault report is a URL subview whose next stop is Ride. Their Back actions retain their actual origins.
+Cells (#hypermile/cells) and the Battery & cooling menu page (panel=battery-cooling) are now implemented; Charge details and the full Fault report follow in later changes. Cells and Charge details are URL subviews whose next handlebar stop is the next parent overview; a charge start restores the Charge overview even from an already-selected Charge detail. Battery & cooling is a menu page with the same exclusions as Session. The Fault report is a URL subview whose next stop is Ride. Their Back actions retain their actual origins.
 
 The original canonicalisation constraints are preserved below:
 
@@ -26,3 +27,5 @@ What to do about a fragment: the tab it lands on, what the URL should be rewritt
 Pure, so the rule can be checked without a browser; the same split as headroomMvWith() in lib/derive.js, and for the same reason.
 
 Rewriting only when it would CHANGE something is the part worth not undoing: Back through ten tabs must not spend ten replaceState calls out of Safari's bucket. Why rewrite at all, and why no caller pushes: docs/dashboard-decisions.md §Routing.
+
+Cells returns to its actual browser-history origin, including Battery & cooling after reload; direct entry falls back to Range. Its next gesture advances from the Range parent to Charge. Native browser history retains scroll positions; the real-preview sequence covers scrolling Cells, parent reset, Back, Forward and reload.

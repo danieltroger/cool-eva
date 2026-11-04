@@ -33,11 +33,14 @@ export const ROUTES = /** @type {const} */ ([
   { name: "ride", tab: "ride", label: "Ride", hash: "#ride" },
   { name: "cooling", tab: "ride", label: "Cooling", hash: "#ride/cooling" },
   { name: "hypermile", tab: "hypermile", label: "Range", hash: "#hypermile" },
+  { name: "cells", tab: "hypermile", label: "Cells", hash: "#hypermile/cells" },
   { name: "charge", tab: "charge", label: "Charge", hash: "#charge" },
   { name: "all", tab: "all", label: "All", hash: "#all" },
   { name: "faults", tab: "faults", label: "Faults", hash: "#faults" },
 ]);
 /** @typedef {(typeof ROUTES)[number]["name"]} ViewName */
+
+export const RIDING_CYCLE = /** @type {const} */ (["ride", "cooling", "hypermile", "charge", "all", "faults"]);
 
 /**
  * Where a URL that names no tab lands, and where one that names something unknown
@@ -107,7 +110,11 @@ export function showView(name) {
   // Only a real view change loses confirmation context; a repeated tab tap is a no-op.
   armed.val = "";
   try {
-    history.pushState(null, "", hashForView(name));
+    history.pushState(
+      name === "cells" ? { coolEvaSubview: true, backName: currentViewLabel() } : null,
+      "",
+      hashForView(name)
+    );
   } catch (error) {
     // Safari refuses more than about a hundred pushState calls in thirty seconds. No
     // hand can tap that fast, but this is reachable from a handlebar gesture, and a
@@ -132,9 +139,11 @@ export function advanceTab() {
 
 /** @param {ViewName} name @returns {ViewName} */
 export function nextViewAfter(name) {
-  // Unknown names wrap to the first view; the -1 case is explained in docs/dashboard-routing.md.
-  const index = ROUTES.findIndex(route => route.name === name);
-  return ROUTES[(index + 1) % ROUTES.length].name;
+  // Deliberate details advance from their parent; Cooling is itself a cycle stop.
+  const route = ROUTES.find(route => route.name === name);
+  const from = RIDING_CYCLE.some(stop => stop === name) ? name : route?.tab;
+  const index = RIDING_CYCLE.findIndex(stop => stop === from);
+  return RIDING_CYCLE[(index + 1) % RIDING_CYCLE.length];
 }
 
 /** @param {ViewName} name */

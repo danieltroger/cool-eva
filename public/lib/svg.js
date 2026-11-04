@@ -153,11 +153,7 @@ export function ring({ fraction, color }) {
 /**
  * A row of thin vertical bars — the 81 cell voltages, weakest highlighted. Reading
  * 81 numbers is impossible; seeing which bar is short is instant.
- * @param {object} options
- * @param {Array<{ value: number, color: string }>} options.bars
- * @param {number} options.low bottom of the scale
- * @param {number} options.high top of the scale
- * @param {number} [options.height]
+ * @param {{bars:Array<{value:number|null,color:string,key?:string,state?:string}>,low:number,high:number,height?:number}} options
  * @returns {Element}
  */
 export function barStrip({ bars, low, high, height = 60 }) {
@@ -165,6 +161,19 @@ export function barStrip({ bars, low, high, height = 60 }) {
   const span = Math.max(high - low, 1);
   const barWidth = width / Math.max(bars.length, 1);
   const rects = bars.map((bar, index) => {
+    if (bar.value === null) {
+      return svgTags.rect({
+        x: (index * barWidth).toFixed(2),
+        y: 0,
+        width: Math.max(barWidth - 0.25, 0.3).toFixed(2),
+        height,
+        style: `fill:none;stroke:${bar.color}`,
+        "stroke-width": 0.15,
+        "stroke-dasharray": "1 2",
+        "data-cell": bar.key ?? String(index + 1),
+        "data-state": bar.state ?? "missing",
+      });
+    }
     const fraction = Math.max(0, Math.min(1, (bar.value - low) / span));
     const barHeight = Math.max(fraction * height, 0.5);
     return svgTags.rect({
@@ -173,6 +182,8 @@ export function barStrip({ bars, low, high, height = 60 }) {
       width: Math.max(barWidth - 0.25, 0.3).toFixed(2),
       height: barHeight.toFixed(2),
       style: `fill:${bar.color}`,
+      "data-cell": bar.key ?? String(index + 1),
+      "data-state": bar.state ?? "fresh",
     });
   });
   return svgTags.svg({ viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: "none", class: "strip" }, ...rects);

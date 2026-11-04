@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import * as colors from "../public/lib/colors.js";
+assert.equal(Object.hasOwn(colors, "power"), false, "The retired threshold-based power colour API must not return.");
 import { powerPosition, ridePowerState } from "../public/lib/ride-power-state.js";
 import type { ReadingStatus } from "../public/lib/reading-status.js";
 import { POWER_SCALE_KW, limitKw } from "../public/lib/power-limits.js";
@@ -67,6 +69,7 @@ for (const [value, charging, moving, label, magnitude, color] of [
   [-48.3, false, true, "DRIVE", "48", "flow"],
   [8, false, true, "REGEN", "8.0", "good"],
   [0.2, false, true, "REGEN", "0.2", "good"],
+  [0.2, false, false, "POWER IN", "0.2", "good"],
   [-0.2, false, true, "DRIVE", "0.2", "flow"],
   [0, false, true, "POWER", "0.0", "fg"],
   [-0.01, false, true, "POWER", "0.0", "fg"],

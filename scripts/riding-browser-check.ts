@@ -1,3 +1,6 @@
+import { assertFixedLayout, resetLayoutClearance, layoutClearance } from "./riding-layout-browser.ts";
+import { assertRangeContent, checkRangeCases } from "./riding-range-browser.ts";
+import { assertCellsContent, checkCellsNavigation } from "./riding-cells-browser.ts";
 import { checkHistoryAndGestures } from "./riding-navigation-browser.ts";
 import { checkCoolingFan } from "./riding-fan-browser.ts";
 import { checkFaultRecovery } from "./riding-fault-browser.ts";
@@ -11,7 +14,8 @@ import { evaluateOnPage, gotoPage, waitOnPage, resizePage, setPageInsets, type H
 const COVERAGE = {
   ride: "fixed",
   cooling: "fixed",
-  hypermile: "legacy",
+  hypermile: "fixed",
+  cells: "scrolling",
   charge: "legacy",
   all: "scrolling",
   faults: "legacy",
@@ -26,10 +30,10 @@ const COOLING_SIGNALS = [
   "ambient_temp",
   "fan_target_pct",
 ];
-let minimumClearance = Infinity;
+export { assertFixedLayout } from "./riding-layout-browser.ts";
 
 export async function checkRidingBrowser(page: HeadlessPage, previewFile: string): Promise<void> {
-  minimumClearance = Infinity;
+  resetLayoutClearance();
   assert.deepEqual(
     ROUTES.map(route => route.name).sort(),
     Object.keys(COVERAGE).sort(),
@@ -38,7 +42,11 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
   const fixedViews = Object.entries(COVERAGE)
     .filter(([, policy]) => policy === "fixed")
     .map(([name]) => name);
-  assert.deepEqual(fixedViews, ["ride", "cooling"], "Fixed-view coverage must match the converted screens.");
+  assert.deepEqual(
+    fixedViews,
+    ["ride", "cooling", "hypermile"],
+    "Fixed-view coverage must match the converted screens."
+  );
   for (const geometry of [
     { height: 844, top: 47 },
     { height: 797, top: 0 },
@@ -58,10 +66,14 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
         if (fixedViews.includes(route.name)) {
           if (route.name === "ride") {
             await assertRideContent(page);
+          } else if (route.name === "hypermile") {
+            await assertRangeContent(page);
           } else {
             await assertCoolingContent(page);
           }
           await assertFixedLayout(page);
+        } else if (route.name === "cells") {
+          await assertCellsContent(page);
         }
       }
       assert.deepEqual(
@@ -71,6 +83,8 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
       );
       await checkNoticeStates(page, previewFile, theme);
       await checkNoticeStates(page, previewFile, theme, "#ride");
+      await checkNoticeStates(page, previewFile, theme, "#hypermile");
+      await checkRangeCases(page, previewFile, assertFixedLayout, theme);
       await checkRideBrowser(page, previewFile, assertFixedLayout, theme);
       await checkPowerWords(page, previewFile, assertFixedLayout, theme);
     }
@@ -84,13 +98,14 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
   await setPageInsets(page, { top: 47, bottom: 34, left: 0, right: 0 });
   await checkInsetCounterexample(page, previewFile);
   await checkHistoryAndGestures(page, previewFile);
+  await checkCellsNavigation(page, previewFile);
   await checkCoolingFailures(page, previewFile);
   await checkCoolingFan(page, previewFile, assertFixedLayout);
   for (const theme of ["dark", "light"]) {
     await checkFaultRecovery(page, previewFile, assertFixedLayout, theme);
   }
   console.log(
-    `  ✓ riding: real PWA/native insets, ${minimumClearance}px minimum Ride/Cooling clearance, complete content, notices/Connect, history/reload and both gestures`
+    `  ✓ riding: real PWA/native insets, ${layoutClearance()}px minimum Ride/Cooling/Range clearance, complete content, notices/Connect, history/reload and both gestures`
   );
 }
 
@@ -204,61 +219,6 @@ async function assertCoolingContent(page: HeadlessPage) {
   );
 }
 
-interface Layout {
-  scroll: number;
-  width: number;
-  clearance: number;
-  header: number;
-  tabs: number;
-  padding: number;
-  flush: number;
-  overflow: string[];
-  smallTargets: string[];
-  hiddenOverflow: boolean;
-  textOutside: string[];
-}
-
-export async function assertFixedLayout(page: HeadlessPage) {
-  const result = (await evaluateOnPage(
-    page,
-    `(() => {
-    const view = document.querySelector('.riding-view');
-    const header = document.querySelector('.header').getBoundingClientRect();
-    const tabs = document.querySelector('.tabs').getBoundingClientRect();
-    const boxes = [...view.querySelectorAll('.tile,.value,.sub,.label,.ride-speed,.ride-soc,button'), ...document.querySelectorAll('.header-notice:not([hidden]),.header .status')];
-    const textOutside = [...view.querySelectorAll('.value,.label,.sub,.ride-speed,.ride-soc')].filter(element => {
-      const range=document.createRange(); range.selectNodeContents(element);
-      const text=range.getBoundingClientRect(); const card=element.closest('.tile').getBoundingClientRect();
-      return text.width>0 && (text.left<card.left || text.right>card.right || text.top<card.top || text.bottom>card.bottom);
-    }).map(element => element.className);
-    return {
-      textOutside,
-      scroll:document.scrollingElement.scrollHeight-document.scrollingElement.clientHeight,
-      width:document.body.scrollWidth,
-      clearance:tabs.top-view.getBoundingClientRect().bottom,
-      header:header.height-parseFloat(getComputedStyle(document.querySelector('.header')).paddingTop),
-      tabs:tabs.height, padding:parseFloat(getComputedStyle(document.body).paddingBottom),
-      flush:view.getBoundingClientRect().top-header.bottom,
-      overflow:boxes.filter(element => element.scrollWidth>element.clientWidth+1 || (element.classList.contains('tile') && element.scrollHeight>element.clientHeight+1) || getComputedStyle(element).textOverflow==='ellipsis').map(element => element.className+': '+element.textContent),
-      smallTargets:[...document.querySelectorAll('.header button,.tabs button,.sub-tabs button')].filter(element => !element.hidden && (element.getBoundingClientRect().width<44 || element.getBoundingClientRect().height<44)).map(element => element.textContent),
-      hiddenOverflow:[view,document.body,document.documentElement,...view.querySelectorAll('.tile,.value,.label,.sub,[data-signal]')].some(element => ['hidden','clip'].includes(getComputedStyle(element).overflowY))
-    };
-  })()`
-  )) as Layout;
-  assert.equal(result.scroll, 0, `A riding view must not scroll: ${JSON.stringify(result)}`);
-  assert.equal(result.width, 390);
-  assert.ok(result.clearance >= 12, `At least 12 px of real riding clearance is required: ${JSON.stringify(result)}`);
-  minimumClearance = Math.min(minimumClearance, result.clearance);
-  assert.equal(result.header, 52);
-  assert.equal(result.tabs, 84);
-  assert.equal(result.padding, 84);
-  assert.equal(result.flush, 0);
-  assert.deepEqual(result.textOutside, [], "Full reading text must remain inside its card.");
-  assert.deepEqual(result.overflow, [], "Text, charts and notices must fit internally without ellipsizing.");
-  assert.deepEqual(result.smallTargets, [], "Every visible target must remain at least 44×44.");
-  assert.equal(result.hiddenOverflow, false, "Hiding overflow is not a layout fix.");
-}
-
 async function checkNoticeStates(page: HeadlessPage, file: string, theme: string, hash = "#ride/cooling") {
   for (const link of ["live", "offline", "connecting", "ble-connect"]) {
     await openPreview(
@@ -334,7 +294,7 @@ async function checkNoticeStates(page: HeadlessPage, file: string, theme: string
     );
     assert.equal(
       await evaluateOnPage(page, "document.querySelector('.header .menu').textContent"),
-      hash === "#ride" ? "‹ Ride" : "‹ Cooling"
+      hash === "#ride" ? "‹ Ride" : hash === "#hypermile" ? "‹ Range" : "‹ Cooling"
     );
     await evaluateOnPage(
       page,

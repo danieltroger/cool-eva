@@ -13,7 +13,15 @@ export function ridePowerDisplay(state, moving) {
   if (Number(magnitude) === 0) return { label: "POWER", magnitude: "0.0", color: CALM };
   return {
     label:
-      state.value > 0 ? (state.charging ? "CHARGING" : "REGEN") : moving && !state.charging ? "DRIVE" : "POWER OUT",
+      state.value > 0
+        ? state.charging
+          ? "CHARGING"
+          : moving
+            ? "REGEN"
+            : "POWER IN"
+        : moving && !state.charging
+          ? "DRIVE"
+          : "POWER OUT",
     magnitude,
     color: state.value > 0 ? GOOD : FLOW,
   };
