@@ -1,5 +1,5 @@
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
+import { settingsPaths } from "../src/settings/paths.ts";
 import { decodeFreezeFrameResponse, formatFreezeFrameValue } from "../src/diagnostics/freeze-frame.ts";
 import {
   describeFreezeFrameLogResult,
@@ -45,10 +45,10 @@ import { answeredCount, writeLifetimeRead, type StoredLifetimeReply } from "../s
 // client: `0x10`, `0x3E`, `0x17`, `0x18`, `0x35`, `0x36`, `0x37`. There is no argument
 // that names a service and none that names a value.
 
-const CAN_IFACE = process.env.CAN_IFACE ?? "can0";
+const CAN_IFACE = argumentValue("--interface") ?? "can0";
 
 /** Where `--save` writes. The same default and the same override the service uses. */
-const STORE_DIRECTORY = process.env.VCU_PARAM_DIR ?? join(dirname(fileURLToPath(import.meta.url)), "..", "vcu-params");
+const STORE_DIRECTORY = resolve(argumentValue("--directory") ?? settingsPaths().vcuParameterDirectory);
 
 const job = parseFreezeFrameArguments(process.argv.slice(2));
 if (!job) {
@@ -300,4 +300,14 @@ function reportRaw(
 /** One byte as two uppercase hex digits. */
 function hex(byte: number): string {
   return byte.toString(16).padStart(2, "0").toUpperCase();
+}
+
+function argumentValue(flag: string): string | undefined {
+  const index = process.argv.indexOf(flag);
+  if (index === -1) return undefined;
+  const value = process.argv[index + 1];
+  if (!value || value.startsWith("--")) {
+    throw new Error(`${flag} needs a value.`);
+  }
+  return value;
 }

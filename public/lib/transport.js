@@ -1,5 +1,6 @@
 // @ts-check
 
+import { requireCurrentPage } from "./page-reload.js";
 import { BLE_MODE, nativeShell, tunnelRequest } from "./ble-link.js";
 
 // How the dashboard reaches the Pi's endpoints: `fetch` when the page was served by the
@@ -34,19 +35,28 @@ import { BLE_MODE, nativeShell, tunnelRequest } from "./ble-link.js";
  * @returns {Promise<EndpointResponse>}
  */
 export async function request(path, init = {}) {
+  if (init.method && !["GET", "HEAD"].includes(init.method)) {
+    init = { ...init, headers: { "Content-Type": "application/json", ...init.headers } };
+  }
   if (!BLE_MODE) {
     const { onProgress: _unused, ...fetchInit } = init;
-    return fetch(path, fetchInit);
+    const response = await fetch(path, fetchInit);
+    if (response.status === 403) {
+      await requireCurrentPage(response.clone());
+    }
+    return response;
   }
   const answer = await tunnelRequest(path, init);
   const contentType = answer.headers["content-type"] ?? "";
-  return {
+  const response = {
     ok: answer.status >= 200 && answer.status < 300,
     status: answer.status,
     json: async () => JSON.parse(new TextDecoder().decode(answer.body)),
     text: async () => new TextDecoder().decode(answer.body),
     blob: async () => new Blob([answer.body], { type: contentType }),
   };
+  await requireCurrentPage(response);
+  return response;
 }
 
 /**

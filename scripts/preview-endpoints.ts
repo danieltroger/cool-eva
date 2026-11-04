@@ -78,11 +78,19 @@ const TRANSPORT_FILES = new Set(["lib/transport.js", "lib/ble-link.js"]);
  * is a navigation, as the `location.href` it replaced was, so a preview's stubbed fetch never
  * sees it.
  */
-const ENDPOINT_CALLS = new Set(["fetch", "request"]);
+const ENDPOINT_CALLS = new Set(["fetch", "request", "settingsAction"]);
 
 function collectFetches(node: ts.Node, file: string, found: Map<string, string>, problems: string[]): void {
   if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && ENDPOINT_CALLS.has(node.expression.text)) {
-    const argument = node.arguments[0];
+    const argument = node.arguments[node.expression.text === "settingsAction" ? 1 : 0];
+    if (
+      file === "lib/settings.js" &&
+      node.expression.text === "request" &&
+      argument &&
+      ts.isIdentifier(argument) &&
+      argument.text === "path"
+    )
+      return;
     const path = argument ? literalPath(argument) : null;
     if (path === null) {
       problems.push(`${file}: a fetch() whose path this check cannot read — ${node.getText().slice(0, 60)}`);

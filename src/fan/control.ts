@@ -18,14 +18,7 @@ import { openFanPwm, type FanPwm } from "./pwm.ts";
 // computes one from the pack temperature; both arrive through setDutyPercent() and this
 // file cannot tell them apart, which is what keeps the orderings above in one place.
 
-/**
- * ⚠️ OPT IN — `=== "1"`, deliberately the opposite of COOLANT_ENABLED and OBD_ENABLED,
- * which are opt-out. Almost no Eva has this fan, so the default has to be a Pi that never
- * opens /sys/class/pwm and never spawns `pinctrl`. One of exactly two opt-in switches in
- * this repo; SERVICE_WRITE_ENABLED is the other, and docs/configuration.md says so
- * on both rows.
- */
-const FAN_ENABLED = process.env.FAN_ENABLED === "1";
+// An uninstalled fan must never initialise GPIO or PWM; startup passes the saved installation choice.
 
 /**
  * How long the fan is held at full duty from rest before it drops to the target.
@@ -135,8 +128,8 @@ interface FanContext {
  * dashboard show.
  */
 export async function startFanControl(options: FanControlOptions = {}): Promise<FanController> {
-  if (!(options.enabled ?? FAN_ENABLED)) {
-    console.log("fan: disabled (set FAN_ENABLED=1 on a bike with the IBT-2 fan driver wired up)");
+  if (!(options.enabled ?? false)) {
+    console.log("fan: off — enable an installed fan under Settings → Bike setup");
     return inertController(false, null);
   }
 
@@ -417,7 +410,7 @@ function snapshotState(context: FanContext): FanState {
 
 /** A controller that owns no hardware: FAN_ENABLED unset, or bring-up failed. */
 function inertController(configured: boolean, fault: string | null): FanController {
-  const refusal = fault ?? "fan control is switched off on this Pi (FAN_ENABLED is not 1)";
+  const refusal = fault ?? "Enable an installed radiator fan under Settings → Bike setup.";
   return {
     configured,
     fault,

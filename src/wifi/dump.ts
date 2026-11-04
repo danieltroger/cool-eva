@@ -1,4 +1,5 @@
-import { mkdir, readdir, unlink } from "fs/promises";
+import { ensureArchiveDirectory } from "../storage/archive-access.ts";
+import { readdir, unlink } from "fs/promises";
 import { join } from "path";
 import { replaceFileDurably } from "../storage/durable.ts";
 import { collectWifiState } from "./collect.ts";
@@ -43,7 +44,7 @@ export async function writeWifiDump(directory: string, iface: string, uptimeSeco
 export async function writeDumpText(directory: string, at: number, text: string): Promise<string | null> {
   const path = join(directory, `${dumpFilename(at)}.txt`);
   try {
-    await mkdir(directory, { recursive: true });
+    await ensureArchiveDirectory(directory);
     await replaceFileDurably(path, text);
   } catch (error) {
     console.warn(`wifi-diag: could not write ${path}:`, error instanceof Error ? error.message : error);

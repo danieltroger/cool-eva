@@ -37,10 +37,66 @@ function message(type, readings) {
   const at = Date.now();
   const signals = {};
   for (const [key, reading] of Object.entries(readings)) {
+    if (!SETTINGS.active.coolantProbesEnabled && (key === "coolant_in" || key === "coolant_out")) {
+      continue;
+    }
     signals[key] = { value: reading[0], unit: reading[1], group: reading[2], ts: reading[3] ?? at };
   }
-  return { type, ts: at, signals };
+  return {
+    type,
+    ts: at,
+    signals,
+    ...(type === "snapshot"
+      ? {
+          system: {
+            settingsFault: SETTINGS.fault,
+            can: {
+              state: SETTINGS.readiness.can === "Receiving motorcycle traffic" ? "up" : "down",
+              message: SETTINGS.readiness.can,
+            },
+          },
+        }
+      : {}),
+  };
 }
+
+const SETTINGS_VALUES = {
+  coolantProbesEnabled: false,
+  radiatorFanEnabled: true,
+  customBmsConfigurationFlashed: false,
+  automaticDcChargingEnabled: true,
+  phoneHotspotSsid: "",
+  rideLogDirectory: "/var/lib/cool-eva/ride-logs",
+  vcuParameterDirectory: "/var/lib/cool-eva/vcu-params",
+  hubAddress: "02:00:00:00:00:01",
+  discoverHubOnce: true,
+  recordingKeyConfigured: true,
+  bluetoothCodeId: "synthetic-code-id",
+};
+const SETTINGS = {
+  ok: true,
+  source: "legacy",
+  version: "Synthetic preview",
+  recordingFingerprint: "synthetic-public-key-fingerprint",
+  processGeneration: "synthetic-process",
+  instanceId: "synthetic-pi",
+  revision: 0,
+  saved: { ...SETTINGS_VALUES },
+  active: { ...SETTINGS_VALUES },
+  pending: [],
+  fault: null,
+  notices: ["coolant-default-off", "hub-discover-once"],
+  readiness: {
+    coolant: "Off",
+    fan: "Driver ready; no rotation sensor",
+    recording: "Recording",
+    bluetooth: "Bluetooth ready",
+    hub: "Connected",
+    can: "Receiving motorcycle traffic",
+  },
+  restart: { state: "idle", message: "" },
+  locations: { root: "/var/lib/cool-eva", wifi: "/var/lib/cool-eva/wifi-diag", captures: "/var/lib/cool-eva/captures" },
+};
 
 window.fetch = function previewFetch(input, init) {
   const request = typeof input === "string" ? input : input && input.url ? input.url : String(input);
@@ -48,6 +104,67 @@ window.fetch = function previewFetch(input, init) {
   const method = ((init && init.method) || "GET").toUpperCase();
   const path = url.pathname;
 
+  if (path === "/settings") {
+    if (method === "GET" && new URL(window.location.href).searchParams.get("settings") === "unconfirmed") {
+      return json({ ok: false, message: "Synthetic unavailable settings" }, 503);
+    }
+    if (method === "PATCH") {
+      const body = JSON.parse(init.body);
+      if (body.revision !== SETTINGS.revision)
+        return json({ ok: false, message: "Settings changed. Reload before saving." }, 409);
+      const changes = { ...body.changes };
+      if (Object.hasOwn(changes, "dashboardBluetoothSecret")) {
+        SETTINGS.saved.bluetoothCodeId = changes.dashboardBluetoothSecret
+          ? `synthetic-code-${SETTINGS.revision + 1}`
+          : null;
+        delete changes.dashboardBluetoothSecret;
+      }
+      if (Object.hasOwn(changes, "rideLogPublicKeyPem")) {
+        SETTINGS.saved.recordingKeyConfigured = !!changes.rideLogPublicKeyPem;
+        delete changes.rideLogPublicKeyPem;
+      }
+      Object.assign(SETTINGS.saved, changes);
+      SETTINGS.revision += 1;
+      SETTINGS.pending = Object.keys(SETTINGS.saved)
+        .filter(key => SETTINGS.saved[key] !== SETTINGS.active[key])
+        .map(key =>
+          key === "bluetoothCodeId"
+            ? "dashboardBluetoothSecret"
+            : key === "recordingKeyConfigured"
+              ? "rideLogPublicKeyPem"
+              : key
+        );
+      return json({ ok: true, message: "Saved. Applies after restart.", settings: SETTINGS });
+    }
+    return json(SETTINGS);
+  }
+  if (path === "/settings/apply") {
+    SETTINGS.restart = {
+      state: "scheduled",
+      message: "Preview: restart requested. Reconnect to confirm active settings.",
+    };
+    return json({ ok: true, message: SETTINGS.restart.message, settings: SETTINGS });
+  }
+  if (path === "/settings/hub-candidates")
+    return json({
+      ok: true,
+      message: "Choose your own motorcycle.",
+      candidates: [{ name: "Synthetic Energica", address: "02:00:00:00:00:02" }],
+    });
+  if (path === "/settings/hub") {
+    const body = JSON.parse(init.body);
+    if (body.revision !== SETTINGS.revision) {
+      return json({ ok: false, message: "Settings changed. Reload before saving." }, 409);
+    }
+    SETTINGS.saved.hubAddress = body.address;
+    SETTINGS.saved.discoverHubOnce = false;
+    SETTINGS.revision += 1;
+    SETTINGS.pending = ["hubAddress"];
+    return json({ ok: true, message: "Saved. Applies after restart.", settings: SETTINGS });
+  }
+  if (path === "/recording/flush") {
+    return json({ ok: true, message: "Recording sealed for download." });
+  }
   if (path === "/status") {
     return json(STATUS);
   }

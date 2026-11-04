@@ -1,4 +1,5 @@
-import { mkdir, readFile } from "node:fs/promises";
+import { ensureArchiveDirectory } from "../storage/archive-access.ts";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { replaceFileDurably } from "../storage/durable.ts";
 import { MAX_COMPONENT, MIN_COMPONENT } from "../diagnostics/freeze-frame.ts";
@@ -119,7 +120,7 @@ async function applyExpectedFault(directory: string, fault: ExpectedFault, expec
   }
   const entries = expected ? [...without, fault].sort(byComponentThenSymptom) : without;
   const next: ExpectedFaults = { entries, updatedAt: Date.now() };
-  await mkdir(directory, { recursive: true });
+  await ensureArchiveDirectory(directory);
   await replaceFileDurably(join(directory, FILE), `${JSON.stringify(next, null, 2)}\n`);
   console.log(
     `expected-faults: ${fault.component}/${fault.symptom} ${expected ? "marked expected" : "unmarked"} — ${entries.length} on the list`

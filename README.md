@@ -63,11 +63,11 @@ git checkout -- package-lock.json
 
 <!-- for-now: #327 -->
 
-For now, follow the [computer key setup](docs/manual-install.md#4-enable-saved-ride-history--on-your-computer): run `node --experimental-strip-types scripts/generate-log-key.ts`, back up the private key and copy only the public key to the Pi; without it, the dashboard works but no rides are saved.
+For now, follow the [computer key setup](docs/manual-install.md#4-enable-saved-ride-history--on-your-computer): run `node --experimental-strip-types scripts/generate-log-key.ts`, back up the private key, then upload only the public key in Settings → Ride recording after starting the service; without it, the dashboard works but no rides are saved.
 
 ### 5. Before the first service start
 
-[Read what can change the bike](#what-can-change-the-bike).
+[Read what can change the bike](#what-can-change-the-bike). Fresh settings leave the motorcycle hub unselected and optional hardware off. The dashboard’s Settings screen replaces environment configuration; see the [configuration reference](docs/configuration.md).
 
 ### 6. Start and check — on the Pi
 
@@ -77,6 +77,7 @@ For now, start the service with:
 
 ```sh
 cd /home/pi/cool-eva
+printf '{}\n' | sudo "$(command -v node)" --experimental-strip-types scripts/configure-settings.ts
 sudo "$(command -v node)" --experimental-strip-types scripts/setup-service.ts
 ```
 
@@ -85,14 +86,14 @@ With the **bike awake and parked**, open the dashboard below and check for live 
 ## Open the dashboard
 
 - **Bluetooth:** [Connect over BLE](docs/connecting-over-bluetooth.md) using **Chrome on Android** or **Bluefy on iPhone**. The experimental [iOS app](docs/ios-app.md) requires an Xcode build and has not been tested on a phone. Bluetooth needs a [secret set on the Pi over Wi-Fi](docs/dashboard.md) first; after that, it avoids waiting on the hotspot settings page. A browser must first load the hosted page online.
-- **Wi-Fi/hotspot:** open **[http://cool-eva.local](http://cool-eva.local)** on the same network in any browser. Viewing works without internet. The Pi still needs Wi-Fi internet for **Menu → Update**, even when the phone uses Bluetooth. See [dashboard details and IP fallback](docs/dashboard.md) or [update help](docs/deploy.md#running-it).
+- **Wi-Fi/hotspot:** open **[http://cool-eva.local](http://cool-eva.local)** on the same network in any browser. Viewing works without internet. The Pi still needs Wi-Fi internet for **Menu → Settings → Cool Eva → Update**, even when the phone uses Bluetooth. See [dashboard details and IP fallback](docs/dashboard.md) or [update help](docs/deploy.md#running-it).
 
 Use the phone while parked. Missing coolant or detailed cell readings on a stock bike is normal; see [what each screen shows](docs/dashboard.md).
 
 ## What can change the bike
 
-- Starting Cool Eva enrolls the Pi with the bike's Bluetooth hub, which remembers **one authorized device**; it can replace your existing pairing. Read [pairing details](docs/bike-changes.md#bluetooth-pairing-before-startup) before starting.
-- Telemetry sends diagnostic read requests. **Automatic DC charge management starts in automatic mode** and can request current changes without asking each time; on stock BMS settings it only changes the dash's maximum-current figure. See [controls and limits](docs/bike-changes.md).
+- Choosing a motorcycle in Settings → Connections and restarting enrolls the Pi with the bike's Bluetooth hub, which remembers **one authorized device**; it can replace your existing pairing. Read [pairing details](docs/bike-changes.md#bluetooth-pairing-before-startup) before starting.
+- Telemetry sends diagnostic read requests. **Automatic DC charge management starts in automatic mode** and can request current changes without asking each time; on stock BMS settings its practical effect can be the dash’s maximum-current figure, but it still sends the current request. See [controls and limits](docs/bike-changes.md).
 - Manual bike actions take two taps and vehicle-state checks; some are irreversible. An enabled optional fan can start by itself. Read [actions, gates and fan precautions](docs/bike-changes.md).
 
 ## Get help

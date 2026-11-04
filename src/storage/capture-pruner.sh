@@ -10,6 +10,14 @@ if [ "$#" -ne 0 ] || [ "$(id -u)" -ne 0 ]; then
   exit 2
 fi
 
+# A fixed, non-mutating stdin probe lets the service verify the owner's sudo path
+# before moving archives. It grants no arguments, paths or delete operation.
+IFS= read -r name || exit 0
+if [ "$name" = 'COOL_EVA_STDIN_PROBE' ]; then
+  printf 'COOL_EVA_PRUNE_STDIN_OK\n'
+  exit 0
+fi
+
 DIRECTORY=/var/lib/cool-eva/captures
 if [ -L "$DIRECTORY" ] || [ ! -d "$DIRECTORY" ]; then
   echo 'capture directory must be a real directory' >&2
@@ -43,7 +51,7 @@ case "$BOOT_ID" in
   ????????) ;;
   *) echo 'cannot determine the current boot' >&2; exit 2 ;;
 esac
-while IFS= read -r name; do
+while :; do
   if ! printf '%s\n' "$name" | grep -Eq '^capture-[0-9]{8}-[0-9]{6}-[0-9a-f]{8}(-[0-9]{8})?\.log(\.gz)?$'; then
     echo 'refusing a non-capture basename' >&2
     exit 2
@@ -65,4 +73,5 @@ while IFS= read -r name; do
     unlink -- "$name"
   fi
   printf 'GONE\t%s\n' "$name"
+  IFS= read -r name || break
 done

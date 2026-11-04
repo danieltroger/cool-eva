@@ -1354,6 +1354,11 @@ body {
   border-color: var(--good);
 }
 
+.settings-page .toggle-row button,
+.sheet-body .toggle-row button {
+  min-height: 44px;
+}
+
 /* Service mode's "probe index N" form. Three fields on one row, because on a phone
    the whole point is that it fits above the button that uses them. */
 .probe-row {
@@ -1600,4 +1605,193 @@ body {
   font-size: 0.78rem;
   padding: 0.3rem 0.75rem;
   cursor: pointer;
+}
+
+/* Settings actions leave room for their state and the consequence of the tap. */
+.settings-page {
+  padding: 12px 8px 28px;
+  max-width: 720px;
+  margin: 0 auto;
+  overflow-wrap: anywhere;
+}
+.settings-page h2 {
+  font-size: 19px;
+  margin: 8px 4px 16px;
+}
+.settings-card {
+  background: var(--tile);
+  border: 1px solid var(--tile-edge);
+  border-radius: 16px;
+  padding: 14px 12px;
+  margin: 0 0 12px;
+  min-width: 0;
+}
+.settings-card h3 {
+  font-size: 16px;
+  font-weight: 500;
+  margin: 0 0 8px;
+}
+.settings-note {
+  color: var(--sub);
+  font-size: 13px;
+  line-height: 1.5;
+  margin-top: 6px;
+  white-space: pre-wrap;
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.settings-card > .settings-row {
+  margin-top: 12px;
+}
+.settings-form-fields {
+  margin-top: 12px;
+}
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+.settings-row > div:first-child,
+.settings-row > .sheet-heading {
+  flex: 1;
+  min-width: 0;
+}
+.settings-button {
+  flex: 0 0 auto;
+  width: auto;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--tile-edge);
+  border-radius: 8px;
+  cursor: pointer;
+  max-width: 150px;
+}
+.settings-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.settings-button.writes {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.settings-button.irreversible {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+.settings-link:is(button) {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.owner-action-status {
+  margin: 4px 0 0;
+}
+.settings-page input:not([type="checkbox"]),
+.settings-page select,
+.settings-page textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  border: 1px solid var(--tile-edge);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 14px;
+  padding: 10px 8px;
+}
+.settings-page input[type="file"] {
+  font-size: 12px;
+}
+.settings-page input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  vertical-align: middle;
+  margin-right: 5px;
+}
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 44px;
+  min-height: 44px;
+  cursor: pointer;
+}
+.settings-check input[type="checkbox"] {
+  flex: 0 0 20px;
+  margin: 0;
+}
+.settings-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.settings-page textarea {
+  margin-top: 8px;
+  resize: vertical;
+}
+.settings-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--fg);
+  font-size: 14px;
+}
+.menu-link {
+  display: block;
+  min-height: 48px;
+  width: 100%;
+  padding: 12px 0;
+  text-align: left;
+  color: var(--fg);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--tile-edge);
+  font: inherit;
+}
+.can-status-link {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  min-height: 44px;
+  border: 0;
+  background: transparent;
+  color: var(--sub);
+  font: inherit;
+  padding: 0;
+}
+.header .menu {
+  min-width: 44px;
+  min-height: 44px;
+  width: auto;
+  white-space: nowrap;
+  font-size: 17px;
+}
+.header .brand {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-action {
+  margin: 12px 0;
+}
+.destination-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--bg);
+  border-bottom: 1px solid var(--tile-edge);
 }

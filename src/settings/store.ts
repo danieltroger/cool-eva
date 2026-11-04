@@ -1,4 +1,5 @@
 import { chmod, chown, lstat, readFile } from "fs/promises";
+import { randomUUID } from "crypto";
 import { replaceFileDurably } from "../storage/durable.ts";
 import { sweepReplacementFiles } from "../storage/replacement-files.ts";
 import { prepareSettingsDirectories } from "./directories.ts";
@@ -23,15 +24,35 @@ export async function openSettingsStore(
   archiveGroupId: number
 ): Promise<SettingsStore> {
   assertSettingsWriterLock(lock);
-  archiveGroupId = await storedArchiveGroup(paths, archiveGroupId);
-  await prepareSettingsDirectories(paths, archiveGroupId);
-  await sweepReplacementFiles(paths.privateDirectory);
-  await sweepArchiveReplacementFiles(paths, lock);
-  let loaded = await loadSettings(paths);
+  let markerFault: SettingsState | null = null;
+  try {
+    archiveGroupId = await storedArchiveGroup(paths, archiveGroupId);
+  } catch (error) {
+    markerFault = degradedState(paths, "invalid-install-marker", error);
+  }
+  if (!markerFault) {
+    await prepareSettingsDirectories(paths, archiveGroupId);
+    await sweepReplacementFiles(paths.privateDirectory);
+    await sweepArchiveReplacementFiles(paths, lock);
+  }
+  let loaded = markerFault ?? (await loadSettings(paths));
   if (loaded.kind === "ready") {
+    if (
+      typeof loaded.raw.instanceId !== "string" ||
+      (loaded.document.values.dashboardBluetoothSecret && typeof loaded.raw.bluetoothCodeId !== "string")
+    ) {
+      if (typeof loaded.raw.instanceId !== "string") {
+        loaded.raw.instanceId = randomUUID();
+      }
+      if (loaded.document.values.dashboardBluetoothSecret && typeof loaded.raw.bluetoothCodeId !== "string") {
+        loaded.raw.bluetoothCodeId = randomUUID();
+      }
+      await saveSettings(paths, loaded.raw);
+    }
     await writeInstallationMarker(paths, archiveGroupId);
   }
   let queue: Promise<unknown> = Promise.resolve();
+  let reservation: symbol | null = null;
   const save = async (raw: Record<string, unknown>): Promise<void> => {
     try {
       await saveSettings(paths, raw);
@@ -60,6 +81,8 @@ export async function openSettingsStore(
           throw new Error("Settings already exist or need recovery; initialisation is refused.");
         }
         const parsed = parseSettingsDocument(document);
+        parsed.raw.bluetoothCodeId = parsed.document.values.dashboardBluetoothSecret ? randomUUID() : null;
+        parsed.raw.instanceId = randomUUID();
         await save(parsed.raw);
         loaded = { kind: "ready", ...parsed };
         await writeInstallationMarker(paths, archiveGroupId);
@@ -67,6 +90,9 @@ export async function openSettingsStore(
       }),
     update: (expectedRevision, changes) =>
       serial("update", async () => {
+        if (reservation !== null) {
+          throw new Error("A restart is reserved; wait for reconnection before saving.");
+        }
         const current = readySettings(loaded);
         if (current.document.revision !== expectedRevision) {
           throw new Error("Settings changed on another connection; reload before saving.");
@@ -78,14 +104,25 @@ export async function openSettingsStore(
           }
           values[key] = changes[key as keyof StartupSettings];
         }
-        const raw = { ...current.raw, values, revision: current.document.revision + 1 };
+        const raw: Record<string, unknown> = { ...current.raw, values, revision: current.document.revision + 1 };
+        if (Object.hasOwn(changes, "rideLogPublicKeyPem")) {
+          raw.migration = { ...record(current.raw.migration, "migration state"), pendingPublicKeyPath: null };
+        }
         const parsed = parseSettingsDocument(raw);
-        await save(raw);
-        loaded = { kind: "ready", ...parsed };
+        const cleaned: Record<string, unknown> = { ...raw, values: { ...values, ...parsed.document.values } };
+        if (
+          changes.dashboardBluetoothSecret !== undefined &&
+          changes.dashboardBluetoothSecret !== current.document.values.dashboardBluetoothSecret
+        ) {
+          cleaned.bluetoothCodeId = changes.dashboardBluetoothSecret ? randomUUID() : null;
+        }
+        await save(cleaned);
+        loaded = { kind: "ready", raw: cleaned, document: parsed.document };
         return structuredClone(parsed.document);
       }),
     learnHub: address =>
       serial("learn hub", async () => {
+        if (reservation !== null) return false;
         const current = readySettings(loaded);
         if (
           !current.document.values.discoverHubOnce ||
@@ -103,6 +140,9 @@ export async function openSettingsStore(
       }),
     finishLegacyImport: (publicKeyPem, notices) =>
       serial("finish migration", async () => {
+        if (reservation !== null) {
+          throw new Error("A restart is reserved.");
+        }
         const current = readySettings(loaded);
         const values = { ...record(current.raw.values, "settings values"), rideLogPublicKeyPem: publicKeyPem };
         const migration = {
@@ -120,6 +160,26 @@ export async function openSettingsStore(
     settled: async () => {
       await queue;
     },
+    reserve: expectedRevision =>
+      serial("reserve restart", async () => {
+        if (reservation !== null) {
+          throw new Error("A restart is already reserved.");
+        }
+        const revision = loaded.kind === "ready" ? loaded.document.revision : null;
+        if (expectedRevision !== revision) {
+          throw new Error("Settings changed; reload before restarting.");
+        }
+        const token = Symbol("restart");
+        reservation = token;
+        return {
+          release: () =>
+            serial("release restart", async () => {
+              if (reservation === token) {
+                reservation = null;
+              }
+            }),
+        };
+      }),
   };
 }
 
@@ -136,6 +196,7 @@ export interface SettingsStore {
   learnHub: (address: string) => Promise<boolean>;
   finishLegacyImport: (publicKeyPem: string | null, notices?: string[]) => Promise<SettingsDocument>;
   settled: () => Promise<void>;
+  reserve: (expectedRevision: number | null) => Promise<{ release: () => Promise<void> }>;
 }
 
 async function loadSettings(paths: SettingsPaths): Promise<SettingsState> {
@@ -184,9 +245,11 @@ async function loadSettings(paths: SettingsPaths): Promise<SettingsState> {
 function degradedState(paths: SettingsPaths, fault: SettingsFault, error?: unknown): SettingsState {
   const code = readErrorCode(error);
   const recovery =
-    fault === "missing-after-install"
-      ? "Restore the saved settings. Existing archives were left in place."
-      : "The original file is preserved; repair it or use compatible software.";
+    fault === "invalid-install-marker"
+      ? "The installed.json ownership marker is preserved; restore it from a known-good backup before retrying settings."
+      : fault === "missing-after-install"
+        ? "Restore the saved settings. Existing archives were left in place."
+        : "The original file is preserved; repair it or use compatible software.";
   const message = `Settings cannot be loaded (${fault}${code ? `, ${code}` : ""}). ${recovery}`;
   console.warn(`settings: ${message}`);
   return { kind: "degraded", fault, message, configuration: degradedSettings(paths) };

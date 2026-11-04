@@ -42,7 +42,8 @@ import { recordingResponse } from "./recording-response.ts";
 // one reason. It also means `clockTrustworthy` reads true on every refusal this file
 // produces through the real path, so the false case is driven straight into the log — the
 // clock gate itself is scripts/check-gps-clock.ts's.
-process.env.GPS_TIME_SYNC = "0";
+const { configureGpsClock } = await import("../src/gps/clock.ts");
+configureGpsClock({ externalClock: true });
 const { WAYPOINT_REFUSAL, saveWaypointNow, startWaypointFixTracking, waypointsRefused, waypointsSaved } =
   await import("../src/gps/waypoint.ts");
 // ⚠️ …and /status with it, for the same reason and not by preference: ESM evaluates every
@@ -192,7 +193,7 @@ const cold = await promisify(execFile)(
   ],
   // `undefined` really does unset it: Node drops undefined values when it builds the child's
   // environment, rather than passing the string "undefined".
-  { cwd: ROOT, env: { ...process.env, GPS_TIME_SYNC: undefined } }
+  { cwd: ROOT, env: { ...process.env } }
 );
 const coldEvents = (JSON.parse(cold.stdout.trim()) as { outcome: { refusal?: number }; events: WaypointEvent[] })
   .events;

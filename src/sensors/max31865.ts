@@ -64,9 +64,6 @@ const RETRY_INTERVAL_MS = 60_000;
  */
 const FAULT_PACING_MS = 750;
 
-/** Set COOLANT_ENABLED=0 on a bike with no watercooling loop to skip SPI entirely. */
-const COOLANT_ENABLED = process.env.COOLANT_ENABLED !== "0";
-
 interface Probe {
   key: string;
   sensor: MAX31865;
@@ -82,9 +79,9 @@ const delay = (milliseconds: number): Promise<void> => new Promise(resolve => se
 // yields to the event loop between reads). Logging is on-change with a deadband in
 // the registry, so polling fast doesn't bloat the log — it just makes changes show
 // up sooner.
-export async function startCoolantSensors(): Promise<void> {
-  if (!COOLANT_ENABLED) {
-    console.log("coolant: disabled (COOLANT_ENABLED=0)");
+export async function startCoolantSensors(enabled = false): Promise<void> {
+  if (!enabled) {
+    console.log("coolant: probes off — enable installed probes under Settings → Bike setup");
     return;
   }
 
@@ -106,7 +103,9 @@ export async function startCoolantSensors(): Promise<void> {
   if (probes.length === 0) {
     // Not an error: this is every Energica without the custom loop. Say which switch
     // turns the attempt off so a stock bike can stop seeing this on every boot.
-    console.log("coolant: no probes found — continuing without them (set COOLANT_ENABLED=0 to skip this)");
+    console.log(
+      "coolant: no probes found — continuing without them (turn probes off in Settings → Bike setup to skip this)"
+    );
     return;
   }
   console.log(`coolant: ${probes.length} MAX31865 probe(s) started (sensor-rate polling)`);
@@ -168,7 +167,7 @@ async function noteFault(probe: Probe, detail: string): Promise<void> {
     console.warn(
       `coolant: ${probe.key} has failed ${MAX_CONSECUTIVE_FAULTS} times running (latest: ${detail}) — ` +
         `retrying every ${RETRY_INTERVAL_MS / 1000}s from now, and it will resume by itself if it comes back. ` +
-        "Check the probe wiring. If this bike has no coolant loop, set COOLANT_ENABLED=0."
+        "Check the probe wiring. If this bike has no coolant loop, turn probes off in Settings → Bike setup."
     );
   }
   await delay(FAULT_PACING_MS);

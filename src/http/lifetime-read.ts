@@ -63,7 +63,7 @@ export async function handleLifetimeReadEndpoint(
     return;
   }
   if (!options.enabled) {
-    respond(res, 403, options, { message: "service mode is switched off on this Pi (SERVICE_MODE_ENABLED=0)" });
+    respond(res, 403, options, { message: "Service data is unavailable. Resolve the Settings fault before reading." });
     return;
   }
 

@@ -20,7 +20,15 @@ export const RESPONSE_CHUNK_BYTES = 4 * 1024;
 export const REQUEST_TIMEOUT_MS = 180_000;
 
 /** Headers the tunnel owns. The phone may not set them, and they are not sent back. */
-const HOP_HEADERS = new Set(["host", "connection", "content-length", "transfer-encoding", "keep-alive", "upgrade"]);
+const HOP_HEADERS = new Set([
+  "host",
+  "connection",
+  "content-length",
+  "transfer-encoding",
+  "keep-alive",
+  "upgrade",
+  "x-cool-eva-tunnel",
+]);
 
 export interface TunnelSink {
   head: (status: number, headers: Record<string, string>) => Promise<void>;
@@ -45,6 +53,7 @@ export async function forwardRequest(
     return;
   }
   const headers: Record<string, string> = {};
+  headers["x-cool-eva-tunnel"] = "1";
   for (const [name, value] of Object.entries(header.headers ?? {})) {
     if (typeof value === "string" && !HOP_HEADERS.has(name.toLowerCase())) {
       headers[name.toLowerCase()] = value;

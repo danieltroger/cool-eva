@@ -1,6 +1,13 @@
-import { execFileSync, execSync } from "child_process";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import { setTimeout as delay } from "timers/promises";
+import { settingsPaths } from "../src/settings/paths.ts";
+import { parseSettingsDocument } from "../src/settings/schema.ts";
+import { monotonicNow, since } from "../src/monotonic.ts";
 import { PULL_ARGS, asOwnerCommand, deployHint, findForeignOwnedPaths, foreignOwner } from "../src/http/update.ts";
-import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from "fs";
+import { access, readFile, stat, unlink, writeFile } from "fs/promises";
+const run = promisify(execFile);
+import { installCapturePruner, verifyCapturePruner } from "../src/storage/capture-pruner.ts";
 import { installCanCaptureUnit } from "./can-capture/install.ts";
 import { resolve, dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -35,21 +42,6 @@ const LEGACY_SERVICE_NAME = "thermometer";
  */
 const MINIMUM_NODE = { major: 22, minor: 6 };
 
-const RIDE_LOG_PUBLIC_KEY = join(projectDir, "ride-log-key.public.pem");
-
-/**
- * Where the service's environment lives, and deliberately NOT the unit file.
- *
- * This script rewrites the unit every time it runs — which is the advertised way to
- * migrate an existing Pi, and the natural thing to do after a Node upgrade. Anything
- * configured inside the unit would be silently discarded by that, taking
- * COOLANT_ENABLED=0 and CUSTOM_BMS_CONFIG=1 with it; the second one changes what
- * 0x200's temperature bytes are taken to mean, so losing it quietly is the worst
- * kind of regression. The `-` prefix on EnvironmentFile makes a missing file fine,
- * so a fresh install needs nothing here.
- */
-const ENV_FILE = "/etc/default/cool-eva";
-
 /**
  * How long to spend proving the remote is readable. Short on purpose: a Pi with no
  * reception is the common case, and this is advisory — the service is already running by
@@ -71,7 +63,8 @@ if (process.getuid?.() !== 0) {
   process.exit(1);
 }
 
-removeLegacyService();
+await migrateBeforeReplacingUnit();
+await removeLegacyService();
 
 // bluetooth.service must be up before we try to reach the Connectivity Hub over
 // BLE. The app additionally clears the rfkill soft block itself at startup (see
@@ -84,7 +77,7 @@ Wants=bluetooth.service
 [Service]
 Type=simple
 WorkingDirectory=${projectDir}
-EnvironmentFile=-${ENV_FILE}
+UMask=0022
 ExecStart=${nodePath} --experimental-strip-types ${projectDir}/src/index.ts
 Restart=on-failure
 RestartSec=5
@@ -96,12 +89,12 @@ WantedBy=multi-user.target
 
 const servicePath = `/etc/systemd/system/${SERVICE_NAME}.service`;
 
-writeFileSync(servicePath, unit);
+await writeFile(servicePath, unit);
 console.log(`Wrote ${servicePath} (node: ${nodePath})`);
 
-execSync("systemctl daemon-reload");
-execSync(`systemctl enable ${SERVICE_NAME}`);
-execSync(`systemctl restart ${SERVICE_NAME}`);
+await run("systemctl", ["daemon-reload"]);
+await run("systemctl", ["enable", SERVICE_NAME]);
+await run("systemctl", ["restart", SERVICE_NAME]);
 
 console.log("Service installed, enabled at boot, and started.");
 console.log("");
@@ -109,14 +102,14 @@ console.log(`  sudo systemctl status ${SERVICE_NAME}   — check status`);
 console.log(`  sudo journalctl -u ${SERVICE_NAME} -f   — follow logs`);
 console.log(`  sudo systemctl stop ${SERVICE_NAME}     — stop`);
 console.log(`  sudo systemctl disable ${SERVICE_NAME}  — remove from boot`);
-console.log(`  sudo nano ${ENV_FILE}                   — set COOLANT_ENABLED=0 and friends`);
+console.log("  Open Settings in the dashboard to change startup choices.");
 
 warnIfNodeIsUserWritable();
-warnIfNoRideLogKey();
+await warnIfNoRideLogKey();
 // Local and offline, so it runs unconditionally — the poisoned-.git warning is the one
 // this exists for, and a garage Pi usually fails the network check below.
 await warnIfGitIsWronglyOwned();
-warnIfRemoteUnreadable();
+await warnIfRemoteUnreadable();
 
 // ⚠️ LAST, and deliberately after the warnings above. It shells out to systemctl three
 // times; a masked unit or a read-only /etc makes one of those throw, and from up here that
@@ -146,14 +139,14 @@ function requireSupportedNode(): void {
 }
 
 /** Stop, disable and delete the pre-rename unit, so it cannot come back at boot. */
-function removeLegacyService(): void {
+async function removeLegacyService(): Promise<void> {
   const legacyPath = `/etc/systemd/system/${LEGACY_SERVICE_NAME}.service`;
-  if (!existsSync(legacyPath)) {
+  if (!(await exists(legacyPath))) {
     return;
   }
   console.log(`Found the old ${LEGACY_SERVICE_NAME} service — removing it so the two cannot both run.`);
   try {
-    execSync(`systemctl stop ${LEGACY_SERVICE_NAME}`, { stdio: "ignore" });
+    await run("systemctl", ["stop", LEGACY_SERVICE_NAME]);
   } catch (error) {
     // Fatal, unlike the disable below. Deleting the unit file while the old process
     // is still up leaves it holding port 80 and can0 with no name left to stop it
@@ -165,73 +158,76 @@ function removeLegacyService(): void {
     process.exit(1);
   }
   try {
-    execSync(`systemctl disable ${LEGACY_SERVICE_NAME}`, { stdio: "ignore" });
+    await run("systemctl", ["disable", LEGACY_SERVICE_NAME]);
   } catch (error) {
     // Genuinely harmless — it was installed but never enabled at boot. Said out loud
     // anyway rather than swallowed.
     console.log(`  \`systemctl disable\` failed (probably never enabled): ${(error as Error).message}`);
   }
-  unlinkSync(legacyPath);
-  execSync("systemctl daemon-reload");
+  await unlink(legacyPath);
+  await run("systemctl", ["daemon-reload"]);
 }
 
-/**
- * The service persists nothing without a public key — it says so loudly in its own
- * log, but nobody reads journalctl on a first install. Say it here, with the two
- * commands already filled in, at the moment it can still be acted on.
- *
- * The keypair is deliberately NOT generated here. The whole point of the sealed log
- * is that the bike holds a public key only, so a stolen SD card is worthless; a Pi
- * that generated the pair would have had the private half on that card, and "only
- * briefly" is not a promise anyone can keep about flash storage.
- */
-function warnIfNoRideLogKey(): void {
-  // The same path the service will resolve (src/index.ts), env file included —
-  // otherwise someone who keeps the key off the repo directory, which is a sensible
-  // thing to do given that directory gets `git pull`ed, is told nothing is being
-  // saved while logging works fine. A banner that is wrong sometimes is a banner
-  // people learn to scroll past.
-  const configuredKey = readEnvFile()["RIDE_LOG_PUBKEY"] ?? process.env.RIDE_LOG_PUBKEY ?? RIDE_LOG_PUBLIC_KEY;
-  if (existsSync(configuredKey)) {
-    console.log(`ride-log: sealing key found at ${configuredKey}`);
+async function warnIfNoRideLogKey(): Promise<void> {
+  const document = parseSettingsDocument(JSON.parse(await readFile(settingsPaths().settingsFile, "utf-8"))).document;
+  if (!document.values.rideLogPublicKeyPem) {
+    console.warn(
+      "Ride recording is not configured. In Settings → Ride recording, supply the laptop-generated public key and keep the private key off the Pi."
+    );
+  }
+}
+
+// Never replace the old unit before its own resolved environment has been captured.
+async function migrateBeforeReplacingUnit(): Promise<void> {
+  const installed = await exists(`/etc/systemd/system/${SERVICE_NAME}.service`);
+  const legacyInstalled = await exists(`/etc/systemd/system/${LEGACY_SERVICE_NAME}.service`);
+  if (!installed && !legacyInstalled) {
+    if (!(await exists(settingsPaths().settingsFile))) {
+      throw new Error(
+        "Fresh install: run scripts/configure-settings.ts as root with JSON on stdin first ({} permits setup later over Wi-Fi). See docs/settings.md."
+      );
+    }
+    const ownership = await stat(projectDir);
+    const { stdout } = await run("getent", ["group", String(ownership.gid)], { timeout: 5_000 });
+    await installCapturePruner(stdout.split(":")[0]);
+    await verifyCapturePruner(ownership.uid);
     return;
   }
-  const hostname = readHostname();
-  console.log("");
-  console.log("=".repeat(72));
-  console.log("NO RIDE-LOG KEY YET — the dashboard will work and NOTHING will be saved.");
-  console.log("");
-  console.log("Generate the pair on your laptop (never on the Pi) and copy the public");
-  console.log("half over. Back the private half up first: it is the only thing that can");
-  console.log("ever read your logs, and there is no recovery path.");
-  console.log("");
-  console.log("  node --experimental-strip-types scripts/generate-log-key.ts");
-  console.log(`  scp ride-log-key.public.pem ${process.env.SUDO_USER ?? "pi"}@${hostname}:${projectDir}/`);
-  console.log(`  ssh ${process.env.SUDO_USER ?? "pi"}@${hostname} 'sudo systemctl restart ${SERVICE_NAME}'`);
-  console.log("=".repeat(72));
+  const sourceService = installed ? SERVICE_NAME : LEGACY_SERVICE_NAME;
+  await run("systemctl", ["restart", sourceService]);
+  const started = monotonicNow();
+  while (since(started) < 90_000) {
+    try {
+      const document = parseSettingsDocument(
+        JSON.parse(await readFile(settingsPaths().settingsFile, "utf-8"))
+      ).document;
+      if (document.migration.complete) {
+        console.log(
+          "The running service saved its settings. Old environment sources can now be removed; drop-ins are left intact and their old values are ignored."
+        );
+        return;
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+      console.log("Waiting for the running service's settings migration.");
+    }
+    await delay(1_000);
+  }
+  throw new Error(
+    "Settings migration did not complete. The original unit is intact. Inspect the dashboard fault and journal before retrying."
+  );
 }
 
-/**
- * The `KEY=value` pairs systemd will hand the service, so this script sees the same
- * configuration the unit does. Deliberately minimal — systemd's own parser handles
- * quoting and line continuations that nothing here needs to set.
- */
-function readEnvFile(): Record<string, string> {
-  const values: Record<string, string> = {};
-  if (!existsSync(ENV_FILE)) {
-    return values;
-  }
+async function exists(path: string): Promise<boolean> {
   try {
-    for (const line of readFileSync(ENV_FILE, "utf-8").split("\n")) {
-      const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line);
-      if (match && !line.trimStart().startsWith("#")) {
-        values[match[1]] = match[2].replace(/^["']|["']$/g, "");
-      }
-    }
+    await access(path);
+    return true;
   } catch (error) {
-    console.log(`(could not read ${ENV_FILE}: ${(error as Error).message})`);
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
   }
-  return values;
 }
 
 /**
@@ -246,15 +242,13 @@ function readEnvFile(): Record<string, string> {
  * The remote's scheme is deliberately not the test. https and ssh are both correct
  * (INSTALL.md §3); the only question is whether origin is readable as that user.
  */
-function warnIfRemoteUnreadable(): void {
-  const ownerUid = statSync(projectDir).uid;
+async function warnIfRemoteUnreadable(): Promise<void> {
+  const ownerUid = (await stat(projectDir)).uid;
   const currentUid = process.getuid?.() ?? ownerUid;
   let remoteUrl: string;
   try {
     const { command, args } = asOwnerCommand(["-C", projectDir, "remote", "get-url", "origin"], ownerUid, currentUid);
-    remoteUrl = execFileSync(command, args, { stdio: ["ignore", "pipe", "pipe"] })
-      .toString()
-      .trim();
+    remoteUrl = (await run(command, args, { timeout: LS_REMOTE_TIMEOUT_MS })).stdout.trim();
   } catch (error) {
     // A checkout with no `origin` exits non-zero too, and that must not fail an install
     // that has already written the unit and started the service.
@@ -267,7 +261,7 @@ function warnIfRemoteUnreadable(): void {
       ownerUid,
       currentUid
     );
-    execFileSync(command, args, { timeout: LS_REMOTE_TIMEOUT_MS, stdio: ["ignore", "ignore", "pipe"] });
+    await run(command, args, { timeout: LS_REMOTE_TIMEOUT_MS });
     // ⚠️ Readable, and nothing more: ls-remote writes nothing into .git, so it cannot tell
     // you the pull will succeed. warnIfGitIsWronglyOwned covers the other half.
     console.log(`deploy: ${remoteUrl} is readable as the checkout's owner (uid ${ownerUid})`);
@@ -317,7 +311,7 @@ function reportUnreadableRemote(
  * unlike the ls-remote check it runs on a garage Pi.
  */
 async function warnIfGitIsWronglyOwned(): Promise<void> {
-  const ownerUid = statSync(projectDir).uid;
+  const ownerUid = (await stat(projectDir)).uid;
   const gitPath = join(projectDir, ".git");
   // logs/ and refs/ are where a pull writes, and both are small. NOT objects/, and not
   // .git itself: a pull never rewrites those, so they always look innocent.
@@ -360,15 +354,5 @@ function warnIfNodeIsUserWritable(): void {
     console.warn("  This unit runs as root, so anyone who can write there gains root at the next boot.");
     console.warn("  Prefer a system-wide install: curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -");
     console.warn("");
-  }
-}
-
-/** The Pi's own name, so the scp line above is copy-pasteable rather than a template. */
-function readHostname(): string {
-  try {
-    return `${execSync("hostname").toString().trim()}.local`;
-  } catch (error) {
-    console.log(`(could not read hostname: ${(error as Error).message})`);
-    return "cool-eva.local";
   }
 }

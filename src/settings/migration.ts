@@ -1,4 +1,5 @@
 import { prepareArchiveDirectories } from "./directories.ts";
+import { join } from "path";
 import { finishLegacyDataMove, legacyDataMoveCompleted, moveLegacyData, type DataMoveOptions } from "./data-move.ts";
 import { UnsafeArchiveError } from "./data-permissions.ts";
 import { importLegacyEnvironment, type LegacyContext, type LegacyImport } from "./legacy.ts";
@@ -24,11 +25,16 @@ export async function migrateLegacySettings(options: LegacyMigrationOptions): Pr
           sourceDirectories: {
             rideLogDirectory: loaded.document.values.rideLogDirectory,
             vcuParameterDirectory: loaded.document.values.vcuParameterDirectory,
-            wifiDiagnosticDirectory: options.context.paths.wifiDiagnosticDirectory,
-            captureDirectory: options.context.paths.captureDirectory,
+            wifiDiagnosticDirectory: join(options.context.codeDirectory, "wifi-diag"),
+            captureDirectory: options.context.captureDirectory ?? "/home/pi/ride-captures",
           },
         }
       : importLegacyEnvironment(options.environment, options.context);
+  const keyFault = await importLegacyPublicKey(imported);
+  imported.document.migration.complete = false;
+  if (loaded.kind === "missing") {
+    await options.store.initialise(imported.document);
+  }
   const moveOptions: DataMoveOptions = {
     paths: options.context.paths,
     codeDirectory: options.context.codeDirectory,
@@ -57,11 +63,20 @@ export async function migrateLegacySettings(options: LegacyMigrationOptions): Pr
       return { ...options.store.read(), migrationFault: { code: error.code, message: error.message } };
     }
   }
-  const keyFault = await importLegacyPublicKey(imported);
   const keyReady = imported.document.migration.pendingPublicKeyPath === null;
   imported.document.migration.complete = false;
-  if (loaded.kind === "missing") {
-    await options.store.initialise(imported.document);
+  const saved = options.store.read();
+  if (saved.kind === "ready") {
+    const changes = {
+      rideLogDirectory: imported.document.values.rideLogDirectory,
+      vcuParameterDirectory: imported.document.values.vcuParameterDirectory,
+      ...(imported.document.values.rideLogPublicKeyPem !== saved.document.values.rideLogPublicKeyPem
+        ? { rideLogPublicKeyPem: imported.document.values.rideLogPublicKeyPem }
+        : {}),
+    };
+    if (Object.entries(changes).some(([key, value]) => saved.document.values[key as keyof typeof changes] !== value)) {
+      await options.store.update(saved.document.revision, changes);
+    }
   }
   if (!moveCompleted) {
     await finishLegacyDataMove(moveOptions);

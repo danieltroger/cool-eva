@@ -445,7 +445,7 @@ console.log("\n11b. an unset WIFI_HOTSPOT_SSID fails loudly, not silently");
 // like "the hotspot is not in range".
 check(
   "with no SSID configured, the sentence says so rather than inventing a hotspot",
-  describeState(WIFI_LINK_STATE.DISCONNECTED, null, false).includes("WIFI_HOTSPOT_SSID") &&
+  describeState(WIFI_LINK_STATE.DISCONNECTED, null, false).includes("Settings → Connections") &&
     !describeState(WIFI_LINK_STATE.DISCONNECTED, null, false).includes("hotspot not in range")
 );
 check(

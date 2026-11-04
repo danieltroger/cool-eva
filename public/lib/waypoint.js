@@ -29,7 +29,8 @@ export async function saveWaypoint() {
     const response = await request("/waypoint", {
       // The endpoint answers Siri in plain text by default (src/http/waypoint.ts).
       // This is the same request, asking for the structured form.
-      headers: { Accept: "application/json" },
+      method: "POST",
+      headers: { Accept: "application/json", "X-Cool-Eva": "waypoint" },
       cache: "no-store",
     });
     const reply = /** @type {WaypointReply} */ (await response.json());

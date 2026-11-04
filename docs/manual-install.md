@@ -72,21 +72,17 @@ If Git is already installed, you can instead run `git clone https://github.com/d
 node --experimental-strip-types scripts/generate-log-key.ts
 ```
 
-**Back up `ride-log-key.private.pem` in a password manager before continuing.** It is the only way to read your saved rides; losing it makes them permanently unreadable. Keep it off the Pi. Copy only the public half:
-
-```sh
-scp ride-log-key.public.pem pi@cool-eva.local:/home/pi/cool-eva/
-```
+**Back up `ride-log-key.private.pem` in a password manager before continuing.** It is the only way to read your saved rides; losing it makes them permanently unreadable. Keep it off the Pi. After starting the service below, open Settings → Ride recording on the dashboard and choose the public-key file. Save, explicitly Restart, then verify its active fingerprint and recording state.
 
 Without that public key, the live dashboard still works but **no ride history is saved**. The [ride-log guide](ride-log.md) explains downloads and encryption's limits.
 
 ## 5. Before the first service start
 
-Cool Eva enrolls the Pi with the motorcycle's Bluetooth hub. The hub remembers **one authorized device**, so this can replace the pairing you already use. To pair a previous device again, clear the stored device from the bike's own dashboard first.
+Selecting a motorcycle in Settings → Connections and restarting enrolls the Pi with its Bluetooth hub. The hub remembers **one authorized device**, so this can replace the pairing you already use. To pair a previous device again, clear the stored device from the bike's own dashboard first.
 
 <!-- for-now: #317 -->
 
-For now, you can prevent that enrollment by adding `BLE_ENABLED=0` to `/etc/default/cool-eva` **before the next step**; edit the file with `sudo nano /etc/default/cool-eva` in your Pi terminal.
+Fresh settings leave the motorcycle unselected. Open Settings → Connections → Motorcycle connection to select your own bike before enrolment. To disconnect a migrated discover-once install, Forget the saved motorcycle and explicitly restart.
 
 Manual bike changes require deliberate dashboard actions. Automatic DC charge management can act without asking each time; read [what can change the bike](bike-changes.md) before starting. Stock bikes need no coolant probes, fan or SPI enablement.
 
@@ -96,6 +92,7 @@ Back in your **Pi terminal**:
 
 ```sh
 cd /home/pi/cool-eva
+printf '{}\n' | sudo "$(command -v node)" --experimental-strip-types scripts/configure-settings.ts
 sudo "$(command -v node)" --experimental-strip-types scripts/setup-service.ts
 sudo systemctl status cool-eva
 sudo journalctl -u cool-eva -f

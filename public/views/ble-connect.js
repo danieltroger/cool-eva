@@ -72,12 +72,13 @@ export function BleSection() {
     );
   }
   return div(
-    h2({ class: "sheet-heading" }, "Bluetooth"),
+    h2({ class: "sheet-heading" }, "Use an existing access code"),
     // A form, so Return in the field connects and a password manager can offer to keep
     // the secret. The secret is saved from the form at submit rather than on `change`,
     // which a Return keypress does not reliably fire first.
     form(
       {
+        class: "settings-row",
         onsubmit: (/** @type {SubmitEvent} */ event) => {
           event.preventDefault();
           const field = /** @type {HTMLFormElement} */ (event.target).elements.namedItem("secret");
@@ -103,14 +104,14 @@ export function BleSection() {
         placeholder: "Paste the Pi’s generated Bluetooth key",
         value: storedSecret(),
       }),
-      button({ class: "action", type: "submit" }, () =>
-        bleStatus.val === "connected" ? "Connected — choose another Pi" : "Connect to the Pi"
+      button({ class: "settings-button", type: "submit" }, () =>
+        bleStatus.val === "connected" ? "Choose another Pi" : "Connect this phone"
       )
     ),
     () => (entryError.val ? div({ class: "action-note failure" }, entryError.val) : span()),
     () =>
       secretWanted.val && bleStatus.val !== "refused"
-        ? div({ class: "action-note caution" }, "Paste the Pi’s generated key above, then tap Connect to the Pi.")
+        ? div({ class: "action-note caution" }, "Paste the Pi’s generated key above, then tap Connect this phone.")
         : div(
             { class: bleStatus.val === "refused" ? "action-note failure" : "action-note" },
             describe(bleStatus.val, bleDetail.val)

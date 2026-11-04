@@ -79,7 +79,7 @@ async function checkUnsafeArchive(kind: "symlink" | "hard-link", interrupted: bo
       beforeDataMove: async () => {},
       flushPermissions: options.flushPermissions,
     });
-    assert.equal(result.kind, "missing");
+    assert.equal(result.kind, "ready");
     assert.equal(result.migrationFault?.code, "unsafe-archive");
     assert.match(result.migrationFault?.message ?? "", /Repair it before retrying/);
     console.log(

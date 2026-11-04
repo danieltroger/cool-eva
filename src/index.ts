@@ -1,3 +1,17 @@
+import { handleMutationGuard } from "./http/mutation-guard.ts";
+import { isPlausible } from "../public/lib/bounds.js";
+import { configureArchiveAccess } from "./storage/archive-access.ts";
+import { validBleSecret } from "../public/lib/ble-secret.js";
+import { startSettings } from "./settings/startup.ts";
+import { createSettingsRestart } from "./settings/restart.ts";
+import { handleRecordingFlushEndpoint } from "./http/recording-flush.ts";
+import { handleSettingsEndpoint } from "./http/settings.ts";
+import { scanHubCandidates } from "./settings/hub-discovery.ts";
+import { sampleServiceGate, restartMotionBlockers } from "./vcu/service-gate.ts";
+import { ageMs, latestValue } from "./can/signals.ts";
+import { effectiveHubAddress } from "./settings/schema.ts";
+import { monotonicNow, since } from "./monotonic.ts";
+import type { DashboardSystemStatus } from "./ws.ts";
 import { createServer } from "http";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -72,75 +86,34 @@ const ROOT = join(__dirname, "..");
 const PORT = 80;
 const CAN_IFACE = "can0";
 
-// Where the menu's "Update" button runs `git pull`: this checkout, wherever it is.
-// ROOT is derived from the running file's own path, so it is the right directory
-// whatever the checkout is named or wherever it was moved to.
-const UPDATE_DIR = process.env.UPDATE_DIR ?? ROOT;
-
-// Config (env overrides). docs/configuration.md is the full table; this indexes it:
-//   COOLANT_ENABLED=0 → skip the MAX31865 probes (a bike with no watercooling loop)
-//   FAN_ENABLED=1 → ⚠️ OPT IN. Drive the IBT-2 cooling fan and route /fan (docs/fan-control.md)
-//   CAN_ENABLED=0 → skip CAN entirely (coolant only)
-//   WIFI_ENABLED=0 → skip the wifi poller and its fault dumps (docs/wifi.md)
-//   WIFI_IFACE → which radio to watch (default wlan0)
-//   WIFI_HOTSPOT_SSID → ⚠️ NO DEFAULT. Which SSID counts as "the hotspot". Unset, the
-//     hotspot half of docs/wifi.md is off and the poller says so at startup
-//   OBD_ENABLED=0 → passive/listen-only: decode broadcasts but don't TX OBD polls
-//   ELOCK_ENABLED=0 → skip the one-shot keys-paired read from the E-LOCK ECU
-//   BLE_ENABLED=0 / BLE_MAC=… → skip the Connectivity Hub link, or pin its address
-//   BLE_SECRET=… → ⚠️ OPT IN. Also serve the dashboard over BLE, to phones that know this
-//     secret (docs/ble-server.md). Unset, the Pi does not advertise at all
-//   GPS_TIME_SYNC=0 → never step the system clock from satellite time
-//   RIDE_LOG_PUBKEY=… / RIDE_LOG_DIR=… → the X25519 public key that enables the
-//     write-only encrypted log, and where its sealed .celog segments go
-//   CUSTOM_BMS_CONFIG=1 → only with the custom LiBAL BMS config flashed; moves the
-//     true pack temperatures onto 0x660. Leave unset on a stock Energica.
-//   VCU_PARAM_DIR=… → where service mode leaves its parameter snapshots
-//   SERVICE_MODE_ENABLED=0 → no parameter read from the dashboard; the snapshot is still served
-//   SERVICE_WRITE_ENABLED=1 → ⚠️ OPT IN, the other one. The dashboard may CHANGE the bike; see below.
-//   CHARGE_AUTO_ENABLED=0 → never command a DC charge current automatically (docs/charge-auto.md)
-const CAN_ENABLED = process.env.CAN_ENABLED !== "0";
-const OBD_ENABLED = process.env.OBD_ENABLED !== "0";
-const ELOCK_ENABLED = process.env.ELOCK_ENABLED !== "0";
-const BLE_ENABLED = process.env.BLE_ENABLED !== "0";
-const BLE_MAC = process.env.BLE_MAC ?? "";
-const BLE_SECRET = process.env.BLE_SECRET ?? "";
-const RIDE_LOG_PUBKEY = process.env.RIDE_LOG_PUBKEY ?? join(ROOT, "ride-log-key.public.pem");
-const RIDE_LOG_DIR = process.env.RIDE_LOG_DIR ?? join(ROOT, "ride-logs");
-const CUSTOM_BMS_CONFIG = process.env.CUSTOM_BMS_CONFIG === "1";
-const VCU_PARAM_DIR = process.env.VCU_PARAM_DIR ?? join(ROOT, "vcu-params");
-const SERVICE_MODE_ENABLED = process.env.SERVICE_MODE_ENABLED !== "0";
-const WIFI_ENABLED = process.env.WIFI_ENABLED !== "0";
-const WIFI_IFACE = process.env.WIFI_IFACE ?? "wlan0";
-// ⚠️ NO DEFAULT, deliberately. This is a PUBLIC repo and an SSID is a personal network
-// identifier; naming the owner's phone here would publish it with every clone. Unset, the
-// poller still records `wifi_link_state` and says loudly at startup that the hotspot half
-// is off — see src/wifi/status.ts. Set it in /etc/default/cool-eva; docs/configuration.md and
-// docs/wifi.md §2 both say so.
-const WIFI_HOTSPOT_SSID = process.env.WIFI_HOTSPOT_SSID ?? "";
-// ⚠️ ONE recovery, TWO triggers — the poller's watchdog and the handlebar hold — and
-// src/wifi/recover.ts holds the in-flight flag they share, so a thumb landing inside a
-// watchdog run cannot start a second ladder against the same radio. Declared up here
-// with the configuration it is made of rather than beside the monitor, because
-// startHoldGestures() runs well before the monitor does.
+const settingsRuntime = await startSettings({
+  codeDirectory: ROOT,
+  workingDirectory: process.cwd(),
+  environment: process.env,
+});
+configureArchiveAccess(settingsRuntime.paths);
+const startup = settingsRuntime.active;
+const UPDATE_DIR = ROOT;
+const RIDE_LOG_DIR = startup.rideLogDirectory;
+const CUSTOM_BMS_CONFIG = startup.customBmsConfigurationFlashed;
+const VCU_PARAM_DIR = startup.vcuParameterDirectory;
+const SERVICE_MODE_ENABLED = settingsRuntime.dataWritable;
+const SERVICE_WRITE_ENABLED = settingsRuntime.dataWritable;
+const CHARGE_AUTO_ENABLED = startup.automaticDcChargingEnabled;
+const BLE_SECRET = startup.dashboardBluetoothSecret;
+const WIFI_IFACE = "wlan0";
+const WIFI_HOTSPOT_SSID = startup.phoneHotspotSsid;
 const wifiContext: RecoverContext = {
   iface: WIFI_IFACE,
   hotspotSsid: WIFI_HOTSPOT_SSID,
-  dumpDirectory: join(ROOT, WIFI_DIAG_DIRNAME),
+  dumpDirectory: settingsRuntime.dataWritable ? settingsRuntime.wifiDiagnosticDirectory : null,
 };
-// ⚠️ OPT IN, NOT OPT OUT — `=== "1"`, not `!== "0"`, and the asymmetry is deliberate:
-// every flag above except FAN_ENABLED turns something off, these two turn something on,
-// so a Pi nobody has told about it cannot change a motorcycle's EEPROM. Separate
-// from SERVICE_MODE_ENABLED because reads and writes are not the same risk and must
-// not share an off button. ⚠️ And it cannot satisfy src/vcu/table-gate.ts: a PARAMETER
-// write stays refused until a sweep has read both TABLE_TYPE copies, which on this
-// bike it never has. docs/vcu-parameters.md, "Changing something on the bike".
-const SERVICE_WRITE_ENABLED = process.env.SERVICE_WRITE_ENABLED === "1";
-// ⚠️ DEFAULT ON, unlike the two above — `!== "0"`, the same shape as CAN_ENABLED. The controller
-// only ever LOWERS the charge current, the rider overrides it on the bike's own dial, and it is
-// inert anyway unless SERVICE_WRITE_ENABLED is also 1, since it transmits through that door. This
-// is the kill switch a phone toggle cannot reach. docs/charge-auto.md.
-const CHARGE_AUTO_ENABLED = process.env.CHARGE_AUTO_ENABLED !== "0";
+const bootSettings = settingsRuntime.store.read();
+const BLE_MAC = bootSettings.kind === "ready" ? (effectiveHubAddress(bootSettings.document) ?? "") : "";
+let activeHubAddress = BLE_MAC || null;
+let canTrafficAt: number | null = null;
+let canStartupError: string | null = null;
+const canObservationStarted = monotonicNow();
 
 // --- Which commit this is, said out loud before anything else ---
 // A feature that silently does nothing and a feature deployed five days ago look identical
@@ -160,7 +133,7 @@ configurePackTemperature(CUSTOM_BMS_CONFIG);
 console.log(
   CUSTOM_BMS_CONFIG
     ? "bms: custom config expected — true pack temps from 0x660, 0x200 logged as batt_temp_*_vcu"
-    : "bms: stock config assumed — pack temps from 0x200 once no 0x660 has been seen (set CUSTOM_BMS_CONFIG=1 if flashed)"
+    : "bms: stock config assumed — change the BMS answer in Settings → Bike setup if needed"
 );
 
 // --- Storage: the encrypted ride log is the ONLY persistence ---
@@ -170,7 +143,7 @@ console.log(
 let rideLogEnabled = false;
 try {
   rideLogEnabled = await initEncryptedLog({
-    publicKeyPath: RIDE_LOG_PUBKEY,
+    ...(startup.rideLogPublicKeyPem ? { publicKeyPem: startup.rideLogPublicKeyPem } : {}),
     directory: RIDE_LOG_DIR,
     clockTrust: systemClockTrust,
   });
@@ -183,14 +156,14 @@ const stopSealOnPark = startSealOnPark();
 if (!rideLogEnabled) {
   console.warn("=".repeat(72));
   console.warn("ride-log: NO PUBLIC KEY — nothing is being persisted. The live dashboard");
-  console.warn(`still works, but every reading is discarded. Put the key at ${RIDE_LOG_PUBKEY}`);
+  console.warn("still works. Choose a public key under Settings → Ride recording.");
   console.warn("(generate it on the laptop: node scripts/generate-log-key.ts) and restart.");
   console.warn("=".repeat(72));
 }
 
 // --- Coolant probes (MAX31865) ---
 try {
-  await startCoolantSensors();
+  await startCoolantSensors(startup.coolantProbesEnabled);
 } catch (err) {
   console.error("coolant: init failed — continuing without coolant probes:", err);
 }
@@ -203,7 +176,7 @@ try {
 // temperature; the slider takes it over until the bike is switched off, which is what
 // not persisting the mode already means on a Pi with no standby power.
 // docs/fan-control.md.
-const fanController = await startFanControl();
+const fanController = await startFanControl({ enabled: startup.radiatorFanEnabled });
 const fanAutomatic = startFanAutomatic(fanController);
 
 // --- Handlebar gestures, recognised here rather than on the phone ---
@@ -222,7 +195,7 @@ const fanCycle = fanController.configured ? startFanCycleGesture(fanAutomatic) :
 const holdGestures = [
   ...(fanCycle === null ? [] : [fanCycle.gesture]),
   waypointHoldGesture(),
-  ...(WIFI_ENABLED ? [wifiHoldGesture(wifiContext)] : []),
+  wifiHoldGesture(wifiContext),
 ];
 const handlebarGestures = startHoldGestures(holdGestures);
 
@@ -297,21 +270,17 @@ const vcuReadRunner = createVcuReadRunner({
   channel: () => channel ?? null,
   // A listen-only interface swallows every request silently, which looks exactly
   // like a switched-off bike. Refused up front instead.
-  busIsActive: OBD_ENABLED,
+  busIsActive: true,
   directory: VCU_PARAM_DIR,
 });
-console.log(
-  SERVICE_MODE_ENABLED
-    ? "service-mode: the dashboard may start an on-demand VCU parameter read while the bike is parked and out of drive (SERVICE_MODE_ENABLED=0 to forbid it)"
-    : "service-mode: disabled (SERVICE_MODE_ENABLED=0) — the snapshot is still served and exported, but nothing here can ask the bike"
-);
+console.log("service-mode: dashboard reads use the motorcycle's existing stationary checks");
 
 // The write half, with its own switch and its own runner. Built here for the same
 // reason the read runner is: the frame router below has to be able to hand it
 // replies, and it must exist before the bus does.
 const vcuWriteRunner = createVcuWriteRunner({
   channel: () => channel ?? null,
-  busIsActive: OBD_ENABLED,
+  busIsActive: true,
   enabled: SERVICE_WRITE_ENABLED,
   directory: VCU_PARAM_DIR,
   // The SAME gate the read path uses, passed in rather than re-implemented. Two
@@ -340,120 +309,98 @@ const vcuWriteRunner = createVcuWriteRunner({
   // open opens the gate and fills in the values without restarting the service.
   latestSweep: () => loadLatestSweep(VCU_PARAM_DIR),
 });
-if (SERVICE_WRITE_ENABLED) {
-  // Loud, and at WARN. A Pi in this state can change a motorcycle's calibration
-  // EEPROM from a web page, and that should be visible in `journalctl` without
-  // anyone going looking for it.
-  console.warn(
-    "service-write: ⚠️  ENABLED (SERVICE_WRITE_ENABLED=1) — the dashboard may write allowlisted VCU parameters, " +
-      "set the service point, sync the bike's clock and clear stored DTCs. Every attempt is journalled to " +
-      `${join(VCU_PARAM_DIR, "service-writes.jsonl")}. Unset the variable to forbid it.`
-  );
-} else {
-  console.log(
-    "service-write: disabled (default) — nothing here can change anything on the bike. SERVICE_WRITE_ENABLED=1 to allow it."
-  );
-}
+console.warn(
+  "service-write: reachable devices may request motorcycle changes. Existing gates and audit history apply. See Settings → Who can control my bike?"
+);
 
-if (CAN_ENABLED) {
+try {
+  await bringUpCan(CAN_IFACE, true); // ACTIVE only when we intend to TX OBD reads
+  channel = openChannel(CAN_IFACE);
+
   try {
-    await bringUpCan(CAN_IFACE, OBD_ENABLED); // ACTIVE only when we intend to TX OBD reads
-    channel = openChannel(CAN_IFACE);
-
-    try {
-      channel.setRxFilters([
-        ...STREAM_IDS.map(id => ({ id, mask: 0x7ff })),
-        { id: 0x7e0, mask: 0x7f0 }, // OBD responses 0x7E0–0x7EF
-        { id: ELOCK_RESP_ID, mask: 0x7ff }, // E-LOCK diagnostic reply (one-shot read at startup)
-      ]);
-    } catch (err) {
-      console.warn("can: setRxFilters failed, accepting all frames:", err);
-    }
-
-    channel.addListener("onMessage", msg => {
-      const data = msg.data;
-      if (isObdResponse(msg.id)) {
-        // ⚠️ The KERNEL's arrival stamp, taken before any of our code ran. It is the
-        // only way to see how late this dispatch was, which is the question
-        // docs/lifetime-battery-statistics.md exists to answer — a timestamp taken
-        // inside the handler starts after libuv already delayed it.
-        const arrival = frameArrival(msg);
-        // Service mode's KWP replies land in this same 0x7E0–0x7EF range (the VCU
-        // micros answer on 0x7E0 under EXTENDED addressing, so byte 0 is the
-        // tester's own address 0xF1). Offered to the sweep first, and it consumes
-        // only frames addressed to 0xF1 — which no OBD-II reply is, since byte 0
-        // there is an ISO-TP length nibble — so this takes nothing away from the
-        // poller. It is also a no-op unless a sweep is actually running.
-        if (vcuReadRunner.handleCanFrame(msg.id, data, arrival)) {
-          return;
-        }
-        // Same for a write in flight, and it needs the OBD range too: the KWP legs
-        // answer on 0x7E0 and Mode 04 answers somewhere in 0x7E0–0x7EF. Only one of
-        // the two runners can be busy at a time (src/vcu/bus-lease.ts), so this is
-        // one extra null check per frame in the range and nothing at all otherwise.
-        if (vcuWriteRunner.handleCanFrame(msg.id, data)) {
-          return;
-        }
-        handleResponse(msg.id, data);
-        return;
-      }
-      if (isElockResponse(msg.id)) {
-        handleElockResponse(data);
-        return;
-      }
-      // 0x410 is a whole message stream on one id, so it has three readers and must NOT
-      // return here: the diagnostics list is picked off below, and the frame then carries
-      // on to decodeFrame, which is where the GPS multiplex (~1.8 Hz) and sub-type 3's
-      // drive triple are decoded. Returning early would silently take CAN GPS out.
-      if (msg.id === GPS_CAN_ID) {
-        handleHubMirrorFrame(data);
-      }
-      // resolvePackTemperatures decides whether 0x200's temperature bytes are the true
-      // pack temperature or the VCU-shifted view — it depends on which BMS config is
-      // on the bus, which no single frame can tell you. Until it can tell, it emits
-      // nothing under batt_temp_lo/batt_temp_hi rather than guess.
-      for (const { key, value } of resolvePackTemperatures(msg.id, data, decodeFrame(msg.id, data))) {
-        record(key, value);
-        // Satellite UTC arrives on CAN 0x410 as well as over BLE, and the Pi has no
-        // RTC — so stepping the clock must not depend on the Bluetooth link being
-        // up. The step itself is guarded (drift threshold, one step per 5 min), so
-        // both transports calling it at ~2 Hz is harmless.
-        //
-        // This does widen what can move the clock: over BLE the frames came from a
-        // session the hub had authorised, whereas anything on can0 with id 0x410
-        // reaches here unauthenticated, and the clock stamps rows in an append-only
-        // log we can't correct in place. The guards in gps/decode.ts are what stands
-        // in for the authentication — fix != 0, >= 4 satellites, every field range
-        // checked and a Date.UTC round trip — and injecting on the VDB bus is a
-        // level of access with far better targets than our timestamps.
-        if (key === "gps_epoch_s") {
-          void syncSystemClockFromGps(value);
-        }
-      }
-    });
-    channel.start();
-    console.log("can: channel started, decoding broadcasts");
-
-    if (OBD_ENABLED) {
-      initObd(channel);
-      stopObd = startObdPoller(500);
-      console.log("obd: polling @2Hz (speed/rpm/temps/load/distance)");
-
-      // One-shot keys-paired read from the E-LOCK ECU. Needs the ACTIVE bus that
-      // OBD_ENABLED brings up; fire-and-forget so it can't delay startup.
-      if (ELOCK_ENABLED) {
-        void readKeysPairedOnce(channel);
-      } else {
-        console.log("elock: disabled (ELOCK_ENABLED=0)");
-      }
-    } else {
-      console.log("obd: disabled (OBD_ENABLED=0) — passive decode only");
-    }
+    channel.setRxFilters([
+      ...STREAM_IDS.map(id => ({ id, mask: 0x7ff })),
+      { id: 0x7e0, mask: 0x7f0 }, // OBD responses 0x7E0–0x7EF
+      { id: ELOCK_RESP_ID, mask: 0x7ff }, // E-LOCK diagnostic reply (one-shot read at startup)
+    ]);
   } catch (err) {
-    console.error("can: init failed — continuing with coolant only:", err);
+    console.warn("can: setRxFilters failed, accepting all frames:", err);
   }
-} else {
-  console.log("can: disabled (CAN_ENABLED=0)");
+
+  channel.addListener("onMessage", msg => {
+    const data = msg.data;
+    if (data.length === 8 && (STREAM_IDS.includes(msg.id) || isObdResponse(msg.id) || isElockResponse(msg.id))) {
+      canTrafficAt = monotonicNow();
+    }
+    if (isObdResponse(msg.id)) {
+      // ⚠️ The KERNEL's arrival stamp, taken before any of our code ran. It is the
+      // only way to see how late this dispatch was, which is the question
+      // docs/lifetime-battery-statistics.md exists to answer — a timestamp taken
+      // inside the handler starts after libuv already delayed it.
+      const arrival = frameArrival(msg);
+      // Service mode's KWP replies land in this same 0x7E0–0x7EF range (the VCU
+      // micros answer on 0x7E0 under EXTENDED addressing, so byte 0 is the
+      // tester's own address 0xF1). Offered to the sweep first, and it consumes
+      // only frames addressed to 0xF1 — which no OBD-II reply is, since byte 0
+      // there is an ISO-TP length nibble — so this takes nothing away from the
+      // poller. It is also a no-op unless a sweep is actually running.
+      if (vcuReadRunner.handleCanFrame(msg.id, data, arrival)) {
+        return;
+      }
+      // Same for a write in flight, and it needs the OBD range too: the KWP legs
+      // answer on 0x7E0 and Mode 04 answers somewhere in 0x7E0–0x7EF. Only one of
+      // the two runners can be busy at a time (src/vcu/bus-lease.ts), so this is
+      // one extra null check per frame in the range and nothing at all otherwise.
+      if (vcuWriteRunner.handleCanFrame(msg.id, data)) {
+        return;
+      }
+      handleResponse(msg.id, data);
+      return;
+    }
+    if (isElockResponse(msg.id)) {
+      handleElockResponse(data);
+      return;
+    }
+    // 0x410 is a whole message stream on one id, so it has three readers and must NOT
+    // return here: the diagnostics list is picked off below, and the frame then carries
+    // on to decodeFrame, which is where the GPS multiplex (~1.8 Hz) and sub-type 3's
+    // drive triple are decoded. Returning early would silently take CAN GPS out.
+    if (msg.id === GPS_CAN_ID) {
+      handleHubMirrorFrame(data);
+    }
+    // resolvePackTemperatures decides whether 0x200's temperature bytes are the true
+    // pack temperature or the VCU-shifted view — it depends on which BMS config is
+    // on the bus, which no single frame can tell you. Until it can tell, it emits
+    // nothing under batt_temp_lo/batt_temp_hi rather than guess.
+    for (const { key, value } of resolvePackTemperatures(msg.id, data, decodeFrame(msg.id, data))) {
+      record(key, value);
+      // Satellite UTC arrives on CAN 0x410 as well as over BLE, and the Pi has no
+      // RTC — so stepping the clock must not depend on the Bluetooth link being
+      // up. The step itself is guarded (drift threshold, one step per 5 min), so
+      // both transports calling it at ~2 Hz is harmless.
+      //
+      // This does widen what can move the clock: over BLE the frames came from a
+      // session the hub had authorised, whereas anything on can0 with id 0x410
+      // reaches here unauthenticated, and the clock stamps rows in an append-only
+      // log we can't correct in place. The guards in gps/decode.ts are what stands
+      // in for the authentication — fix != 0, >= 4 satellites, every field range
+      // checked and a Date.UTC round trip — and injecting on the VDB bus is a
+      // level of access with far better targets than our timestamps.
+      if (key === "gps_epoch_s") {
+        void syncSystemClockFromGps(value);
+      }
+    }
+  });
+  channel.start();
+  console.log("can: channel started, decoding broadcasts");
+
+  initObd(channel);
+  stopObd = startObdPoller(500);
+  console.log("obd: polling @2Hz (speed/rpm/temps/load/distance)");
+  void readKeysPairedOnce(channel);
+} catch (error) {
+  canStartupError = error instanceof Error ? error.message : "CAN adapter could not start";
+  console.error("can: adapter/interface unavailable — dashboard remains available:", error);
 }
 
 // Polled regardless of CAN_ENABLED: the dashboard's CAN dot should show the interface's
@@ -466,25 +413,33 @@ const canLinkMonitor = startCanLinkMonitor(CAN_IFACE);
 // HERE rather than at module scope in src/wifi/status.ts, exactly as the line above is,
 // so importing that module in a check on a laptop does not shell out to an nmcli that
 // is not there. docs/wifi.md.
-const wifiMonitor = WIFI_ENABLED
-  ? startWifiMonitor(WIFI_IFACE, WIFI_HOTSPOT_SSID, () => {
-      // Deliberately not awaited by the poll — see startWifiMonitor. The rejection arm is
-      // here because an escaped one ends the process and takes the CAN logging with it.
-      // ⚠️ The outcome is NOT captured here. runLadder owns it and publishes it; a
-      // refused-because-running call answers NONE, and writing that over a live outcome
-      // would make the signal disagree with the counter beside it.
-      void recoverWifi(wifiContext, RECOVER_TRIGGER.WATCHDOG).catch(error =>
-        console.warn("wifi-recover: the watchdog ladder threw:", error)
-      );
-    })
-  : null;
+const wifiMonitor = startWifiMonitor(WIFI_IFACE, WIFI_HOTSPOT_SSID, () => {
+  // Deliberately not awaited by the poll — see startWifiMonitor. The rejection arm is
+  // here because an escaped one ends the process and takes the CAN logging with it.
+  // ⚠️ The outcome is NOT captured here. runLadder owns it and publishes it; a
+  // refused-because-running call answers NONE, and writing that over a live outcome
+  // would make the signal disagree with the counter beside it.
+  void recoverWifi(wifiContext, RECOVER_TRIGGER.WATCHDOG).catch(error =>
+    console.warn("wifi-recover: the watchdog ladder threw:", error)
+  );
+});
 
 // --- Bluetooth: Connectivity Hub (torque/power, odometer, vehicle state, GPS) ---
 let bleClient: BleClient | undefined;
 
-if (BLE_ENABLED) {
+if (BLE_MAC || startup.discoverHubOnce) {
   bleClient = startBleClient({
     macAddress: BLE_MAC,
+    onState: state => {
+      settingsRuntime.readiness.hub = state;
+    },
+    onConnected: address => {
+      activeHubAddress = address;
+      void settingsRuntime.store.learnHub(address).catch(error => {
+        settingsRuntime.fault = "Connected to the motorcycle, but its address could not be saved.";
+        console.warn("settings: hub address save failed", error);
+      });
+    },
     onValues: values => {
       for (const { key, value } of values) {
         record(key, value);
@@ -493,7 +448,78 @@ if (BLE_ENABLED) {
   });
   console.log(`ble: connecting to Connectivity Hub ${BLE_MAC || "(discovering by name)"}`);
 } else {
-  console.log("ble: disabled (BLE_ENABLED=0)");
+  console.log("ble: choose the motorcycle under Settings → Connections");
+}
+
+const settingsRestart = createSettingsRestart({
+  store: settingsRuntime.store,
+  motionBlockers: () =>
+    restartMotionBlockers(sampleServiceGate(key => ({ value: latestValue(key), ageMs: ageMs(key) }))),
+});
+const settingsHttp = {
+  runtime: settingsRuntime,
+  restart: settingsRestart,
+  codeDirectory: ROOT,
+  version: runningVersion.label,
+  scanHubs: () => scanHubCandidates(() => settingsRuntime.readiness.hub === "Connecting"),
+  drainBluetooth: async () => {
+    await bleServer?.drain();
+  },
+  activeHubAddress: () => activeHubAddress,
+  readiness: () => {
+    settingsRuntime.readiness.coolant = !startup.coolantProbesEnabled
+      ? "Off"
+      : ["coolant_in", "coolant_out"].every(
+            key =>
+              ageMs(key) !== null &&
+              (ageMs(key) ?? Infinity) < 15_000 &&
+              isPlausible(key, latestValue(key) ?? NaN, "°C", "coolant")
+          )
+        ? "Reading"
+        : "Unavailable — check both hose probes and wiring";
+    settingsRuntime.readiness.fan = startup.radiatorFanEnabled
+      ? (fanController.fault ?? "Driver ready — rotation is not measured")
+      : "Off";
+    settingsRuntime.readiness.recording = !settingsRuntime.dataWritable
+      ? "Paused — repair data locations before retrying settings"
+      : rideLogEnabled
+        ? "Recording"
+        : "Unavailable — choose a public key or repair the settings fault";
+    settingsRuntime.readiness.bluetooth = !BLE_SECRET
+      ? "Off"
+      : !validBleSecret(BLE_SECRET)
+        ? "Unavailable — this key needs regenerating in Settings → Connections"
+        : bleServer?.ready()
+          ? "Bluetooth ready"
+          : "Unavailable — Bluetooth registration has not completed";
+    settingsRuntime.readiness.can = systemStatus().can.message;
+    return settingsRuntime.readiness;
+  },
+};
+
+function systemStatus(): DashboardSystemStatus {
+  const link = latestValue("can_link");
+  const heardBike = canTrafficAt !== null && since(canTrafficAt) < 15_000;
+  const state =
+    canStartupError || link === 0
+      ? "down"
+      : link === 1 && heardBike
+        ? "up"
+        : since(canObservationStarted) < 15_000
+          ? "unknown"
+          : "down";
+  return {
+    settingsFault:
+      settingsRuntime.fault ?? (settingsRestart.status().state === "failed" ? settingsRestart.status().message : null),
+    can: {
+      state,
+      message: canStartupError
+        ? "CAN adapter/interface could not start. Check the USB adapter and wiring."
+        : heardBike && link === 1
+          ? "Receiving motorcycle traffic"
+          : "No recent recognised motorcycle traffic. The bike may be asleep; check the adapter and wiring if it is awake.",
+    },
+  };
 }
 
 // --- HTTP + WebSocket server ---
@@ -505,11 +531,22 @@ console.log(
 const server = createServer(async (req, res) => {
   // Query strings are for the endpoints below; the static map is keyed by path.
   const url = new URL(req.url ?? "/", "http://localhost");
+  if (shuttingDown) {
+    res.writeHead(503);
+    res.end("Restarting. Reconnect shortly.");
+    return;
+  }
+  if (url.pathname === "/settings" || url.pathname.startsWith("/settings/")) {
+    await handleSettingsEndpoint(req, res, url.pathname, settingsHttp);
+    return;
+  }
+  if (handleMutationGuard(req, res, url.pathname)) return;
 
+  if (url.pathname === "/recording/flush") {
+    await handleRecordingFlushEndpoint(req, res);
+    return;
+  }
   if (url.pathname === "/dl") {
-    // Seal first: you park, pull out the phone and hit /dl, and the tail of the
-    // ride you actually want is still sitting in the buffer unsealed.
-    await flushEncryptedLog();
     await handleDownloadEndpoint(res, RIDE_LOG_DIR);
     return;
   }
@@ -530,7 +567,7 @@ const server = createServer(async (req, res) => {
   // `git pull` the checkout on the Pi — the menu's "Update" button — then restart the
   // service so the new code takes effect.
   if (url.pathname === "/update") {
-    await handleUpdateEndpoint(req, res, UPDATE_DIR);
+    await handleUpdateEndpoint(req, res, UPDATE_DIR, settingsHttp);
     return;
   }
   // Duty and mode for the cooling fan. The Pi's own GPIO and PWM; it cannot reach the
@@ -653,7 +690,7 @@ const server = createServer(async (req, res) => {
   res.end("not found\n");
 });
 
-const ws = setupWs(server);
+const ws = setupWs(server, undefined, systemStatus);
 
 // Bind the IPv4 wildcard explicitly. With the host omitted, Node binds the IPv6
 // wildcard `::`, and on the Pi that listens on tcp6 only (netstat shows `:::80`, no
@@ -671,7 +708,7 @@ server.listen(PORT, "0.0.0.0", () => {
 let bleServer: BleServer | null = null;
 if (BLE_SECRET) {
   server.once("listening", () => {
-    startBleServer({ secret: BLE_SECRET, httpPort: PORT }).then(
+    startBleServer({ secret: BLE_SECRET, httpPort: PORT, system: systemStatus }).then(
       started => {
         bleServer = started;
         console.log("ble-server: serving the dashboard over BLE");
@@ -682,7 +719,7 @@ if (BLE_SECRET) {
     );
   });
 } else {
-  console.log("ble-server: off (set BLE_SECRET to serve the dashboard over BLE)");
+  console.log("ble-server: off — configure Dashboard Bluetooth under Settings → Connections");
 }
 
 // --- Automatic DC charge current (docs/charge-auto.md) ---
@@ -708,8 +745,8 @@ const chargeAutomatic = startChargeAutomatic(
 );
 console.log(
   CHARGE_AUTO_ENABLED
-    ? "charge-auto: automatic DC charge current is ON (set CHARGE_AUTO_ENABLED=0 to disable)"
-    : "charge-auto: disabled by CHARGE_AUTO_ENABLED=0"
+    ? "charge-auto: automatic current reduction is allowed; change permission in Settings → Charging"
+    : "charge-auto: automatic current reduction is not allowed in startup settings"
 );
 
 // --- Graceful shutdown ---
@@ -717,6 +754,7 @@ let shuttingDown = false;
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
+  settingsRestart.consume();
   console.log("\nShutting down…");
   stopObd?.();
   canLinkMonitor.stop();
@@ -771,6 +809,8 @@ async function shutdown(): Promise<void> {
   }
   ws.stop();
   server.close();
+  await settingsRuntime.store.settled();
+  await settingsRuntime.lock.release();
   process.exit(0);
 }
 

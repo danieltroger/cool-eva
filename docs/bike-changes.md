@@ -6,13 +6,13 @@ Manual charging and service actions use a two-tap arm and vehicle-state checks. 
 
 <!-- for-now: #317 -->
 
-For now, state-changing CAN commands also require `SERVICE_WRITE_ENABLED=1`; leave it unset for a first installation.
+Service writes are available to anyone on the same network or holding the Bluetooth key. Existing gates and confirmations still apply.
 
 **Automatic DC charge management starts in automatic mode** and can adjust the requested current without a confirmation for each adjustment. When the dashboard setting **"Allow automatic current reduction"** is available, it defaults **on**. On a stock BMS configuration, it only changes the maximum-current figure the bike's dash shows; it does not control the actual DC charging current. See [Daniel's stock-bike observation](charge-auto.md#stock-bms-configuration) and the [automatic charging details](charge-auto.md).
 
 <!-- for-now: #317 -->
 
-For now, use the Charge tab's **"Automatic charge current"** tile (visible during a DC charge when writes are enabled) for session controls, or set `CHARGE_AUTO_ENABLED=0` in `/etc/default/cool-eva` to disable the controller across boots.
+For now, use the Charge tab's **"Automatic charge current"** tile (visible during a DC charge when writes are enabled) for session controls, or turn off Settings → Charging → Allow automatic current reduction, Save and explicitly Restart to revoke that permission across boots.
 
 The optional fan can start by itself once enabled. Keep hands clear while it has power; see the [cooling hardware guide](cooling-hardware.md).
 
@@ -26,4 +26,4 @@ Cool Eva enrolls the Pi with the motorcycle's Bluetooth hub. The hub remembers *
 
 <!-- for-now: #317 -->
 
-For now, prevent that enrollment by adding `BLE_ENABLED=0` to `/etc/default/cool-eva` before starting the service; edit the file with `sudo nano /etc/default/cool-eva`.
+Fresh settings leave the motorcycle unselected. Select your own motorcycle explicitly in Settings → Connections, then Restart; a migrated discover-once installation keeps its existing automatic discovery until it has remembered the first successful hub. Forget and restart to stop connecting.

@@ -343,7 +343,7 @@ The two ways a guarded derive loses a change — a read behind an early `return`
 
 ## What it is allowed to do
 
-Commands go through the existing `/vcu-write` `charge-current` action and nothing else, so they inherit `SERVICE_WRITE_ENABLED`, the bus lease, the live-session check, the opcode and ceiling chosen off the live bus, and one audit-journal line each. **One transmit path.** A consequence worth stating: on a Pi that has not opted into writes this controller is inert, and that is correct.
+Commands go through the existing `/vcu-write` `charge-current` action and nothing else, so they inherit service-data availability, the bus lease, the live-session check, the opcode and ceiling chosen off the live bus, and one audit-journal line each. **One transmit path.** A consequence worth stating: the persistent permission is Settings → Charging → Allow automatic current reduction (default ON); temporary pause stays on Charge. A settings/data fault can still prevent the shared write runner from acting.
 
 `CHARGE_AUTO_ENABLED=0` is the kill switch a phone toggle cannot reach; the dashboard toggle is in-memory only, like the fan's, because the Pi loses power with the bike.
 

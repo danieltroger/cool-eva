@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { TABS } from "../public/lib/router.js";
 import { sceneNamesIn } from "./preview-scenes.ts";
+import { checkSettingsBrowser } from "./settings-browser-check.ts";
 import {
   closePage,
   evaluateOnPage,
@@ -140,11 +141,11 @@ interface SheetMeasurement {
  */
 const SHEET = `(() => {
   const sheet = document.querySelector(".sheet");
-  const body = document.querySelector(".sheet-body");
+  const body = document.querySelector(".settings-page:has(.waypoint-list)") ?? document.querySelector(".sheet-body");
   if (sheet === null || body === null) {
     throw new Error("no menu sheet in the page to measure");
   }
-  const rows = [...document.querySelectorAll(".waypoint-row")];
+  const rows = [...body.querySelectorAll(".waypoint-row")];
   return {
     open: sheet.classList.contains("open"),
     clientWidth: document.documentElement.clientWidth,
@@ -169,7 +170,7 @@ const SHEET = `(() => {
  * `.sheet-body` scrollWidth without the rule against 390 with it, measured.
  */
 const ROW_PROBE = `(() => {
-  const body = document.querySelector(".sheet-body");
+  const body = document.querySelector(".settings-page:has(.waypoint-list)");
   const target = document.querySelector(".waypoint-row .waypoint-body");
   if (body === null || target === null) {
     throw new Error("no waypoint row to probe");
@@ -233,6 +234,7 @@ let page: HeadlessPage | null = null;
 try {
   page = await openHeadlessPage(PHONE, browserPath);
   await sweep(page, previewFile);
+  await checkSettingsBrowser(page, previewFile);
 } finally {
   if (page !== null) {
     await closePage(page);
@@ -246,8 +248,7 @@ if (failures > 0) {
 }
 console.log(
   `\n✓ ${SCENES.length * TABS.length} scene/tab combinations fit a ${PHONE.width} px phone, ` +
-    "the longest stored-code row is readable in full, and the menu sheet — which none of those " +
-    "measurements can see — does not scroll sideways with the waypoint list open"
+    "the longest stored-code row is readable in full, and the menu and its Session waypoint list fit without sideways scrolling"
 );
 
 /**
@@ -300,13 +301,25 @@ async function measureSheet(page: HeadlessPage, previewFile: string, scene: stri
   await gotoPage(page, `file://${previewFile}?scene=${scene}&sheet=1#ride`);
   await waitOnPage(page, `document.querySelectorAll(".view > *").length > 0`, `the ${where} page to render`);
   await evaluateOnPage(page, `document.querySelector(".header .menu").click()`);
-  // ⚠️ Waited on WITHOUT `.sheet.open`, deliberately. The rows are in the DOM whether or not
-  // anything opened the sheet, so waiting on the open class would turn the assertion below
-  // into a timeout with a vaguer reason — and the point of that assertion is to name what
-  // went wrong when every width still reads fine on a sheet nobody can see.
+  await evaluateOnPage(page, "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+  const menu = asSheetMeasurement(await evaluateOnPage(page, SHEET));
+  check(`${where} really opened — hidden menus have the same layout boxes`, menu.open);
+  check(`${where} is being measured at ${PHONE.width} px`, menu.clientWidth === PHONE.width);
+  check(`${where} fits inside itself`, menu.bodyScrollWidth <= menu.bodyClientWidth);
+  // The list moved into Session; follow the real menu link so the old overflow checks still reach it.
+  await evaluateOnPage(
+    page,
+    `[...document.querySelectorAll(".menu-link")].find(button => button.textContent.includes("This session & waypoints")).click()`
+  );
   await waitOnPage(page, `document.querySelectorAll(".waypoint-row").length > 0`, `the ${where} to render its list`);
   const collapsed = asSheetMeasurement(await evaluateOnPage(page, SHEET));
-  check(`${where} really opened — every width below is measured on a hidden sheet otherwise`, collapsed.open);
+  check(
+    `${where} opened the named Session destination`,
+    (await evaluateOnPage(
+      page,
+      `location.search.includes("panel=session") && document.querySelector(".header .menu").textContent.includes("Menu")`
+    )) === true
+  );
   // ⚠️ Measured EXPANDED, because the row that decides this — the longest refusal sentence —
   // is older than the six the list previews, and a check that never opened the list would
   // report a clean ✓ for the rows nobody had measured. The toggle is asserted rather than

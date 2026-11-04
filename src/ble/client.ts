@@ -71,6 +71,8 @@ export interface BleClientOptions {
   /** Hub address, e.g. "F8:8A:5E:09:D3:B4". Empty ⇒ discover by advertised name. */
   macAddress?: string;
   onValues: (values: DecodedValue[]) => void;
+  onConnected?: (address: string) => void;
+  onState?: (state: string) => void;
 }
 
 export interface BleClient {
@@ -120,12 +122,14 @@ function logAll(lines: string[]): void {
 }
 
 export function startBleClient(options: BleClientOptions): BleClient {
+  let chosenAddress = options.macAddress ?? "";
   let stopped = false;
   let disconnectCurrent: (() => Promise<void>) | null = null;
   const retryPolicy = new BleRetryPolicy();
   let hubObjectNote: string | null = null;
 
   async function runSession(): Promise<void> {
+    options.onState?.("Connecting");
     await ensureBluetoothAdapterUp();
     const { bluetooth, destroy } = createBluetooth();
     let device: Awaited<ReturnType<Awaited<ReturnType<typeof bluetooth.defaultAdapter>>["waitDevice"]>> | null = null;
@@ -159,7 +163,7 @@ export function startBleClient(options: BleClientOptions): BleClient {
         throw error;
       }
 
-      const hubAddress = options.macAddress || (await discoverHubAddress(adapter));
+      const hubAddress = chosenAddress || (await discoverHubAddress(adapter));
       device = await adapter.waitDevice(hubAddress);
       await device.connect();
       // Here, not four awaits later at the log line: connect() returning IS the proof the
@@ -227,6 +231,9 @@ export function startBleClient(options: BleClientOptions): BleClient {
           if (isSessionConfirmed(frame)) {
             if (!authorised) {
               console.log("ble: session confirmed — telemetry streaming");
+              chosenAddress = hubAddress;
+              options.onState?.("Connected");
+              options.onConnected?.(hubAddress);
             }
             authorised = true;
             continue;
@@ -336,6 +343,7 @@ export function startBleClient(options: BleClientOptions): BleClient {
         console.warn("ble: no frames for 30 s — reconnecting");
       }
     } finally {
+      options.onState?.(stopped ? "Off" : "Unavailable — reconnecting to the motorcycle");
       clearInterval(requestTimer);
       disconnectCurrent = null;
       try {
@@ -355,6 +363,7 @@ export function startBleClient(options: BleClientOptions): BleClient {
       try {
         await runSession();
       } catch (error) {
+        options.onState?.("Unavailable — reconnecting to the motorcycle");
         const plan = retryPolicy.onFailure((error as Error).message, monotonicNow(), hubObjectNote);
         logAll(plan.logLines);
         if (plan.resetAdapter) {
