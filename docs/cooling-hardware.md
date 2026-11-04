@@ -6,7 +6,7 @@ A stock Energica needs none of this hardware. This page covers the temperature p
 
 | Part | What this installation uses | Evidence |
 | --- | --- | --- |
-| Temperature interface | Two MAX31865 boards, each with a 430 Ω reference resistor | [`src/sensors/max31865.ts`](../src/sensors/max31865.ts), [`INSTALL.md` §0](../INSTALL.md#0-hardware) |
+| Temperature interface | Two MAX31865 boards, each with a 430 Ω reference resistor | [`src/sensors/max31865.ts`](../src/sensors/max31865.ts), [checkout wiring §0](checkout-install.md#0-hardware) |
 | Coolant probes | Two PT100 probes, nominal 100 Ω, wired as **4-wire** sensors | Same configuration; one inlet and one outlet |
 | Radiator fan | SPAL VA69A-A101-87S, 12 V brushed motor | [`fan-control.md` §1](fan-control.md#1-hardware) |
 | Motor driver | IBT-2 module: two BTS7960B half-bridges and a 74HC244 logic buffer | [`fan-control.md` §1–2](fan-control.md#1-hardware) |
@@ -57,7 +57,7 @@ The motor needs a separate 12 V power path through its driver and the bike's fus
 
 ## Configure and enable the fan
 
-Before enabling a wired fan, follow [`INSTALL.md` §1](../INSTALL.md#1-base-os-setup) and [`fan-control.md` §5](fan-control.md#5-kernel-setup-on-the-pi) for `raspi-utils`/`pinctrl` and these boot settings:
+Fresh bundle setup asks whether the fan is already wired. Answer **WIRED** only then; setup installs `raspi-utils`/`pinctrl`, writes the boot settings and reboots for device checks. For developer checkout installs, the manual equivalent remains in [checkout installation §1](checkout-install.md#1-base-os-setup) and [fan-control §5](fan-control.md#5-kernel-setup-on-the-pi):
 
 ```ini
 dtoverlay=pwm,pin=18,func=2
@@ -69,9 +69,7 @@ They go in `/boot/firmware/config.txt` and need a reboot. The two enables start 
 
 **Enabling the fan lets it start automatically.** Its automatic curve follows pack temperature; the slider can take over. Keep hands out of the duct while powered: killing the process can leave the bridge driving until the service restarts. Leave the fan disabled on a stock installation. When the probe and fan settings are available in the dashboard, both default OFF; enable them only with the corresponding hardware installed.
 
-<!-- for-now: #317 -->
-
-For now, enabling a wired fan requires `FAN_ENABLED=1` in `/etc/default/cool-eva` and a service restart, after the boot configuration above is complete.
+Later fan changes use Settings and an explicit restart. If the boot settings were not installed initially, apply them before enabling the fan; the checkout guide retains the manual commands.
 
 The start-up kick is an anti-stiction measure, **not proven fuse protection**. Locked-rotor current and the actual 12 V rail under load have not been measured. See [the electrical reasoning and known gaps](fan-control.md#8-known-gaps) before adapting the circuit.
 

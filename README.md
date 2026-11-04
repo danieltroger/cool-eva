@@ -39,54 +39,33 @@ The bike's other CAN connector leaves OBD2 free, but needs a sourced plug and so
 
 ## Setup
 
-Commands below say where to run them. Choose username **`pi`** to use them unchanged; [full manual instructions](docs/manual-install.md) cover the details.
+The release installer is **not published yet**. The command below becomes usable after the first release announcement.
 
-### 1. Prepare the phone and card — on your computer
+### 1. Flash the card — on your computer
 
-The Zero 2 W needs **2.4 GHz Wi-Fi**. On iPhone, turn on **Personal Hotspot → Maximize Compatibility** if available. Keep the hotspot settings page open for about 20 seconds when the Pi boots so it can join.
+Use [Raspberry Pi Imager](https://www.raspberrypi.com/software/) with **Raspberry Pi Zero 2 W → current Raspberry Pi OS Lite (64-bit)**. Set hostname **`cool-eva`**, username **`pi`**, a password, **SSH enabled**, and an internet-connected Wi-Fi network. Your computer and Pi must join the same network for setup. The Zero 2 W needs **2.4 GHz**; on iPhone, enable **Personal Hotspot → Maximize Compatibility** if available.
 
-Use [Raspberry Pi Imager](https://www.raspberrypi.com/software/) to flash **64-bit Raspberry Pi OS**. Set hostname **`cool-eva`**, username **`pi`**, a password, **SSH enabled**, and your hotspot's Wi-Fi name and password. Insert the card and power the Pi.
+Insert the card and use a stable **mains USB supply for the entire installation**, with the motorcycle parked. Have both the home Wi-Fi and phone-hotspot names/passwords ready. [Detailed setup and IP fallback](docs/manual-install.md).
 
-### 2. Connect — on your computer
+### 2. Make a recording key — on your computer
 
-Join the same hotspot. In **PowerShell (Windows)** or **Terminal (macOS/Linux)**, run `ssh pi@cool-eva.local`. Accept the new Pi's host key and enter your password. You are now typing on the Pi. If the name fails, [connect using its IP address](docs/manual-install.md#2-connect--on-your-computer).
+Open [the recording key page](https://cool-eva-keys.cool-eva.workers.dev), generate a pair, download both named PEM files and back up the **private** key away from the Pi. Setup takes **only the public PEM**; open that public file in a text editor to copy its complete block. Existing owners can keep their key. You can skip recording during setup and add the public key later in Settings → Ride recording; until then, **no rides are saved**. No laptop Node installation is needed. [Key backup and phone-only handoff](docs/hosted-pages.md#make-recording-keys).
 
-### 3. Install the software — on the Pi
+### 3. Install and start — on your computer
 
-<!-- for-now: #324 -->
-
-For now, [prepare Node 24, build tools and swap](docs/manual-install.md#prepare-node-and-swap), then paste this on the Pi; installation takes several minutes:
+Read [what can change the bike](#what-can-change-the-bike) first. Paste this **one line** into **Windows PowerShell or macOS Terminal**:
 
 ```sh
-git clone https://github.com/danieltroger/cool-eva.git /home/pi/cool-eva
-cd /home/pi/cool-eva
-rm package-lock.json && npm install
-git checkout -- package-lock.json
+ssh -tt pi@cool-eva.local "sudo install -d -m 700 /var/cache/cool-eva-install && sudo curl -fsSL --proto '=https' --proto-redir '=https' https://github.com/danieltroger/cool-eva/releases/latest/download/install.sh -o /var/cache/cool-eva-install/install.sh && sudo sh /var/cache/cool-eva-install/install.sh"
 ```
 
-### 4. Enable saved ride history — on your computer
+Accept the new Pi's host key and enter the Imager password when asked. Substitute your username/address if different. Type **BENCH** only with stable mains power. Answer the network and public-key prompts; enable optional probes/fan only if already wired. Setup handles OS packages, swap, service installation/start and the startup checks.
 
-Open [the recording key page](https://cool-eva-keys.cool-eva.workers.dev), generate a pair, download both named PEM files and back up the private key. After starting the service, upload **only the public key** in Settings → Ride recording. Without it, the dashboard works but no rides are saved. Existing owners can keep their current keys.
+**Do not unplug the Pi during OS catch-up.** If SSH closes, keep power on and paste the same line again to resume. A migration error that says **stop and ask for help** needs help instead of repeated retries.
 
-See [recording key setup](docs/hosted-pages.md#make-recording-keys) for the phone-only handoff and outstanding phone acceptance, or use the [manual Node 24 route](docs/manual-install.md#4-enable-saved-ride-history--on-your-computer).
+When setup prints **“Dashboard ready”**, open that address. It also reports the running bundle, encrypted-recording fingerprint or **“NOT SAVING RIDES”**, and whether CAN is present/waiting. Fresh settings leave the motorcycle hub unselected and optional hardware off unless explicitly enabled. Raw CAN capture is off. With the **bike awake and parked**, verify live readings; missing optional readings on a stock bike are normal. [Results and troubleshooting](docs/manual-install.md#5-results-and-help).
 
-### 5. Before the first service start
-
-[Read what can change the bike](#what-can-change-the-bike). Fresh settings leave the motorcycle hub unselected and optional hardware off. The dashboard’s Settings screen replaces environment configuration; see the [configuration reference](docs/configuration.md).
-
-### 6. Start and check — on the Pi
-
-<!-- for-now: #324 -->
-
-For now, start the service with:
-
-```sh
-cd /home/pi/cool-eva
-printf '{}\n' | sudo "$(command -v node)" --experimental-strip-types scripts/configure-settings.ts
-sudo "$(command -v node)" --experimental-strip-types scripts/setup-service.ts
-```
-
-With the **bike awake and parked**, open the dashboard below and check for live readings. See [startup and ride-log checks](docs/manual-install.md#6-start-and-check--on-the-pi) if anything is missing.
+Existing checkout owners: [migration and backups](docs/bundle-installation.md#daniels-first-real-migration--go-at-the-bike). Daniel's first migration is gated on his explicit GO; do not re-image or replace an existing install as a fresh setup.
 
 ## Open the dashboard
 

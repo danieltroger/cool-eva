@@ -1,6 +1,10 @@
-# Deploying to the Pi — who pulls, and why it is not root
+# Updates for bundles and existing checkouts
 
-The dashboard's **Update** button (`src/http/update.ts`) is a `git pull` and a `systemctl restart`. This file is why it is shaped the way it is. Operator instructions — what to actually type on a fresh Pi — are in `INSTALL.md` §3; this is the reasoning behind them, kept here so the next person changing the mechanism does not have to re-derive it from six copies scattered across the repo.
+Bundle installs use **Menu → Settings → Cool Eva → Update**. Park and keep the Pi powered with internet access. Update downloads the same prebuilt runtime/dependencies used by setup, verifies them, then reserves a safe stop. If moving, busy or settings changed, it leaves the app running and explains what to do. A failed candidate switches back automatically; ride data stays outside releases. No Git/npm/native build runs on a rider's Pi. [Bundle rollback, power-loss and slow-crash limits](bundle-updater.md).
+
+The bundle installer/releases are **not published yet**. Existing checkout installs continue using their owner-run Git updater until deliberately migrated. [New setup](manual-install.md) and [migration acceptance](bundle-installation.md#daniels-first-real-migration--go-at-the-bike) are separate from the checkout findings below.
+
+The rest of this document preserves the checkout updater's ownership reasoning and historical measurements. Its operator commands live in [checkout installation](checkout-install.md#3-get-the-code).
 
 ## The rule
 
@@ -92,7 +96,7 @@ Delete `-H` and ssh keeps working, which is exactly how it would get deleted for
 
 ## Related
 
-- `INSTALL.md` §3 — what to type, for an operator setting up a Pi.
+- [Checkout installation §3](checkout-install.md#3-get-the-code) — commands for an existing/development checkout.
 - `scripts/check-update-endpoint.ts` — the checks, including the argv assertions that catch a regression to pulling as root.
 - Issue #146 (the diagnosis and three rounds of review), PR #148.
 - Issue #150 — `/update` now requires `X-Cool-Eva: update`, like `/fan` and `/vcu-write`. Without it a cross-origin `<form method="POST">` on any page the phone opened triggered this sudo pull and restart. ⚠️ It is a CSRF barrier and not authentication — a `curl` on the bike's wifi still reaches it, and so does the restart loop built on that. `docs/wifi-hardening.md`; asserted by `scripts/check-endpoint-headers.ts`.
@@ -101,7 +105,7 @@ Delete `-H` and ssh keeps working, which is exactly how it would get deleted for
 
 ## Running it
 
-The app is the `cool-eva` `systemd` service on the Pi (Node 24, TypeScript run directly via `--experimental-strip-types`), serving `http://<pi>/` on port 80. First install is under [Setup](../README.md#setup); after that, deploying is a pull and a restart:
+The app is the `cool-eva` `systemd` service on the Pi (Node 24, TypeScript run directly via `--experimental-strip-types`), serving `http://<pi>/` on port 80. For this historical checkout path, deployment is a pull and restart; bundle installs use the Update flow above:
 
 ```bash
 git pull && sudo systemctl restart cool-eva
@@ -110,7 +114,7 @@ sudo journalctl -u cool-eva -f    # follow logs
 
 A restart no longer re-initialises a healthy can0: since #160 the service reads the interface first and leaves it alone when it is already configured the way it would configure it, so a deploy should stop punching a five-second hole in the raw capture. It still bounces the link when it genuinely needs reconfiguring — and because it no longer bounces one that merely _looks_ healthy, "restart the service" is no longer the way to kick a wedged adapter: `sudo ip link set can0 down` first, or use the dashboard's CAN-restart button. ⚠️ **Unverified until the first deploy after this shipped** — the bike was powered down when it was written, so the fixtures behind it are synthetic. [`docs/can-capture.md`](can-capture.md) has the conditions, the residual hole and what that first deploy settles.
 
-The dashboard menu's **Update** button does exactly that pull and restart from the phone, showing git's output. It runs the pull as the checkout's **owner** rather than as root — never `sudo git pull`, which poisons `.git` and makes the _next_ pull fail silently. [`docs/deploy.md`](deploy.md) has the why; [INSTALL.md §3](../INSTALL.md) has what to type.
+The dashboard menu's **Update** button does exactly that pull and restart from the phone, showing git's output. It runs the pull as the checkout's **owner** rather than as root — never `sudo git pull`, which poisons `.git` and makes the _next_ pull fail silently. [`docs/deploy.md`](deploy.md) has the why; [checkout installation §3](checkout-install.md#3-get-the-code) has what to type.
 
 > ⚠️ **Don't run `npm install` or `npm ci` on the Pi unless a dependency actually changed.** `package-lock.json` is generated on macOS, where `socketcan`'s Linux-only native build is skipped as an optionalDependency; installing against that lockfile on the Pi deletes the real one, and the service then dies on boot with `ERR_MODULE_NOT_FOUND: socketcan`. `npm install socketcan` will insist it's "up to date" even with `--force` — the fix is `rm package-lock.json && npm install` **on the Pi** (~4 min). A plain `git pull` never touches `node_modules` and is always safe.
 
@@ -122,4 +126,4 @@ After deliberately rebuilding the Pi's dependencies with `rm package-lock.json` 
 git checkout -- package-lock.json
 ```
 
-This restores only the tracked lockfile. The freshly compiled native modules in `node_modules` remain in place. A regenerated lockfile left modified can make Menu → Update's `git pull --ff-only` refuse a later upstream lockfile change. The [current first-install steps](../README.md#3-install-the-software--on-the-pi) include this restoration; do not run another dependency install merely because the tracked file has been restored.
+This restores only the tracked lockfile. The freshly compiled native modules in `node_modules` remain in place. A regenerated lockfile left modified can make Menu → Update's `git pull --ff-only` refuse a later upstream lockfile change. The [checkout build steps](checkout-install.md#4-install-dependencies) include this restoration; do not run another dependency install merely because the tracked file has been restored.
