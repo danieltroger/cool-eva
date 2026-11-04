@@ -45,7 +45,9 @@ Every endpoint call must go through **`request()` in `public/lib/transport.js`**
 
 ## Hosted pages and origin isolation
 
-The hosted dashboard is enabled at **`https://cool-eva-dashboard.cool-eva.workers.dev`**. Its exact origin is dedicated to this dashboard; the key page has a different Worker origin. Browser localStorage is shared by **origin**, not by project path. The old shared GitHub Pages origin is no longer allowed. Riders must **re-enter their saved Bluetooth access code** at the new address; storage cannot move across origins. Use the same current code, update bookmarks and keep a recoverable copy. Changing the URL alone does not require rotating the Pi's code.
+The hosted dashboard is enabled at **`https://cool-eva-dashboard.cool-eva.workers.dev`**. Its exact origin is dedicated to this dashboard; the key page has a different Worker origin. Browser localStorage is shared by **origin**, not by project path. The old shared GitHub Pages origin is no longer allowed. Riders must **re-enter their saved Bluetooth access code** at the new address; storage cannot move across origins. Update bookmarks and keep a recoverable copy.
+
+Unpublishing leaves riders' saved Bluetooth codes in browser storage under `danieltroger.github.io`, so do not publish another GitHub Pages site on that account unless the Pi's Bluetooth code has been rotated first. After re-entering the code at the new address, riders may clear the old site's data in their browser.
 
 The exact HTTPS origin allowlist is committed in **`public/lib/ble-origin.js`**. Fork owners add their own exact origin (for example, `https://your-exclusive-host.example`) only when that whole origin is dedicated to the dashboard. Use `new URL(yourDashboardURL).origin` to identify it, with no path or trailing slash. Do not allow the key page, sibling Workers, deployment previews or wildcard hosts. No build step or runtime environment variable is involved. See [the cutover order](hosted-pages.md#ordered-cutover-and-pages-retirement) before unpublishing the old Pages deployment.
 

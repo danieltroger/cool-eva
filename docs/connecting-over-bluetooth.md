@@ -16,7 +16,7 @@ Safari cannot do this on any iPhone: it has no Web Bluetooth.
 
 Bluefy and Chrome use the hosted dashboard, **[https://cool-eva-dashboard.cool-eva.workers.dev](https://cool-eva-dashboard.cool-eva.workers.dev)**. The Pi's `http://cool-eva.local` dashboard uses wifi, so its menu has no Bluetooth section. A browser can only use Bluetooth on an https page. Cloudflare serves the static page; subsequent dashboard data travels directly between the phone and Pi over Bluetooth.
 
-**When moving from the old GitHub Pages address, re-enter your saved Bluetooth access code on the new address.** Browser storage is separate for each origin; the old page's saved code does not move with you. Use your recoverable copy of the Pi's current code; do not generate or rotate it just because the address changed. Update your bookmark. The native app's address and saved code are unchanged.
+**When moving from the old GitHub Pages address, re-enter your saved Bluetooth access code on the new address.** Browser storage is separate for each origin; the old page's saved code does not move with you. Use your recoverable copy of the Pi's current code, then you may clear the old site's data in your browser. Update your bookmark. The native app's address and saved code are unchanged.
 
 ## 1. Set up the Pi (once)
 
