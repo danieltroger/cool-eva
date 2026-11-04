@@ -55,6 +55,16 @@ if (NETWORKS.change) {
     NETWORKS.active = { uuid: NETWORK_CHANGE.uuid, address: "192.0.2.30" };
     NETWORKS.canKeep = NETWORK_SCENE === "waiting-wifi";
     NETWORKS.viaBluetooth = !NETWORKS.canKeep;
+  } else if (NETWORK_SCENE.startsWith("recovery-fault")) {
+    NETWORKS.message =
+      "Recovery incomplete. The connection at the next power-on is unconfirmed. Use previous to retry the saved connection.";
+    NETWORKS.change.phase = "restoring";
+    NETWORKS.change.message = "The trial was interrupted. It will not run at power-on.";
+    NETWORKS.active = null;
+    if (NETWORK_SCENE === "recovery-fault-no-fallback") {
+      NETWORKS.change.fallback = null;
+      NETWORKS.change.replaced = null;
+    }
   } else if (NETWORK_SCENE === "restored") {
     NETWORKS.change.phase = "restored";
     NETWORKS.change.message = "Could not confirm Synthetic replacement. Reconnected to Synthetic home.";

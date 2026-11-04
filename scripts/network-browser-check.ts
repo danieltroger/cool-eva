@@ -4,10 +4,56 @@ import { checkNetworkPurposeBrowser } from "./network-purpose-browser.ts";
 
 export async function checkNetworkBrowser(page: HeadlessPage, previewFile: string): Promise<void> {
   const base = `file://${previewFile}?scene=parked&panel=settings&section=networks`;
-  for (const state of ["list", "saved", "trying", "waiting-ble", "waiting-wifi", "restored", "failed", "kept"]) {
+  for (const state of [
+    "list",
+    "saved",
+    "trying",
+    "waiting-ble",
+    "waiting-wifi",
+    "restored",
+    "failed",
+    "kept",
+    "recovery-fault",
+    "recovery-fault-no-fallback",
+  ]) {
     await gotoPage(page, `${base}&network-state=${state}`);
     await waitOnPage(page, "document.body.innerText.includes('Synthetic home')", `Wi-Fi ${state}`);
     await assertPhoneLayout(page, state);
+    if (state === "saved") {
+      assert.equal(await evaluateOnPage(page, "document.body.innerText.includes('restarting does not try it')"), true);
+    }
+    if (state.startsWith("recovery-fault")) {
+      assert.equal(
+        await evaluateOnPage(
+          page,
+          "document.body.innerText.includes('Recovery incomplete. The connection at the next power-on is unconfirmed.')"
+        ),
+        true
+      );
+      assert.equal(
+        await evaluateOnPage(
+          page,
+          state === "recovery-fault"
+            ? "document.body.innerText.includes('Synthetic home remains saved.')"
+            : "document.body.innerText.includes('No previous connection was selected for this change.')&&document.body.innerText.includes('Use previous to stop the incomplete change.')"
+        ),
+        true
+      );
+      assert.equal(
+        await evaluateOnPage(
+          page,
+          "/will not run at power-on|restarting does not try it|Only an armed trial/.test(document.querySelector('.settings-page').innerText)"
+        ),
+        false
+      );
+      assert.equal(
+        await evaluateOnPage(
+          page,
+          "[...document.querySelectorAll('.settings-page button')].some(button=>button.textContent==='Use previous'&&!button.disabled)"
+        ),
+        true
+      );
+    }
     if (state === "waiting-ble") {
       assert.equal(
         await evaluateOnPage(
@@ -143,7 +189,7 @@ export async function checkNetworkBrowser(page: HeadlessPage, previewFile: strin
   );
   assert.equal(await evaluateOnPage(page, "document.body.innerText.includes('Previous network kept')"), false);
   console.log(
-    "Wi-Fi phone checks: eight states, real Wi-Fi link, password modes/clearing, blank validation, trial dwell and offline countdown pass at 390px."
+    "Wi-Fi phone checks: recovery uncertainty, reachable Use previous, real Wi-Fi link, password modes/clearing, blank validation, trial dwell and offline countdown pass at 390px."
   );
 }
 

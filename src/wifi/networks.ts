@@ -1,6 +1,9 @@
 import { networkView } from "./network-view.ts";
 import { monotonicNow } from "../monotonic.ts";
 import type { SettingsStore } from "../settings/store.ts";
+import type { HotspotNameOwnership } from "../settings/view.ts";
+import { registeredHotspot } from "./network-hotspot.ts";
+import { incompleteRecoveryMessage } from "../../public/lib/network-recovery.js";
 import { acquireWifiOperation, excludeNetworkCandidates } from "./operation.ts";
 import type { NetworkLedgerStore } from "./network-ledger.ts";
 import { saveNetworkDraft } from "./network-save.ts";
@@ -14,6 +17,7 @@ import {
   type NetworkProof,
   type NetworkRequestIdentity,
   type NetworkView,
+  type NetworkProfile,
 } from "./network-types.ts";
 
 export class WifiNetworks {
@@ -28,6 +32,7 @@ export class WifiNetworks {
   reservation: Awaited<ReturnType<SettingsStore["reserve"]>> | null = null;
   private queue: Promise<unknown> = Promise.resolve();
   private timer: ReturnType<typeof setInterval> | undefined;
+  private knownProfiles: NetworkProfile[] | null = null;
 
   constructor(options: NetworkOptions) {
     this.options = options;
@@ -37,15 +42,18 @@ export class WifiNetworks {
 
   async start(): Promise<void> {
     await this.serial(() => reconcileNetworkStart(this)).catch(() => {
-      this.fault =
-        "Network change recovery needs repair. Wi-Fi may switch at power-on after an interrupted confirmation.";
+      this.fault = pendingNetworkChange(this)
+        ? incompleteRecoveryMessage(this.state().change)
+        : "Saved network details need repair. Read again or use the installation guide.";
       console.warn("wifi-settings: interrupted network change could not be reconciled; no values logged");
     });
     if (this.options.autoTick !== false) {
       this.timer = setInterval(() => {
         void this.tick().catch(error => {
           if (!(error instanceof NetworkRefusal)) {
-            this.fault = "The Wi-Fi trial could not be observed. Reconnect to read its result.";
+            this.fault = pendingNetworkChange(this)
+              ? incompleteRecoveryMessage(this.state().change)
+              : "The Wi-Fi result could not be observed. Reconnect to read its result.";
           }
           console.warn("wifi-settings: trial observation failed; checkpoint remains the crash backstop");
         });
@@ -62,6 +70,15 @@ export class WifiNetworks {
   settingsRevision(): number | null {
     const settings = this.options.settings.read();
     return settings.kind === "ready" ? settings.document.revision : null;
+  }
+  async listProfiles(): Promise<NetworkProfile[]> {
+    const profiles = await this.options.backend.list();
+    this.knownProfiles = profiles;
+    return profiles;
+  }
+  hotspotNameOwnership(): HotspotNameOwnership {
+    if (this.knownProfiles === null) return "unknown";
+    return registeredHotspot(this.state(), this.knownProfiles) ? "network" : "manual";
   }
   async persist(changes: Partial<NetworkLedger>): Promise<void> {
     await this.options.ledger.write({ ...this.state(), ...changes });

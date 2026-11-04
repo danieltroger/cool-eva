@@ -18,6 +18,7 @@ import { SettingsRestart } from "./settings-restart.js";
 import { DashboardBluetooth } from "./settings-bluetooth.js";
 import { MotorcycleConnection } from "./settings-hub.js";
 import { WifiNetworksView } from "./settings-networks.js";
+import { HotspotCheckName } from "./settings-hotspot.js";
 import { CanRestartButton, UpdateButton } from "./pi-actions.js";
 
 const { a, button, div, h2 } = van.tags;
@@ -114,11 +115,7 @@ function SettingsContent(section) {
     case "connections":
       return div(
         h2("Connections"),
-        TextSetting(
-          "phoneHotspotSsid",
-          "Hotspot name used for connection checks",
-          "This identifies the phone hotspot for monitoring. Saving a name does not configure a Wi-Fi connection."
-        ),
+        () => HotspotCheckName(),
         SettingsCard(
           "Saved Wi-Fi connections",
           "Add or change a saved Wi-Fi connection. Save keeps the old profile; a separate trial checks the new connection.",

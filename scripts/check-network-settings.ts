@@ -15,6 +15,7 @@ import {
 import { installNetworkSecretSpies } from "./network-secret-spies.ts";
 import { checkNetworkRegressions } from "./network-regressions.ts";
 import { checkNetworkRecovery } from "./network-recovery-check.ts";
+import { checkNetworkHotspotOwnership } from "./network-hotspot-check.ts";
 
 async function checkNetworks(): Promise<void> {
   assert.ok(CHECKPOINT_SECONDS * 1000 > TRIAL_MS, "checkpoint outlives the owner's trial");
@@ -332,8 +333,9 @@ async function checkNetworks(): Promise<void> {
   });
   await checkNetworkRegressions();
   await checkNetworkRecovery();
+  await checkNetworkHotspotOwnership();
   console.log(
-    "Wi-Fi network settings: 38 scenarios and 4 startup/recovery fault cases passed (no radio/device operations)."
+    "Wi-Fi network settings: 40 scenarios and 4 startup/recovery fault cases passed (no radio/device operations)."
   );
 }
 

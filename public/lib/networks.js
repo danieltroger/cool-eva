@@ -6,6 +6,7 @@ import { destination, destinationSection } from "./destination.js";
 import { connection } from "./store.js";
 import { armed } from "./arming.js";
 import { validNetworkPassword } from "./network-input.js";
+import { networkRecoveryIncomplete } from "./network-recovery.js";
 
 /** @typedef {import("../../src/wifi/network-types.ts").NetworkView} NetworkView */
 /** @typedef {import("../../src/wifi/network-types.ts").NetworkDraft} NetworkDraft */
@@ -47,6 +48,15 @@ export async function refreshNetworks() {
       return;
     }
     const previous = networks.rawVal;
+    if (
+      networkRecoveryIncomplete(reply) &&
+      (!previous ||
+        !networkRecoveryIncomplete(previous) ||
+        previous.generation !== reply.generation ||
+        previous.change?.uuid !== reply.change?.uuid)
+    ) {
+      networkMessage.val = "";
+    }
     if (
       previous &&
       (previous.generation !== reply.generation ||

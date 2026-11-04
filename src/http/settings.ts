@@ -4,7 +4,7 @@ import { validBleSecret } from "../../public/lib/ble-secret.js";
 import { bluetoothCodeId, type SettingsRuntime } from "../settings/startup.ts";
 import { pendingSettings, record } from "../settings/schema.ts";
 import { validateSettingsPatch } from "../settings/validation.ts";
-import { publicSettings, type SettingsReply, type HubCandidate } from "../settings/view.ts";
+import { publicSettings, type SettingsReply, type HubCandidate, type HotspotNameOwnership } from "../settings/view.ts";
 import type { SettingsRestart, RestartOperation } from "../settings/restart.ts";
 import { retiredLegacyChoices } from "../settings/legacy.ts";
 import { csrfRefusal } from "./mutation-guard.ts";
@@ -102,6 +102,15 @@ export async function handleSettingsEndpoint(
       });
     } else if (path === "/settings") {
       const changes = await validateSettingsPatch(body.changes, context.runtime.paths, context.codeDirectory);
+      if (Object.hasOwn(changes, "phoneHotspotSsid")) {
+        const ownership = context.hotspotNameOwnership?.() ?? "unknown";
+        if (ownership === "network") {
+          throw new Error("Set by your saved Phone hotspot network. Change it under Wi-Fi networks.");
+        }
+        if (ownership === "unknown") {
+          throw new Error("Read saved Wi-Fi networks before changing the connection-check name.");
+        }
+      }
       if (changes.dashboardBluetoothSecret && !validBleSecret(changes.dashboardBluetoothSecret)) {
         throw new Error("Use a generated Bluetooth key.");
       }
@@ -134,6 +143,7 @@ export interface SettingsHttpContext {
   drainBluetooth: () => Promise<void>;
   activeHubAddress?: () => string | null;
   readiness?: () => SettingsReply["readiness"];
+  hotspotNameOwnership?: () => HotspotNameOwnership;
 }
 
 export function settingsReply(context: SettingsHttpContext): SettingsReply {
@@ -157,6 +167,7 @@ export function settingsReply(context: SettingsHttpContext): SettingsReply {
     instanceId: state.kind === "ready" && typeof state.raw.instanceId === "string" ? state.raw.instanceId : null,
     processGeneration: restart.generation,
     revision: document?.revision ?? null,
+    hotspotNameOwnership: context.hotspotNameOwnership?.() ?? "unknown",
     saved: publicSettings(saved, state.kind === "ready" ? bluetoothCodeId(state.raw) : null, learned),
     active: publicSettings(activeChoices, runtime.activeCodeId, context.activeHubAddress?.() ?? learned),
     pending: document ? pendingSettings(saved, activeChoices) : [],

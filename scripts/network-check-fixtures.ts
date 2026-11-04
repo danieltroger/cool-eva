@@ -31,6 +31,7 @@ export async function networkScenario(name: string, work: (fixture: NetworkFixtu
   }
   backend.boot();
   const fixture: NetworkFixture = {
+    storage: base,
     settings: base.store,
     path,
     backend,
@@ -91,6 +92,7 @@ export async function networkScenario(name: string, work: (fixture: NetworkFixtu
   }
 }
 export interface NetworkFixture {
+  storage: Awaited<ReturnType<typeof settingsFixture>>;
   settings: Awaited<ReturnType<typeof settingsFixture>>["store"];
   path: string;
   backend: FakeNetworkManager;

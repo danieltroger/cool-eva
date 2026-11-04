@@ -3,6 +3,7 @@ import { TRIAL_MS } from "../src/wifi/networks.ts";
 import { RESTORATION_MS } from "../src/wifi/network-reconciliation.ts";
 import { acquireWifiOperation } from "../src/wifi/operation.ts";
 import { registerNetworkPurposes } from "./configure-network-purposes.ts";
+import { networkRecoveryIncomplete } from "../public/lib/network-recovery.js";
 import {
   networkScenario as scenario,
   networkIdentity as identity,
@@ -96,6 +97,9 @@ export async function checkNetworkRegressions(): Promise<void> {
       assert.notEqual(fixture.networks.fault, "");
       const view = await fixture.networks.view(BLE);
       assert.equal(view.ok, true, "a fault still returns a readable recovery identity");
+      assert.equal(networkRecoveryIncomplete(view), true);
+      assert.match(view.message, /Recovery incomplete.*next power-on is unconfirmed/);
+      assert.doesNotMatch(view.message, /may switch|will not run/);
       fixture.backend.rollback = rollback;
       await fixture.networks[action](identity(fixture.networks));
       assert.equal(fixture.networks.fault, "");

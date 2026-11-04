@@ -1,11 +1,12 @@
 import type { WifiNetworks } from "./networks.ts";
 import type { NetworkAddress, NetworkProfile } from "./network-types.ts";
 import { finaliseNetwork, restoreNetwork } from "./network-transitions.ts";
+import { registeredHotspot } from "./network-hotspot.ts";
 
 export async function reconcileNetworkStart(networks: WifiNetworks): Promise<void> {
   let profiles: NetworkProfile[];
   try {
-    profiles = await networks.options.backend.list();
+    profiles = await networks.listProfiles();
   } catch {
     console.warn("wifi-settings: startup profile listing unavailable; existing Wi-Fi recovery remains available");
     if (!pendingNetworkChange(networks)) return;
@@ -42,7 +43,7 @@ export async function reconcileNetworkStart(networks: WifiNetworks): Promise<voi
     if (["confirming", "promoting", "identity", "retiring"].includes(change.phase)) {
       await finaliseNetwork(networks);
     } else {
-      await restoreNetwork(networks, "The trial was interrupted. It will not run at power-on.");
+      await restoreNetwork(networks, "The network change was interrupted.");
     }
   } finally {
     await networks.release();
@@ -84,17 +85,7 @@ export const RESTORATION_MS = 15_000;
 
 async function reconcileHotspotName(networks: WifiNetworks, profiles: NetworkProfile[]): Promise<void> {
   const state = networks.state();
-  const change = state.change;
-  const canonicalUuid =
-    state.hotspotUuid ?? (change?.phase === "kept" && change.purpose === "hotspot" ? change.uuid : null);
-  const hotspots = profiles.filter(
-    profile => state.purposes[profile.uuid] === "hotspot" && !state.excluded.includes(profile.uuid)
-  );
-  const hotspot = canonicalUuid
-    ? hotspots.find(profile => profile.uuid === canonicalUuid)
-    : hotspots.length === 1
-      ? hotspots[0]
-      : null;
+  const hotspot = registeredHotspot(state, profiles);
   const settings = networks.options.settings.read();
   if (!hotspot || settings.kind !== "ready") return;
   const renamed = settings.document.values.phoneHotspotSsid !== hotspot.ssid;

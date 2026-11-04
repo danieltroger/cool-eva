@@ -485,6 +485,7 @@ void startNetworkSettings(
 const settingsHttp = {
   runtime: settingsRuntime,
   restart: settingsRestart,
+  hotspotNameOwnership: () => networksHttp.controller?.hotspotNameOwnership() ?? ("unknown" as const),
   codeDirectory: managedCodeRoot(ROOT, bundleMetadata),
   version: runningVersion.label,
   readVersion: async () => (await readRunningVersion(UPDATE_DIR)).label,

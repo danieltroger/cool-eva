@@ -82,7 +82,7 @@ export async function registerNetworkPurposes(
   networks: WifiNetworks,
   purposes: Record<string, NetworkPurpose>
 ): Promise<void> {
-  const profiles = await networks.options.backend.list();
+  const profiles = await networks.listProfiles();
   for (const uuid of Object.keys(purposes)) {
     if (!profiles.some(profile => profile.uuid === uuid) || networks.state().excluded.includes(uuid)) {
       throw new Error("Register only confirmed profiles that exist on this Pi.");

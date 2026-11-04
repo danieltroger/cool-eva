@@ -19,7 +19,7 @@ import {
 import { arm, armed, armDwellElapsed, refuseKeyRepeat } from "../lib/arming.js";
 import { SettingsCard } from "./settings-fields.js";
 import { NetworkEditor } from "./settings-network-editor.js";
-import { SettingsRestart } from "./settings-restart.js";
+import { incompleteRecoveryMessage, networkRecoveryIncomplete } from "../lib/network-recovery.js";
 
 const { a, button, div, h2 } = van.tags;
 
@@ -38,23 +38,26 @@ export function WifiNetworksView() {
             Actions(button({ class: "settings-button", onclick: () => void refreshNetworks() }, "Read again"))
           )
         : div(),
-    () => (networkDraft.val ? NetworkEditor(networkDraft.val) : div()),
-    () => (networks.val?.message ? SettingsCard("Wi-Fi change needs attention", networks.val.message) : div()),
-    () => NetworkStatus(),
+    () => (networkDraft.val && !networkRecoveryIncomplete(networks.val) ? NetworkEditor(networkDraft.val) : div()),
     () =>
-      ["confirming", "promoting", "identity", "retiring"].includes(networks.val?.change?.phase ?? "")
-        ? SettingsRestart()
-        : div(),
+      networkRecoveryIncomplete(networks.val)
+        ? SettingsCard("Wi-Fi change needs attention", incompleteRecoveryMessage(networks.val?.change))
+        : networks.val?.message
+          ? SettingsCard("Wi-Fi change needs attention", networks.val.message)
+          : div(),
+    () => NetworkStatus(),
     () =>
       SettingsCard(
         networkConfirmed.val ? "Current connection" : "Connection at last contact",
         networks.val?.active
           ? `Pi joined ${profileName(networks.val.active.uuid)}. Address: http://${networks.val.active.address}`
           : "No Wi-Fi connection confirmed.",
-        div(
-          { class: "settings-note" },
-          "Save does not switch Wi-Fi. Only an armed trial can try a saved candidate; restarting does not try it."
-        ),
+        networkRecoveryIncomplete(networks.val) || !networkConfirmed.val
+          ? null
+          : div(
+              { class: "settings-note" },
+              "Save does not switch Wi-Fi. Only an armed trial can try a saved candidate; restarting does not try it."
+            ),
         Actions(
           button(
             {
@@ -98,6 +101,7 @@ function NetworkStatus() {
   const change = current?.change;
   if (!change) return div();
   const live = ["trying", "waiting"].includes(change.phase);
+  const incomplete = networkRecoveryIncomplete(current);
   const previousSaved = current.profiles.some(profile => profile.uuid === change.fallback?.uuid);
   return SettingsCard(
     change.phase === "saved" ? "Saved network change" : "Network change",
@@ -112,20 +116,24 @@ function NetworkStatus() {
             : change.phase === "kept" && change.replaced?.uuid === change.fallback.uuid
               ? `The previous ${change.fallback.ssid} profile was replaced.`
               : `The previous ${change.fallback.ssid} profile is not listed. Read back or use repair help.`
-        : "No previous Wi-Fi connection is saved for this trial."
+        : incomplete
+          ? "No previous connection was selected for this change."
+          : "No previous Wi-Fi connection is saved for this trial."
     ),
-    div(
-      { class: "settings-note", role: "status" },
-      !networkConfirmed.val
-        ? "Lost contact with Cool Eva. Network result unconfirmed."
-        : current.canKeep
-          ? `This phone reached ${change.ssid} over Wi-Fi. Keep network to finish.`
-          : change.message
-    ),
-    live && networkConfirmed.val && current.remainingMs !== null
+    incomplete
+      ? null
+      : div(
+          { class: "settings-note", role: "status" },
+          !networkConfirmed.val
+            ? "Lost contact with Cool Eva. Network result unconfirmed."
+            : current.canKeep
+              ? `This phone reached ${change.ssid} over Wi-Fi. Keep network to finish.`
+              : change.message
+        ),
+    live && !incomplete && networkConfirmed.val && current.remainingMs !== null
       ? div({ class: "settings-note" }, `${Math.ceil(current.remainingMs / 1000)} seconds remain in this trial.`)
       : div(),
-    change.phase === "waiting" && current.active?.uuid === change.uuid
+    !incomplete && change.phase === "waiting" && current.active?.uuid === change.uuid
       ? div(
           div(
             { class: "settings-note" },
@@ -180,7 +188,7 @@ function NetworkStatus() {
             }),
           ]
         : []),
-      ...(live || (current.message && networkOperationActive()) ? [Action("Use previous", usePreviousNetwork)] : []),
+      ...(live || incomplete ? [Action("Use previous", usePreviousNetwork)] : []),
       ...(change.phase === "waiting" && current.canKeep ? [Action("Keep network", keepNetwork)] : [])
     )
   );

@@ -267,5 +267,23 @@ const MUTATIONS: Mutation[] = [
     before: 'change.purpose === "hotspot" &&\n      settings.kind === "ready" &&',
     after: 'false &&\n      settings.kind === "ready" &&',
   },
+  {
+    name: "owner-patch-overrides-registered-hotspot",
+    file: "src/http/settings.ts",
+    before: 'if (ownership === "network") {',
+    after: "if (false) {",
+  },
+  {
+    name: "registered-hotspot-reported-editable",
+    file: "src/wifi/networks.ts",
+    before: 'return registeredHotspot(this.state(), this.knownProfiles) ? "network" : "manual";',
+    after: 'return "manual";',
+  },
+  {
+    name: "incomplete-recovery-shows-ordinary-reassurances",
+    file: "public/lib/network-recovery.js",
+    before: '["restoring", "confirming", "promoting", "identity", "retiring"].includes(phase)',
+    after: "false",
+  },
 ];
 await checkNetworkMutations();

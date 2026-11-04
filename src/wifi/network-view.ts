@@ -3,7 +3,7 @@ import type { NetworkProof, NetworkView } from "./network-types.ts";
 import { observeNetworkRestoration } from "./network-reconciliation.ts";
 
 export async function networkView(networks: WifiNetworks, proof: NetworkProof): Promise<NetworkView> {
-  const profiles = await networks.options.backend.list();
+  const profiles = await networks.listProfiles();
   const active = await networks.options.backend.active();
   const change = networks.state().change;
   if (!change || profiles.some(profile => profile.uuid === change.uuid)) {

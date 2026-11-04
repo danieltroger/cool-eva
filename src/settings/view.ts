@@ -31,6 +31,7 @@ export interface SettingsReply {
   processGeneration: string;
   instanceId: string | null;
   revision: number | null;
+  hotspotNameOwnership: HotspotNameOwnership;
   saved: PublicSettings;
   active: PublicSettings;
   pending: (keyof StartupSettings)[];
@@ -41,6 +42,8 @@ export interface SettingsReply {
   restart: { state: "idle" | "reserved" | "scheduled" | "stopping" | "failed"; message: string };
   locations: { root: string; wifi: string; captures: string };
 }
+
+export type HotspotNameOwnership = "network" | "manual" | "unknown";
 
 export interface SettingsActionReply {
   ok: boolean;

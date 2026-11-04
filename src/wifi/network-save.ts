@@ -21,7 +21,7 @@ export async function saveNetworkDraft(
     if (state.change && !["saved", "failed", "restored", "kept"].includes(state.change.phase)) {
       throw new NetworkRefusal("Finish the current network change first.");
     }
-    const profiles = await networks.options.backend.list();
+    const profiles = await networks.listProfiles();
     const replaced = draft.replacedUuid
       ? profiles.find(profile => profile.uuid === draft.replacedUuid && !state.excluded.includes(profile.uuid))
       : null;
@@ -65,7 +65,7 @@ export async function saveNetworkDraft(
         draft.hidden
       );
       await networks.options.backend.verify(uuid);
-      const candidate = (await networks.options.backend.list()).find(profile => profile.uuid === uuid);
+      const candidate = (await networks.listProfiles()).find(profile => profile.uuid === uuid);
       if (replaced?.backend === "netplan" && candidate?.backend !== "netplan") {
         throw new NetworkRefusal(
           "This image cannot replace that Netplan connection safely. Use Add to keep the old network separately."
