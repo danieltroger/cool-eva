@@ -47,7 +47,7 @@ const generatedUrl = new URL(`../${GENERATED_PATH}`, import.meta.url);
 const BANNER = `// @ts-check
 // GENERATED FILE — DO NOT EDIT.
 //
-// Written by scripts/generate-signal-bounds.ts from the \`bounds\` declared beside each
+// Written by scripts/generate-signal-bounds.ts from \`bounds\` and \`onDemand\` beside each
 // signal in src/can/registry.ts. Edit it there; \`npm test\` fails if this copy is stale.
 // Why the numbers are what they are: docs/signal-bounds.md.`;
 
@@ -55,6 +55,7 @@ export async function renderSignalBounds(): Promise<string> {
   const rows = SIGNALS.filter(signal => signal.bounds !== undefined)
     .map(signal => `  "${signal.key}": [${signal.bounds?.[0]}, ${signal.bounds?.[1]}],`)
     .join("\n");
+  const onDemandKeys = SIGNALS.filter(signal => signal.onDemand).map(signal => signal.key);
   // Null-prototyped so a key naming an Object.prototype member cannot resolve through the
   // chain. `boundsFor("constructor")` used to return the Object constructor, which is
   // truthy, so isPlausible() then rejected every reading of it (#246). infokey-bounds.js
@@ -65,6 +66,9 @@ export async function renderSignalBounds(): Promise<string> {
 export const SIGNAL_BOUNDS = Object.assign(Object.create(null), {
 ${rows}
 });
+
+/** Last-change timestamps on these signals do not establish liveness. */
+export const ON_DEMAND_KEYS = ${JSON.stringify(onDemandKeys)};
 `;
   const generatedPath = fileURLToPath(generatedUrl);
   const config = await resolveConfig(generatedPath);

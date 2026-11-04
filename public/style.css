@@ -1907,3 +1907,90 @@ body {
   overflow-wrap: anywhere;
   letter-spacing: 0;
 }
+
+.ride-view > .ride-power {
+  height: 176px;
+  padding: 12px 12px 28px;
+  position: relative;
+  justify-content: space-between;
+}
+.ride-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+.ride-speed {
+  font-size: 64px;
+  line-height: 1;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ride-kilowatts {
+  margin: 0;
+  white-space: nowrap;
+}
+.ride-statusline {
+  align-items: center;
+  min-height: 28px;
+}
+.ride-power-status {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.48px;
+}
+.ride-soc {
+  font-size: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.power-edge {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  display: block;
+  margin: 0;
+  height: 20px;
+}
+.power-band {
+  border-radius: 0 0 13px 13px;
+  /* Nested SVGs need an explicit clip; ceiling ticks stay outside it. */
+  clip-path: inset(0 round 0 0 13px 13px);
+}
+.ride-view > .ride-delta {
+  height: 144px;
+  padding: 10px 12px;
+  justify-content: space-between;
+}
+.ride-view > .ride-heat {
+  height: 132px;
+  padding: 10px 12px;
+  justify-content: space-between;
+}
+.ride-delta .value,
+.ride-heat .value {
+  margin: 0;
+}
+.ride-trace,
+.ride-trace .spark {
+  height: 40px;
+  margin: 0;
+  display: block;
+  width: 100%;
+}
+.ride-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  height: 104px;
+}
+.ride-temperature {
+  height: 104px;
+  padding: 8px;
+  justify-content: space-between;
+}
+.ride-temperature .value {
+  margin: 0;
+  white-space: nowrap;
+}

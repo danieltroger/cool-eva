@@ -122,12 +122,12 @@ async function checkAutomaticMoves(page: HeadlessPage, file: string) {
   );
   await evaluateOnPage(page, "pushPatch({fast_dc_contactor:[1,'','charge'],charge_manager_state:[35,'','charge']})");
   await waitOnPage(page, "location.hash === '#charge'", "a genuine charge start");
-  await evaluateOnPage(page, "ridingPreview('lib/store.js').connection.val='offline'");
+  await evaluateOnPage(page, "pausePreviewMessages(true); ridingPreview('lib/store.js').connection.val='offline'");
   await nextTick(page);
   assert.equal(await evaluateOnPage(page, "location.hash"), "#charge", "A link dropout cannot produce charge exit.");
   await evaluateOnPage(
     page,
-    "ridingPreview('lib/store.js').connection.val='live'; pushPatch({fast_dc_contactor:[0,'','charge'],charge_manager_state:[0,'','charge']})"
+    "pausePreviewMessages(false); pushPatch({fast_dc_contactor:[0,'','charge'],charge_manager_state:[0,'','charge']})"
   );
   await waitOnPage(page, "location.hash === '#ride'", "genuine charge exit returning to Ride");
   await evaluateOnPage(page, "pushPatch({cell_min_mv:[3300,'mV','cells']})");

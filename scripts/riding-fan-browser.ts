@@ -52,7 +52,11 @@ export async function checkCoolingFan(
       await assertLayout(page);
     }
     for (const link of ["offline", "connecting"]) {
-      await evaluateOnPage(page, `ridingPreview('lib/store.js').connection.val=${JSON.stringify(link)}`);
+      await evaluateOnPage(
+        page,
+        `pausePreviewMessages(true); ridingPreview('lib/store.js').connection.val=${JSON.stringify(link)}`
+      );
+      await evaluateOnPage(page, "for (const socket of liveSockets) { socket.deliver(message('snapshot',LIVE)); }");
       await evaluateOnPage(page, FRAME);
       assert.equal(
         await evaluateOnPage(page, "document.querySelector('[data-fan-status]').textContent"),
@@ -65,7 +69,7 @@ export async function checkCoolingFan(
       );
       await assertLayout(page);
     }
-    await evaluateOnPage(page, "ridingPreview('lib/store.js').connection.val='live'");
+    await evaluateOnPage(page, "pausePreviewMessages(false); pushPatch({})");
     await evaluateOnPage(page, FRAME);
     assert.equal(
       await evaluateOnPage(page, "document.querySelector('[data-signal=fan_target_pct]').textContent"),

@@ -1,7 +1,7 @@
 // @ts-check
 // GENERATED FILE — DO NOT EDIT.
 //
-// Written by scripts/generate-signal-bounds.ts from the `bounds` declared beside each
+// Written by scripts/generate-signal-bounds.ts from `bounds` and `onDemand` beside each
 // signal in src/can/registry.ts. Edit it there; `npm test` fails if this copy is stale.
 // Why the numbers are what they are: docs/signal-bounds.md.
 
@@ -134,3 +134,28 @@ export const SIGNAL_BOUNDS = Object.assign(Object.create(null), {
   "waypoint_lon": [-180, 180],
   "waypoint_refusal": [1, 8],
 });
+
+/** Last-change timestamps on these signals do not establish liveness. */
+export const ON_DEMAND_KEYS = [
+  "fan_duty_pct",
+  "fan_target_pct",
+  "fan_driver_enabled",
+  "fan_auto_mode",
+  "fan_off_state",
+  "fan_auto_reason",
+  "fan_temp_input",
+  "fan_fun_available",
+  "fan_fun_gate",
+  "charge_cmd_a",
+  "charge_cmd_ack",
+  "charge_cmd_ack_ms",
+  "charge_cmd_ack_seq",
+  "charge_auto_mode",
+  "charge_auto_reason",
+  "charge_auto_target_a",
+  "waypoint_seq",
+  "waypoint_lat",
+  "waypoint_lon",
+  "waypoint_refused_seq",
+  "waypoint_refusal",
+];

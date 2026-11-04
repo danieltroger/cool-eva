@@ -1055,6 +1055,16 @@ const CHECKS: SelfCheck[] = [
       "assertion still passing",
   },
   {
+    script: "scripts/check-ride-power.ts",
+    covers:
+      "Ride's fixed horizontal power axis, sign, voltage-derived limits, genuine zero, partial unknown/fault/stale limits and charging presentation",
+  },
+  {
+    script: "scripts/check-reading-status.ts",
+    covers:
+      "registry-derived onDemand metadata and presence/link freshness, including a future measured fan sensor that keeps its age gate",
+  },
+  {
     script: "scripts/check-capture-pruner.ts",
     covers:
       "the fixed non-interactive capture deletion helper: no arguments, capture-only basenames, " +

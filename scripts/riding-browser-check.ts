@@ -1,12 +1,13 @@
 import { checkHistoryAndGestures } from "./riding-navigation-browser.ts";
 import { checkCoolingFan } from "./riding-fan-browser.ts";
+import { assertRideContent, checkRideBrowser, checkRideZero } from "./riding-ride-browser.ts";
 import { openPreview, FRAME } from "./riding-preview-page.ts";
 import assert from "node:assert/strict";
 import { ROUTES } from "../public/lib/router.js";
 import { evaluateOnPage, gotoPage, waitOnPage, resizePage, setPageInsets, type HeadlessPage } from "./headless-page.ts";
 
 const COVERAGE = {
-  ride: "legacy",
+  ride: "fixed",
   cooling: "fixed",
   hypermile: "legacy",
   charge: "legacy",
@@ -35,7 +36,7 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
   const fixedViews = Object.entries(COVERAGE)
     .filter(([, policy]) => policy === "fixed")
     .map(([name]) => name);
-  assert.deepEqual(fixedViews, ["cooling"], "Fixed-view coverage must match the converted screens.");
+  assert.deepEqual(fixedViews, ["ride", "cooling"], "Fixed-view coverage must match the converted screens.");
   for (const geometry of [
     { height: 844, top: 47 },
     { height: 797, top: 0 },
@@ -53,7 +54,11 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
         await assertPopulatedFixture(page);
         visited.add(route.name);
         if (fixedViews.includes(route.name)) {
-          await assertCoolingContent(page);
+          if (route.name === "ride") {
+            await assertRideContent(page);
+          } else {
+            await assertCoolingContent(page);
+          }
           await assertFixedLayout(page);
         }
       }
@@ -63,7 +68,14 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
         "All router views must actually be visited."
       );
       await checkNoticeStates(page, previewFile, theme);
+      await checkNoticeStates(page, previewFile, theme, "#ride");
+      await checkRideBrowser(page, previewFile, assertFixedLayout, theme);
     }
+  }
+  await resizePage(page, { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  await setPageInsets(page, { top: 47, bottom: 34, left: 0, right: 0 });
+  for (const theme of ["dark", "light"]) {
+    await checkRideZero(page, previewFile, assertFixedLayout, theme);
   }
   await resizePage(page, { width: 390, height: 844, deviceScaleFactor: 3, mobile: true });
   await setPageInsets(page, { top: 47, bottom: 34, left: 0, right: 0 });
@@ -72,7 +84,7 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
   await checkCoolingFailures(page, previewFile);
   await checkCoolingFan(page, previewFile, assertFixedLayout);
   console.log(
-    `  ✓ riding: real PWA/native insets, ${minimumClearance}px minimum Cooling clearance, complete content, notices/Connect, history/reload and both gestures`
+    `  ✓ riding: real PWA/native insets, ${minimumClearance}px minimum Ride/Cooling clearance, complete content, notices/Connect, history/reload and both gestures`
   );
 }
 
@@ -200,15 +212,15 @@ interface Layout {
   textOutside: string[];
 }
 
-async function assertFixedLayout(page: HeadlessPage) {
+export async function assertFixedLayout(page: HeadlessPage) {
   const result = (await evaluateOnPage(
     page,
     `(() => {
-    const view = document.querySelector('.cooling-view');
+    const view = document.querySelector('.riding-view');
     const header = document.querySelector('.header').getBoundingClientRect();
     const tabs = document.querySelector('.tabs').getBoundingClientRect();
-    const boxes = [...view.querySelectorAll('.tile,.value,.sub,.label,button'), ...document.querySelectorAll('.header-notice:not([hidden]),.header .status')];
-    const textOutside = [...view.querySelectorAll('.value,.label,.sub')].filter(element => {
+    const boxes = [...view.querySelectorAll('.tile,.value,.sub,.label,.ride-speed,.ride-soc,button'), ...document.querySelectorAll('.header-notice:not([hidden]),.header .status')];
+    const textOutside = [...view.querySelectorAll('.value,.label,.sub,.ride-speed,.ride-soc')].filter(element => {
       const range=document.createRange(); range.selectNodeContents(element);
       const text=range.getBoundingClientRect(); const card=element.closest('.tile').getBoundingClientRect();
       return text.width>0 && (text.left<card.left || text.right>card.right || text.top<card.top || text.bottom>card.bottom);
@@ -221,7 +233,7 @@ async function assertFixedLayout(page: HeadlessPage) {
       header:header.height-parseFloat(getComputedStyle(document.querySelector('.header')).paddingTop),
       tabs:tabs.height, padding:parseFloat(getComputedStyle(document.body).paddingBottom),
       flush:view.getBoundingClientRect().top-header.bottom,
-      overflow:boxes.filter(element => element.scrollWidth>element.clientWidth+1 || (element.classList.contains('tile') && element.scrollHeight>element.clientHeight+1) || getComputedStyle(element).textOverflow==='ellipsis').map(element => element.className),
+      overflow:boxes.filter(element => element.scrollWidth>element.clientWidth+1 || (element.classList.contains('tile') && element.scrollHeight>element.clientHeight+1) || getComputedStyle(element).textOverflow==='ellipsis').map(element => element.className+': '+element.textContent),
       smallTargets:[...document.querySelectorAll('.header button,.tabs button,.sub-tabs button')].filter(element => !element.hidden && (element.getBoundingClientRect().width<44 || element.getBoundingClientRect().height<44)).map(element => element.textContent),
       hiddenOverflow:[view,document.body,document.documentElement,...view.querySelectorAll('.tile,.value,.label,.sub,[data-signal]')].some(element => ['hidden','clip'].includes(getComputedStyle(element).overflowY))
     };
@@ -241,18 +253,18 @@ async function assertFixedLayout(page: HeadlessPage) {
   assert.equal(result.hiddenOverflow, false, "Hiding overflow is not a layout fix.");
 }
 
-async function checkNoticeStates(page: HeadlessPage, file: string, theme: string) {
+async function checkNoticeStates(page: HeadlessPage, file: string, theme: string, hash = "#ride/cooling") {
   for (const link of ["live", "offline", "connecting", "ble-connect"]) {
     await openPreview(
       page,
       file,
-      "#ride/cooling",
+      hash,
       `${theme}-${link}-${Date.now()}`,
       link === "ble-connect" ? "&header-link=ble-connect" : ""
     );
     await evaluateOnPage(
       page,
-      `ridingPreview('lib/theme.js').themePreference.val=${JSON.stringify(theme)}; ridingPreview('lib/store.js').connection.val=${JSON.stringify(link === "ble-connect" ? "connecting" : link)}`
+      `pausePreviewMessages(${link !== "live"}); ridingPreview('lib/theme.js').themePreference.val=${JSON.stringify(theme)}; ridingPreview('lib/store.js').connection.val=${JSON.stringify(link === "ble-connect" ? "connecting" : link)}`
     );
     for (const state of ["setup", "reload", "fault"]) {
       await evaluateOnPage(
@@ -314,12 +326,15 @@ async function checkNoticeStates(page: HeadlessPage, file: string, theme: string
       ),
       true
     );
-    assert.equal(await evaluateOnPage(page, "document.querySelector('.header .menu').textContent"), "‹ Cooling");
+    assert.equal(
+      await evaluateOnPage(page, "document.querySelector('.header .menu').textContent"),
+      hash === "#ride" ? "‹ Ride" : "‹ Cooling"
+    );
     await evaluateOnPage(
       page,
       "[...document.querySelectorAll('button')].find(button=>button.textContent==='Got it').click(); document.querySelector('.header .menu').click()"
     );
-    await waitOnPage(page, "!!document.querySelector('.cooling-view')", "return after acknowledging setup notes");
+    await waitOnPage(page, "!!document.querySelector('.riding-view')", "return after acknowledging setup notes");
     await evaluateOnPage(
       page,
       `(() => {

@@ -1,4 +1,4 @@
-import { DASH_DUTY } from "../public/lib/power-bar.js";
+import { HATCH_DUTY as DASH_DUTY } from "../public/lib/power-edge.js";
 import { contrast, contrastOf, luminance, readPalettes, separation } from "./palette.ts";
 
 // Measures both palettes in public/style.css against the floors that file commits to,

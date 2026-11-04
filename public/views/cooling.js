@@ -1,7 +1,7 @@
 // @ts-check
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, connection, faultState, isStale, signalState, valueOf } from "../lib/store.js";
-import { STALE_MS } from "../lib/tiles.js";
+import { chartTick, faultState, signalState, valueOf } from "../lib/store.js";
+import { readingIsStale } from "../lib/reading-status.js";
 import { SubTabs } from "../lib/sub-tabs.js";
 import { settings } from "../lib/settings.js";
 import { FAN_MODE_CODE, fanDriveState } from "../lib/fan-display.js";
@@ -107,9 +107,5 @@ function Reading(key, decimals, temperature) {
 
 /** @param {string} key */
 function readingUnavailable(key) {
-  // Fan commands retain their last-change timestamp across live snapshots (registry.ts onDemand).
-  if (key.startsWith("fan_")) {
-    return signalState(key).val === null || connection.val !== "live";
-  }
-  return isStale(key, STALE_MS);
+  return readingIsStale(key);
 }

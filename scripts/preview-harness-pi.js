@@ -381,6 +381,11 @@ window.fetch = function previewFetch(input, init) {
  * The whole-dashboard page holds exactly one and behaves identically either way.
  */
 const liveSockets = new Set();
+let previewMessagesPaused = false;
+
+function pausePreviewMessages(paused) {
+  previewMessagesPaused = paused;
+}
 
 /**
  * One patch to the page, in the shape src/ws.ts broadcasts.
@@ -425,7 +430,7 @@ window.WebSocket = class PreviewWebSocket {
     });
   }
   deliver(payload) {
-    if (this.readyState === 1 && this.onmessage) {
+    if (!previewMessagesPaused && this.readyState === 1 && this.onmessage) {
       this.onmessage({ data: JSON.stringify(payload) });
     }
   }
