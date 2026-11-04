@@ -1,0 +1,54 @@
+import assert from "node:assert/strict";
+import { evaluateOnPage, gotoPage, waitOnPage, type HeadlessPage } from "./headless-page.ts";
+
+export async function checkRouteDisarmBrowser(page: HeadlessPage, previewFile: string): Promise<void> {
+  await gotoPage(page, `file://${previewFile}?scene=dc&route-disarm=1#charge`);
+  await waitOnPage(page, `${STOP_BUTTON} && !${STOP_BUTTON}.disabled`, "the live Charge Stop control");
+  await evaluateOnPage(
+    page,
+    `(() => {
+    window.routeDisarmWriteRequests = 0;
+    const previewFetch = window.fetch;
+    window.fetch = (input, options) => {
+      const url = new URL(typeof input === "string" ? input : input.url, "http://eva.local/");
+      if (url.pathname === "/vcu-write" && options?.method === "POST") {
+        window.routeDisarmWriteRequests += 1;
+      }
+      return previewFetch(input, options);
+    };
+  })()`
+  );
+
+  await evaluateOnPage(page, `${STOP_BUTTON}.click()`);
+  await waitOnPage(page, `${STOP_BUTTON}.textContent.includes("Tap again")`, "Stop to arm");
+  // The old confirmation must have passed its dwell, or a stale arm could appear safe by timing alone.
+  await evaluateOnPage(page, "new Promise(resolve => setTimeout(resolve, 450))");
+  await clickTab(page, "all");
+  await clickTab(page, "charge");
+  await waitOnPage(page, `${STOP_BUTTON} && !${STOP_BUTTON}.disabled`, "Stop after returning to Charge");
+  const returnedCaption = await evaluateOnPage(page, `${STOP_BUTTON}.textContent`);
+
+  await evaluateOnPage(page, `${STOP_BUTTON}.click()`);
+  await waitOnPage(
+    page,
+    `window.routeDisarmWriteRequests > 0 || ${STOP_BUTTON}.textContent.includes("Tap again")`,
+    "the first Stop tap after returning"
+  );
+  assert.equal(
+    await evaluateOnPage(page, "window.routeDisarmWriteRequests"),
+    0,
+    "The first Stop tap after returning must not POST the old confirmation."
+  );
+  assert.equal(typeof returnedCaption, "string");
+  assert.ok(!String(returnedCaption).includes("Tap again"), "Navigation must leave Stop visibly unarmed.");
+  await clickTab(page, "all");
+  console.log("  ✓ Charge → All → Charge disarms Stop; the first return tap sends zero write requests");
+}
+
+const STOP_BUTTON = `([...document.querySelectorAll(".view .tile")].find(tile => tile.querySelector(".label")?.textContent === "Stop charging")?.querySelector("button.action"))`;
+
+async function clickTab(page: HeadlessPage, name: "all" | "charge"): Promise<void> {
+  await evaluateOnPage(page, `document.querySelectorAll(".tabs .tab")[${name === "all" ? 3 : 2}].click()`);
+  await waitOnPage(page, `location.hash === "#${name}"`, `the ${name} route`);
+  await evaluateOnPage(page, "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+}

@@ -1,6 +1,7 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
+import { armed } from "./arming.js";
 
 // The tab bar, in the URL, so the phone's Back button has something to walk back
 // through instead of leaving the dashboard from whichever screen you were on.
@@ -87,6 +88,7 @@ export function showTab(name) {
     // a Back press that appears to do nothing.
     return;
   }
+  armed.val = "";
   try {
     history.pushState(null, "", hashForTab(name));
   } catch (error) {
@@ -145,6 +147,7 @@ export function startRouting() {
  * @returns {boolean} whether the fragment named a tab, rather than falling back to one.
  */
 function showTabFromUrl() {
+  armed.val = "";
   const { tab: landing, rewriteTo, named } = canonicalHash(location.hash);
   if (rewriteTo !== null) {
     try {
