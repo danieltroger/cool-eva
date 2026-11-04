@@ -1,7 +1,16 @@
 // @ts-check
 // Server-clock fault memory and measured/onDemand freshness: docs/reading-status.md.
 import { ON_DEMAND_KEYS } from "./generated-bounds.js";
-import { chartTick, connection, faultState, isStale, isStaleSampled, peekServerTime, signalState } from "./store.js";
+import {
+  chartTick,
+  connection,
+  faultState,
+  isStale,
+  isStaleSampled,
+  peek,
+  peekServerTime,
+  signalState,
+} from "./store.js";
 
 const onDemand = new Set(ON_DEMAND_KEYS);
 export const STALE_MS = 8000;
@@ -18,14 +27,16 @@ export function readingStatus(key, sampled = false) {
 
 /** @param {string} key @param {boolean} [sampled] */
 export function readingHasFault(key, sampled = false) {
-  const reading = sampled ? signalState(key).rawVal : signalState(key).val;
   const fault = sampled ? faultState(key).rawVal : faultState(key).val;
   if (!fault) return false;
   // Both timestamps use the server clock. The slow pulse expires memory without a frame-rate subscription.
   if (!sampled) {
     chartTick.val;
   }
-  return !reading || fault.ts >= reading.ts || peekServerTime() - fault.ts < FAULT_MEMORY_MS;
+  // The pulse samples the last value/time; subscribing here would redraw pair captions on every sample.
+  const value = peek(key);
+  const timestamp = signalState(key).rawVal?.ts;
+  return value === null || fault.ts >= (timestamp ?? -Infinity) || peekServerTime() - fault.ts < FAULT_MEMORY_MS;
 }
 
 /** @param {string} key @param {boolean} [sampled] */

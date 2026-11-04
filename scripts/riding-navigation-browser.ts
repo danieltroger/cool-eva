@@ -41,13 +41,16 @@ export async function checkHistoryAndGestures(page: HeadlessPage, file: string) 
     await waitOnPage(page, "!!document.querySelector('.cooling-view')", "gesture Ride to Cooling");
     await gesture(page, kind);
     await waitOnPage(page, "location.hash === '#hypermile'", "gesture Cooling to Range");
+    assert.equal(await evaluateOnPage(page, "scrollY"), 0, "Range is a fixed riding landing.");
+    await evaluateOnPage(page, "document.querySelector('[data-view=cells]').click()");
+    await waitOnPage(page, "!!document.querySelector('.cells-view')", "scrolling Cells subview");
     await evaluateOnPage(page, "window.scrollTo(0,200)");
     assert.ok(
       Number(await evaluateOnPage(page, "scrollY")) > 0,
-      "Range must actually scroll before the arrival-reset probe."
+      "Cells must actually scroll before the arrival-reset probe."
     );
     await gesture(page, kind);
-    await waitOnPage(page, "location.hash === '#charge'", "gesture Range to Charge");
+    await waitOnPage(page, "location.hash === '#charge'", "gesture Cells to Charge");
     assert.equal(
       await evaluateOnPage(page, "scrollY"),
       0,
@@ -63,7 +66,7 @@ export async function checkHistoryAndGestures(page: HeadlessPage, file: string) 
     await gesture(page, kind);
     await waitOnPage(page, "location.hash === '#faults'", "gesture All to Faults");
     assert.equal(await evaluateOnPage(page, "scrollY"), 0, "Handlebar arrivals must reset scrolling.");
-    for (const panel of ["settings", "session", "bike-information", "advanced-service"]) {
+    for (const panel of ["settings", "session", "bike-information", "battery-cooling", "advanced-service"]) {
       const origin = await evaluateOnPage(page, "[ridingPreview('lib/router.js').currentView(), location.hash]");
       await evaluateOnPage(page, `ridingPreview('lib/destination.js').openDestination(${JSON.stringify(panel)})`);
       await evaluateOnPage(page, FRAME);
@@ -92,7 +95,7 @@ export async function checkHistoryAndGestures(page: HeadlessPage, file: string) 
   await checkAutomaticMoves(page, file);
 }
 
-async function gesture(page: HeadlessPage, key: string) {
+export async function gesture(page: HeadlessPage, key: string) {
   await evaluateOnPage(page, `pushPatch({${JSON.stringify(key)}:[0,'','buttons']})`);
   await evaluateOnPage(page, FRAME);
   for (let press = 0; press < (key === "high_beam" ? 3 : 2); press += 1) {

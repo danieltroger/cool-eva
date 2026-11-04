@@ -9,6 +9,7 @@ import { updateDwell } from "./lib/dwell.js";
 import { updateTrip } from "./lib/trip.js";
 import { RideView } from "./views/ride.js";
 import { HypermileView } from "./views/hypermile.js";
+import { CellsView } from "./views/cells.js";
 import { ChargeView } from "./views/charge.js";
 import { AllView } from "./views/all.js";
 import { FaultsView } from "./views/faults.js";
@@ -52,6 +53,7 @@ const VIEWS = {
   ride: RideView,
   cooling: CoolingView,
   hypermile: HypermileView,
+  cells: CellsView,
   charge: ChargeView,
   all: AllView,
   faults: FaultsView,

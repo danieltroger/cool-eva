@@ -1046,6 +1046,11 @@ const CHECKS: SelfCheck[] = [
       "Ride's fixed horizontal power axis, sign, voltage-derived limits, genuine zero, partial unknown/fault/stale limits and charging presentation",
   },
   {
+    script: "scripts/check-range-cells.ts",
+    covers:
+      "Range zero/fault reading guards and all 81 physical cell slots, module order, missing/stale/fault masking, true extrema and a balanced pack",
+  },
+  {
     script: "scripts/check-reading-status.ts",
     covers:
       "registry-derived onDemand freshness, shared 60 s fault memory and recovery, newest-rejection retention, and a future measured fan sensor that keeps its age gate",

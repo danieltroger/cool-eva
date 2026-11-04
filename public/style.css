@@ -1994,3 +1994,132 @@ body {
   margin: 0;
   white-space: nowrap;
 }
+
+.range-view > .range-margin {
+  height: 140px;
+}
+.range-view > .range-timer {
+  height: 96px;
+}
+.range-view > .range-consumption {
+  height: 108px;
+}
+.range-view .tile {
+  padding: 8px;
+  gap: 2px;
+  justify-content: space-between;
+}
+.range-view .value {
+  margin: 0;
+}
+.range-margin-number {
+  font-size: 64px;
+  line-height: 1.05;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.range-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  height: 112px;
+}
+.range-pair > .tile {
+  height: 112px;
+}
+.range-pair.range-bottom,
+.range-bottom > .tile {
+  height: 92px;
+}
+.range-share {
+  font-size: 16px;
+  line-height: 1.2;
+  color: var(--label);
+}
+.range-availability {
+  height: 8px;
+  flex: none;
+  background: var(--track);
+}
+.range-availability[data-state]:not([data-state="fresh"]) {
+  background: none;
+  border: 1px dashed var(--sub);
+}
+.range-rule {
+  height: 1px;
+  background: var(--tile-edge);
+}
+.cells-view {
+  padding: 8px;
+  grid-template-columns: minmax(0, 1fr);
+}
+.cells-back {
+  min-height: 44px;
+  justify-self: start;
+  padding: 8px 12px;
+  background: none;
+  border: 1px solid var(--tile-edge);
+  color: var(--fg);
+  border-radius: 8px;
+  font: inherit;
+}
+.cells-content {
+  display: grid;
+  gap: 8px;
+}
+.cells-overview h2,
+.cell-module h2 {
+  font-size: 18px;
+  margin: 0;
+}
+.cells-overview .strip {
+  display: block;
+  width: 100%;
+  height: 76px;
+  margin: 8px 0;
+}
+.cells-identities {
+  display: flex;
+  gap: 16px;
+  font-size: 16px;
+}
+.cell-values {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px 8px;
+}
+.cell-number {
+  font-size: 19.2px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.cell-number .unit {
+  font-size: 11.2px;
+}
+.cell-reading {
+  min-width: 0;
+}
+.battery-cooling-page {
+  display: grid;
+  gap: 12px;
+}
+.battery-cooling-page h2 {
+  margin: 0;
+}
+.battery-cooling-page > .settings-button {
+  justify-self: start;
+  min-height: 44px;
+}
+.module-readings {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.module-readings th,
+.module-readings td {
+  text-align: left;
+  padding: 8px 3px;
+  font-size: 13.6px;
+  overflow-wrap: anywhere;
+}

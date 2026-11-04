@@ -13,6 +13,8 @@ import { LastServiceRead, refreshVcuWrite } from "./vcu-write.js";
 import { ServiceMode, refreshServiceMode } from "./service-mode.js";
 import { request } from "../lib/transport.js";
 import { showTab } from "../lib/router.js";
+import { openDestination } from "../lib/destination.js";
+import { BatteryCoolingPage } from "./battery-cooling.js";
 
 const { button, div, h2 } = van.tags;
 const bikeReadState = van.state(/** @type {import("../../src/http/vcu-read.ts").VcuReadResponse | null} */ (null));
@@ -31,6 +33,7 @@ export function DestinationPage() {
       return div(
         { class: "settings-page" },
         h2("Bike information"),
+        button({ class: "menu-link", onclick: () => openDestination("battery-cooling") }, "Battery & cooling"),
         LifetimeBlock(true),
         LifetimeReadButton(() => bikeReadState.val),
         LastServiceRead(),
@@ -44,6 +47,8 @@ export function DestinationPage() {
           "Fault details → Faults"
         )
       );
+    case "battery-cooling":
+      return BatteryCoolingPage();
     case "advanced-service":
       refreshServiceMode(() => destination.val === "advanced-service");
       return div({ class: "settings-page" }, h2("Advanced service"), AccessLink(), ServiceMode(false));

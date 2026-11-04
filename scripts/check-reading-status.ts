@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import van from "../public/vendor/van-1.6.1.js";
 import { SIGNALS } from "../src/can/registry.ts";
 import { ON_DEMAND_KEYS } from "../public/lib/generated-bounds.js";
 import { FAULT_MEMORY_MS, readingHasFault, readingIsStale, readingStatus } from "../public/lib/reading-status.js";
-import { apply, connection, signalState } from "../public/lib/store.js";
+import { apply, chartTick, connection, signalState } from "../public/lib/store.js";
 
 assert.deepEqual(
   [...ON_DEMAND_KEYS].sort(),
@@ -63,3 +64,40 @@ assert.equal(readingHasFault("coolant_in"), true, "The newest rejected sample ca
 console.log(
   "✓ Registry-derived onDemand metadata, held commands, real/future fan sensors, missing/fault states and link liveness"
 );
+
+apply({
+  type: "patch",
+  ts: 400_000,
+  signals: { ambient_temp: { value: 17, unit: "°C", group: "ambient", ts: 400_000 } },
+});
+let faultBindingRuns = 0;
+van.derive(() => {
+  faultBindingRuns++;
+  return readingHasFault("ambient_temp");
+});
+const initialRuns = faultBindingRuns;
+apply({
+  type: "patch",
+  ts: 400_001,
+  signals: { ambient_temp: { value: 18, unit: "°C", group: "ambient", ts: 400_001 } },
+});
+await new Promise(resolve => setTimeout(resolve, 25));
+assert.equal(faultBindingRuns, initialRuns, "A fault-free caption must not subscribe to signal values.");
+apply({
+  type: "patch",
+  ts: 400_002,
+  signals: { ambient_temp: { value: 65535, unit: "°C", group: "ambient", ts: 400_002 } },
+});
+await new Promise(resolve => setTimeout(resolve, 25));
+const faultRuns = faultBindingRuns;
+assert.ok(faultRuns > initialRuns, "New faults must still trigger the caption.");
+apply({
+  type: "patch",
+  ts: 400_003,
+  signals: { ambient_temp: { value: 19, unit: "°C", group: "ambient", ts: 400_003 } },
+});
+await new Promise(resolve => setTimeout(resolve, 25));
+assert.equal(faultBindingRuns, faultRuns, "Fault memory must sample values without subscribing to their updates.");
+chartTick.val++;
+await new Promise(resolve => setTimeout(resolve, 25));
+assert.ok(faultBindingRuns > faultRuns, "The slow pulse must still re-evaluate fault expiry/recovery.");

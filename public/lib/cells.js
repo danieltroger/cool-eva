@@ -22,6 +22,17 @@ export const CELL_VOLTAGE_PATTERN = /^lmu(\d+)_cell(\d+)_mv$/;
  */
 export const CELL_COUNT = 81;
 
+/** Every physical slot, including missing readings; the naming stays beside CELL_VOLTAGE_PATTERN. */
+export function cellVoltageLayout() {
+  const slots = [];
+  for (let module = 1; module <= MODULE_COUNT; module++) {
+    for (let cell = 1; cell <= cellsInModule(module); cell++) {
+      slots.push({ key: `lmu${module}_cell${cell}_mv`, module, cell, position: slots.length + 1 });
+    }
+  }
+  return slots;
+}
+
 /**
  * The per-cell voltage keys among `keys`, in pack order.
  *

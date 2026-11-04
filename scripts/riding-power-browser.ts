@@ -13,6 +13,8 @@ export async function checkPowerWords(
     { name: "drive", value: -48.3, label: "DRIVE", magnitude: "48", color: "flow" },
     { name: "regen", value: 8, label: "REGEN", magnitude: "8.0", color: "good" },
     { name: "small-regen", value: 0.2, label: "REGEN", magnitude: "0.2", color: "good" },
+    { name: "parked-power-in", value: 0.2, label: "POWER IN", magnitude: "0.2", color: "good", parked: true },
+    { name: "unconfirmed-power-in", value: 0.2, label: "POWER IN", magnitude: "0.2", color: "good", unconfirmed: true },
     { name: "small-drive", value: -0.2, label: "DRIVE", magnitude: "0.2", color: "flow" },
     { name: "zero", value: 0, label: "POWER", magnitude: "0.0", color: "fg" },
     { name: "rounded-zero", value: -0.01, label: "POWER", magnitude: "0.0", color: "fg" },
@@ -40,6 +42,12 @@ export async function checkPowerWords(
       page,
       `ridingPreview('lib/theme.js').themePreference.val=${JSON.stringify(theme)};pushPatch({pack_kw:[${state.value},'kW','battery'],pack_a:[${(state.value * 1000) / 340},'A','battery']${state.parked ? ",gps_speed_kmh:[0,'km/h','gps'],speed_can_kmh:[0,'km/h','drive']" : ""}})`
     );
+    if (state.unconfirmed) {
+      await evaluateOnPage(
+        page,
+        "pausePreviewMessages(true);for(const key of ['gps_speed_kmh','speed_can_kmh','speed_kmh']){ridingPreview('lib/store.js').signalState(key).val=null;}"
+      );
+    }
     await evaluateOnPage(page, FRAME);
     const actual = (await evaluateOnPage(
       page,
