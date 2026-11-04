@@ -27,7 +27,7 @@ export async function configureAccessories(settings: StartupSettings): Promise<b
   if (current !== desired || !includes || missing.length) {
     await writeRootFile(
       "/etc/systemd/system/cool-eva-install-finish.service",
-      `[Unit]\nDescription=Finish Cool Eva wired-accessory setup after reboot\nWants=cool-eva.service\nAfter=cool-eva.service network.target\n[Service]\nType=oneshot\nTimeoutStartSec=300\nExecStart=/opt/cool-eva/current/runtime/bin/node --experimental-strip-types /opt/cool-eva/current/src/install/finish.ts\n[Install]\nWantedBy=multi-user.target\n`,
+      `[Unit]\nDescription=Finish Cool Eva wired-accessory setup after reboot\nWants=cool-eva.service\nAfter=cool-eva.service network.target\n[Service]\nType=oneshot\nTimeoutStartSec=300\nExecStart=/opt/cool-eva/current/runtime/bin/node --no-wasm-lazy-compilation --experimental-strip-types /opt/cool-eva/current/src/install/finish.ts\n[Install]\nWantedBy=multi-user.target\n`,
       0o644
     );
     await command("systemctl", ["daemon-reload"]);

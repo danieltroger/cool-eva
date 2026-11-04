@@ -51,7 +51,7 @@ systemctl start cool-eva.service
   try {
     await sshCommand(
       guest,
-      "sudo /opt/cool-eva/current/runtime/bin/node --experimental-strip-types /opt/cool-eva/current/src/install/migrate-service.ts /home/cool-eva-test/legacy cool-eva.service"
+      "sudo /opt/cool-eva/current/runtime/bin/node --no-wasm-lazy-compilation --experimental-strip-types /opt/cool-eva/current/src/install/migrate-service.ts /home/cool-eva-test/legacy cool-eva.service"
     );
   } catch (error) {
     refused = error instanceof Error && error.message.includes("Only the installed service");

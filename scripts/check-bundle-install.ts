@@ -19,6 +19,7 @@ import { accessoryBootConfiguration } from "../src/install/accessories.ts";
 import { checkBootstrap } from "./install-check/bootstrap-check.ts";
 import { checkStartupHealth } from "./install-check/health-check.ts";
 import { checkOsUpdateCondition } from "./install-check/os-condition-check.ts";
+import { checkBundleLauncher } from "./install-check/launch-check.ts";
 
 export async function checkBundleInstall(): Promise<void> {
   const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -91,6 +92,7 @@ export async function checkBundleInstall(): Promise<void> {
     assert(fanBoot.includes("gpio=17,op,dl\ngpio=27,op,dl\ndtoverlay=pwm,pin=18,func=2\n"));
     assert(!fanBoot.includes("spi=on"));
     await checkInstallerInput(directory, root);
+    await checkBundleLauncher(directory, root);
     await checkPublicationOrder(join(directory, "publish"), metadata);
     await checkBootstrap(join(directory, "bootstrap"), root);
     await checkStartupHealth();

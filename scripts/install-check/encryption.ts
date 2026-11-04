@@ -21,7 +21,7 @@ console.log('COOL_EVA_ENCRYPTED='+(await readFile(directory+'/'+names[0])).toStr
   const encoded = Buffer.from(program).toString("base64");
   const output = await sshCommand(
     guest,
-    `cd /opt/cool-eva/current && printf '%s' '${encoded}' | base64 -d | sudo runtime/bin/node --experimental-strip-types --input-type=module`,
+    `cd /opt/cool-eva/current && printf '%s' '${encoded}' | base64 -d | sudo runtime/bin/node --no-wasm-lazy-compilation --experimental-strip-types --input-type=module`,
     90_000
   );
   const encodedLog = /^COOL_EVA_ENCRYPTED=([A-Za-z0-9+/=]+)$/m.exec(output)?.[1];

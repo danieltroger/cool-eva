@@ -13,6 +13,7 @@ import { runInTerminal } from "./terminal.ts";
 export async function checkBootstrap(directory: string, repository: string): Promise<void> {
   for (const variant of [
     "valid",
+    "rerun",
     "bad-sha",
     "linked-file",
     "wrong-identity",
@@ -81,7 +82,7 @@ export async function checkBootstrap(directory: string, repository: string): Pro
       manifest = manifest.replace(`release=${metadata.release}`, `release=main-${"b".repeat(40)}`);
     }
     await writeFile(join(assets, "manifest.txt"), manifest);
-    if (variant === "pending-update") {
+    if (variant === "pending-update" || variant === "rerun") {
       const target = join(root, "code/releases", metadata.release);
       await mkdir(join(root, "code/releases"), { recursive: true });
       await cp(payload, target, { recursive: true });
@@ -89,7 +90,10 @@ export async function checkBootstrap(directory: string, repository: string): Pro
       await mkdir(join(root, "data/updater"), { recursive: true });
       await writeFile(
         join(root, "data/updater/state.json"),
-        JSON.stringify({ current: metadata.release, pending: { target: "synthetic-trial" } })
+        JSON.stringify({
+          current: metadata.release,
+          pending: variant === "pending-update" ? { target: "synthetic-trial" } : null,
+        })
       );
     }
     let installer = renderInstaller(await readFile(join(repository, "install.sh"), "utf8"), metadata);
@@ -110,16 +114,22 @@ export async function checkBootstrap(directory: string, repository: string): Pro
       { ...process.env, UPDATE_FIXTURE: root, PATH: `${commands}:${process.env.PATH}` }
     );
     const calls = await readFile(join(root, "commands.txt"), "utf8");
-    if (variant === "valid") {
+    const nodeCalls = calls.split("\n").filter(line => line.startsWith("node "));
+    if (variant === "valid" || variant === "rerun") {
       assert.equal(result.code, 0, result.output);
-      assert.equal((result.output.match(/BOOTSTRAP_NODE/g) ?? []).length, 2);
+      assert.equal(nodeCalls.length, variant === "valid" ? 2 : 1);
+      for (const call of nodeCalls) {
+        assert(call.startsWith("node --no-wasm-lazy-compilation --experimental-strip-types "));
+      }
       assert(calls.includes("apt-mark manual jq"));
       assert(calls.indexOf("apt-mark manual jq") < calls.indexOf("systemctl daemon-reload"));
-      assert(calls.indexOf("src/release/preflight.ts native") < calls.indexOf("src/install/main.ts"));
+      if (variant === "valid") {
+        assert(calls.indexOf("src/release/preflight.ts native") < calls.indexOf("src/install/main.ts"));
+      }
       assert(!/\bgit\b|\bnpm\b/.test(calls));
     } else {
       assert.notEqual(result.code, 0, `${variant}: ${result.output}`);
-      assert(!calls.includes("node --experimental-strip-types"), `${variant} reached executable payload`);
+      assert.equal(nodeCalls.length, 0, `${variant} reached executable payload`);
       const reason = {
         "bad-sha": /Bundle checksum failed/,
         "linked-file": /link or special file/,

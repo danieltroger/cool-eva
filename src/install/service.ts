@@ -47,7 +47,7 @@ export async function prepareExistingService(directory: string): Promise<Service
   await selectInitialRelease(directory);
   await writeRootFile(
     dropIn,
-    `[Service]\nType=oneshot\nRemainAfterExit=yes\nUser=root\nGroup=root\nRestart=no\nTimeoutStartSec=1800\nExecStartPre=\nExecStartPost=\nExecStart=\nExecStart=${systemdArgument(join(directory, "runtime/bin/node"))} --experimental-strip-types ${systemdArgument(join(directory, "src/install/migrate-service.ts"))} ${systemdArgument(workingDirectory)} ${source}\n`
+    `[Service]\nType=oneshot\nRemainAfterExit=yes\nUser=root\nGroup=root\nRestart=no\nTimeoutStartSec=1800\nExecStartPre=\nExecStartPost=\nExecStart=\nExecStart=${systemdArgument(join(directory, "runtime/bin/node"))} --no-wasm-lazy-compilation --experimental-strip-types ${systemdArgument(join(directory, "src/install/migrate-service.ts"))} ${systemdArgument(workingDirectory)} ${source}\n`
   );
   await command("systemctl", ["daemon-reload"]);
   await command("systemctl", ["restart", source], 1800_000);

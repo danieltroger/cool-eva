@@ -33,6 +33,12 @@ async function main(): Promise<void> {
   } else if (command === "sha256sum") {
     await verifyChecksums(arguments_);
   } else if (command === "fixture-node") {
+    if (arguments_.includes("--experimental-strip-types")) {
+      if (arguments_[0] !== "--no-wasm-lazy-compilation") {
+        throw new Error("Bundle TypeScript entrypoint omitted eager WebAssembly compilation");
+      }
+      arguments_.shift();
+    }
     if (arguments_[2] === "settings") {
       const metadata: { readableSchemas: number[] } = JSON.parse(
         await readFile(join(resolve(dirname(arguments_[1]), "../.."), "release.json"), "utf8")

@@ -62,16 +62,18 @@ export async function checkInstallerInQemu(
     );
     const result = await runInstaller(guest, publicKey, join(directory, "install.log"));
     assert.match(result, /Encrypted ride recording ready/);
+    await verifyNoRuntimeFaults(guest);
     console.log("Fresh install passed. Verifying permissions, updater, real NetworkManager and security policy.");
     await sshCommand(
       guest,
-      'sudo sh -eu -c \'test -e /etc/cool-eva-qemu-fixture; apt-mark showmanual | grep -qx jq; systemctl is-active --quiet cool-eva; systemctl is-enabled --quiet cool-eva; test -x /usr/local/libexec/cool-eva-update; test ! -e /etc/systemd/system/can-capture.service; test "$(stat -c %a /var/lib/cool-eva/state/settings.json)" = 600; test "$(stat -c %a /var/lib/cool-eva/updater/state.json)" = 600; test "$(stat -c %a /etc/NetworkManager/system-connections/cool-eva-hotspot.nmconnection)" = 600; /usr/bin/curl -fsS http://127.0.0.1/os-update-ready | jq -e .ok==false; nmcli connection show; /usr/local/libexec/cool-eva-update recover\'',
+      'sudo sh -eu -c \'test -e /etc/cool-eva-qemu-fixture; apt-mark showmanual | grep -qx jq; systemctl is-active --quiet cool-eva; grep -azq -- --no-wasm-lazy-compilation /proc/"$(systemctl show cool-eva --property=MainPID --value)"/cmdline; systemctl is-enabled --quiet cool-eva; test -x /usr/local/libexec/cool-eva-update; test ! -e /etc/systemd/system/can-capture.service; test "$(stat -c %a /var/lib/cool-eva/state/settings.json)" = 600; test "$(stat -c %a /var/lib/cool-eva/updater/state.json)" = 600; test "$(stat -c %a /etc/NetworkManager/system-connections/cool-eva-hotspot.nmconnection)" = 600; /usr/bin/curl -fsS http://127.0.0.1/os-update-ready | jq -e .ok==false; nmcli connection show; /usr/local/libexec/cool-eva-update recover\'',
       90_000
     );
     const packageList = await sshCommand(guest, "dpkg-query -W '-f=${binary:Package}\\t${Version}\\n'");
     await writeFile(join(directory, "installed-os-packages.txt"), packageList);
     console.log("Rerunning the same line; existing network profiles and public key must survive.");
     await runInstaller(guest, publicKey, join(directory, "rerun.log"), "rerun");
+    await verifyNoRuntimeFaults(guest);
     await verifyEncryptedFixture(guest, pair.privateKey, pair.publicKey);
     await sshCommand(guest, "sudo sync");
     try {
@@ -86,7 +88,9 @@ export async function checkInstallerInQemu(
     console_ = bootGuest(executable, directory, port, null);
     await waitForSsh(guest);
     await waitForApp(guest, metadata.release);
+    await verifyNoRuntimeFaults(guest);
     await verifyLegacyMigration(guest, directory, publicKey);
+    await verifyNoRuntimeFaults(guest);
     await verifyAccessoryFiles(guest);
     await writeFile(
       join(directory, "qemu-receipt.txt"),
@@ -109,6 +113,14 @@ export async function checkInstallerInQemu(
   }
 }
 
+async function verifyNoRuntimeFaults(guest: { key: string; knownHosts: string; port: number }): Promise<void> {
+  const restarts = await sshCommand(guest, "systemctl show cool-eva.service --property=NRestarts --value");
+  assert.equal(restarts.trim(), "0", "Automatic app restarts must not hide a runtime fault in the installer gate");
+  const kernel = await sshCommand(guest, "sudo dmesg");
+  const faults = kernel.split("\n").filter(line => /\bnode:.*fatal signal/.test(line));
+  assert.deepEqual(faults, [], "A Node fatal signal fails the gate without retry");
+}
+
 export async function verifyAccessoryFiles(guest: { key: string; knownHosts: string; port: number }): Promise<void> {
   const program = `import {readFile} from 'node:fs/promises'; import {configureAccessories} from './src/install/accessories.ts';
 const settings=JSON.parse(await readFile('/var/lib/cool-eva/state/settings.json','utf8')).values;
@@ -116,10 +128,12 @@ settings.coolantProbesEnabled=true;settings.radiatorFanEnabled=true;
 if(!await configureAccessories(settings)){throw new Error('Missing reboot preparation');}
 const config=await readFile('/boot/firmware/cool-eva-accessories.txt','utf8');
 for(const line of ['dtparam=spi=on','gpio=17,op,dl','gpio=27,op,dl','dtoverlay=pwm,pin=18,func=2']){if(!config.includes(line+'\\n')){throw new Error('Missing accessory boot line');}}
+const unit=await readFile('/etc/systemd/system/cool-eva-install-finish.service','utf8');
+if(!unit.includes('runtime/bin/node --no-wasm-lazy-compilation --experimental-strip-types')){throw new Error('Post-boot Node omitted the Wasm guard');}
 console.log('Accessory boot-file writes passed; physical SPI/PWM/GPIO remain untested.');`;
   await sshCommand(
     guest,
-    `cd /opt/cool-eva/current && printf '%s' '${Buffer.from(program).toString("base64")}' | base64 -d | sudo runtime/bin/node --experimental-strip-types --input-type=module`,
+    `cd /opt/cool-eva/current && printf '%s' '${Buffer.from(program).toString("base64")}' | base64 -d | sudo runtime/bin/node --no-wasm-lazy-compilation --experimental-strip-types --input-type=module`,
     90_000
   );
 }
@@ -131,7 +145,7 @@ export async function waitForApp(
   const program = `import {checkInstalledApp} from './src/install/health.ts'; await checkInstalledApp(${JSON.stringify(release)}); console.log('Service healthy after reboot.');`;
   await sshCommand(
     guest,
-    `cd /opt/cool-eva/current && printf '%s' '${Buffer.from(program).toString("base64")}' | base64 -d | sudo runtime/bin/node --experimental-strip-types --input-type=module`,
+    `cd /opt/cool-eva/current && printf '%s' '${Buffer.from(program).toString("base64")}' | base64 -d | sudo runtime/bin/node --no-wasm-lazy-compilation --experimental-strip-types --input-type=module`,
     240_000
   );
 }

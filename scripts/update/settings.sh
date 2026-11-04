@@ -53,7 +53,7 @@ restore_settings() {
 
 settings_readable_by() {
     reader_directory="$RELEASE_ROOT/releases/$1"
-    "$reader_directory/runtime/bin/node" --experimental-strip-types \
+    "$reader_directory/runtime/bin/node" --no-wasm-lazy-compilation --experimental-strip-types \
         "$reader_directory/src/release/preflight.ts" settings "$SETTINGS"
 }
 

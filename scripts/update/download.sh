@@ -63,7 +63,7 @@ download_release() {
     jq -e --arg release "$RELEASE" --arg commit "$manifest_commit" --arg channel "$(manifest_value channel)" --arg node "$(manifest_value node)" \
         '.format == 1 and .updaterProtocol == 1 and .release == $release and .commit == $commit and .channel == $channel and .node == $node and
         .platform == "linux-arm64" and (.settingsSchemaVersion | type == "number")' "$STAGING/release.json" >/dev/null || fail 'Incompatible release metadata.'
-    "$STAGING/runtime/bin/node" --experimental-strip-types "$STAGING/src/release/preflight.ts" native
+    "$STAGING/runtime/bin/node" --no-wasm-lazy-compilation --experimental-strip-types "$STAGING/src/release/preflight.ts" native
     sync
 }
 

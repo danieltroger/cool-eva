@@ -120,6 +120,7 @@ export async function assembleBundle(sourceDirectory: string, outputDirectory: s
   await runCommand(
     join(extractedDirectory, "runtime/bin/node"),
     [
+      "--no-wasm-lazy-compilation",
       "--experimental-strip-types",
       join(sourceDirectory, "scripts/release/native.ts"),
       extractedDirectory,

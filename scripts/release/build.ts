@@ -81,6 +81,7 @@ export async function buildReleaseBundle(sourceDirectory: string, outputDirector
         `SOURCE_DATE_EPOCH=${epoch}`,
         builderTag,
         "/opt/node/bin/node",
+        "--no-wasm-lazy-compilation",
         "--experimental-strip-types",
         "scripts/release/assemble.ts",
         "/work/output",
