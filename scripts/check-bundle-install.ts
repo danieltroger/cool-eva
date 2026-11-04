@@ -19,6 +19,8 @@ import { accessoryBootConfiguration } from "../src/install/accessories.ts";
 import { checkBootstrap } from "./install-check/bootstrap-check.ts";
 import { checkStartupHealth } from "./install-check/health-check.ts";
 import { checkOsUpdateCondition } from "./install-check/os-condition-check.ts";
+import { checkRecoveryAssertion } from "./install-check/recovery-check.ts";
+import { installationFailureAdvice, MigrationNeedsHelpError } from "../src/install/main.ts";
 import { checkBundleLauncher } from "./install-check/launch-check.ts";
 
 export async function checkBundleInstall(): Promise<void> {
@@ -72,6 +74,11 @@ export async function checkBundleInstall(): Promise<void> {
       "",
     ]);
     assert(!/[`$\r\n]/.test(installerOneLine()));
+    assert(installerOneLine().includes("--proto '=https'"));
+    assert.match(installationFailureAdvice(new MigrationNeedsHelpError("conflict")), /Stop and ask for help/);
+    assert(!installationFailureAdvice(new MigrationNeedsHelpError("conflict")).includes("paste"));
+    assert.match(installationFailureAdvice(new Error("network")), /paste the same/);
+    await checkRecoveryAssertion(directory);
     checkPowerGate();
     checkLoopbackRoute();
     const profile = networkProfile(

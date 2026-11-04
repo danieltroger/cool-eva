@@ -25,32 +25,13 @@ main() {
     if ! grep -qs '^VERSION_CODENAME=trixie$' /etc/os-release; then
         note 'This OS differs from the tested Trixie release; proceeding with native and service checks.'
     fi
-    note 'Catching up OS packages. Network upgrades can briefly interrupt SSH; paste the same line again if it closes.'
-    export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
-    dpkg --configure -a
-    apt-get -o DPkg::Lock::Timeout=300 -o Dpkg::Use-Pty=0 -o APT::Color=0 update
-    apt-get -o DPkg::Lock::Timeout=300 -o Dpkg::Use-Pty=0 -o APT::Color=0 -y -o Dpkg::Options::=--force-confold full-upgrade
-    apt-get -o DPkg::Lock::Timeout=300 install -y --no-install-recommends \
-        jq curl ca-certificates tar zstd coreutils util-linux iproute2 iw rfkill \
-        network-manager bluez dbus openssh-server avahi-daemon \
-        libatomic1 libstdc++6 libgcc-s1 raspi-utils
-    apt-mark manual jq
-    # Until the running app can prove stable charging, package installation stays deferred.
-    install -d -m 755 /etc/systemd/system/apt-daily-upgrade.service.d
-    if [ ! -e /etc/systemd/system/apt-daily-upgrade.service.d/50-cool-eva-power.conf ]; then
-        printf '[Service]\nExecCondition=/bin/false\n' > /etc/systemd/system/apt-daily-upgrade.service.d/50-cool-eva-power.conf.install-next
-        chmod 644 /etc/systemd/system/apt-daily-upgrade.service.d/50-cool-eva-power.conf.install-next
-        sync
-        mv -f /etc/systemd/system/apt-daily-upgrade.service.d/50-cool-eva-power.conf.install-next /etc/systemd/system/apt-daily-upgrade.service.d/50-cool-eva-power.conf
-        sync
-        systemctl daemon-reload
-    fi
-    apt-get -o DPkg::Lock::Timeout=300 -o Dpkg::Use-Pty=0 install -y unattended-upgrades
+    note 'Catching up OS packages outside SSH. DO NOT UNPLUG the Pi while this runs.'
+    note 'If the connection closes, keep power on. Pasting the same line again resumes setup and waits for the OS job.'
+    catch_up_os
     note 'OS catch-up complete. Downloading the prebuilt software; no Node, Git, Python or compiler installation is needed.'
     install -d -m 755 /opt/cool-eva /opt/cool-eva/releases
     [ "$(realpath /opt/cool-eva/releases)" = /opt/cool-eva/releases ] || fail 'Unsafe release storage.'
     WORK=$(mktemp -d /var/cache/cool-eva-install/download.XXXXXX)
-    trap 'clean_download' EXIT
     BASE="https://github.com/danieltroger/cool-eva/releases/download/$INSTALL_TAG"
     fetch "$BASE/manifest.txt" "$WORK/manifest.txt"
     awk -F = 'NF != 2 || $2 !~ /^[a-zA-Z0-9.-]+$/ || seen[$1]++ {exit 1}
@@ -110,6 +91,78 @@ main() {
     "$TARGET/runtime/bin/node" --no-wasm-lazy-compilation --experimental-strip-types "$TARGET/src/install/main.ts" "$TARGET"
 }
 
+catch_up_os() {
+    os_unit=cool-eva-install-os.service
+    cat > /var/cache/cool-eva-install/os-catch-up.sh.next <<'OS_CATCH_UP'
+#!/bin/sh
+set -eu
+umask 077
+export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
+dpkg --configure -a
+apt-get -o DPkg::Lock::Timeout=300 -o Dpkg::Use-Pty=0 -o APT::Color=0 update
+apt-get -o DPkg::Lock::Timeout=300 -o Dpkg::Use-Pty=0 -o APT::Color=0 -y -o Dpkg::Options::=--force-confold full-upgrade
+apt-get -o DPkg::Lock::Timeout=300 install -y --no-install-recommends \
+    jq curl ca-certificates tar zstd coreutils util-linux iproute2 iw rfkill \
+    network-manager bluez dbus openssh-server avahi-daemon \
+    libatomic1 libstdc++6 libgcc-s1 raspi-utils
+apt-mark manual jq
+# Until the running app can prove stable charging, package installation stays deferred.
+install -d -m 755 /etc/systemd/system/apt-daily-upgrade.service.d
+if [ ! -e /etc/systemd/system/apt-daily-upgrade.service.d/50-cool-eva-power.conf ]; then
+    printf '[Service]\nExecCondition=/bin/false\n' > /etc/systemd/system/apt-daily-upgrade.service.d/50-cool-eva-power.conf.install-next
+    chmod 644 /etc/systemd/system/apt-daily-upgrade.service.d/50-cool-eva-power.conf.install-next
+    sync
+    mv -f /etc/systemd/system/apt-daily-upgrade.service.d/50-cool-eva-power.conf.install-next /etc/systemd/system/apt-daily-upgrade.service.d/50-cool-eva-power.conf
+    sync
+    systemctl daemon-reload
+fi
+apt-get -o DPkg::Lock::Timeout=300 -o Dpkg::Use-Pty=0 install -y unattended-upgrades
+OS_CATCH_UP
+    chmod 700 /var/cache/cool-eva-install/os-catch-up.sh.next
+    mv -f /var/cache/cool-eva-install/os-catch-up.sh.next /var/cache/cool-eva-install/os-catch-up.sh
+    install -d -m 755 /etc/systemd/system
+    cat > /etc/systemd/system/cool-eva-install-os.service.next <<'OS_UNIT'
+[Unit]
+Description=Cool Eva setup OS catch-up (keep power on)
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=infinity
+ExecStart=/bin/sh /var/cache/cool-eva-install/os-catch-up.sh
+OS_UNIT
+    chmod 644 /etc/systemd/system/cool-eva-install-os.service.next
+    mv -f /etc/systemd/system/cool-eva-install-os.service.next /etc/systemd/system/cool-eva-install-os.service
+    systemctl daemon-reload || fail 'Cannot prepare the independent OS job.'
+    os_state=$(systemctl show "$os_unit" --property=ActiveState --value)
+    case "$os_state" in
+        activating|active) note 'Resuming the existing OS job; keep power on.' ;;
+        *)
+            systemctl reset-failed "$os_unit" || fail 'Cannot reset the OS job.'
+            systemctl start --no-block "$os_unit" || fail 'Cannot start the independent OS job.'
+            ;;
+    esac
+    # Only this journal follower belongs to SSH; apt/dpkg belong to PID 1's service.
+    journalctl --unit="$os_unit" --follow --lines=10 --no-pager 9>&- &
+    PROGRESS_PID=$!
+    while :; do
+        os_state=$(systemctl show "$os_unit" --property=ActiveState --value)
+        case "$os_state" in
+            active) break ;;
+            activating|deactivating|inactive) sleep 2 ;;
+            *) fail 'OS catch-up failed. Keep power on; paste the same setup line again to resume.' ;;
+        esac
+    done
+    stop_progress
+    systemctl stop "$os_unit" || fail 'Cannot finish the OS job.'
+}
+
+stop_progress() {
+    if [ -n "${PROGRESS_PID:-}" ] && kill -0 "$PROGRESS_PID" 2>/dev/null; then
+        kill "$PROGRESS_PID" || note 'The OS journal follower already stopped.'
+    fi
+    PROGRESS_PID=
+}
+
 note() { printf 'Cool Eva setup: %s\n' "$*"; }
 fail() { printf 'Cool Eva setup stopped: %s\nPaste the same setup line to retry; no ride data is removed.\n' "$*" >&2; exit 1; }
 value() { sed -n "s/^$1=//p" "$WORK/manifest.txt"; }
@@ -124,4 +177,9 @@ clean_download() {
 
 WORK=
 STAGING=
+PROGRESS_PID=
+trap 'clean_download; stop_progress' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 main "$@"

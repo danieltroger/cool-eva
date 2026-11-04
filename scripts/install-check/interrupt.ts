@@ -1,0 +1,74 @@
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { writeFile } from "node:fs/promises";
+import { installerRemoteCommand } from "../release/installer.ts";
+import { sshArguments, sshCommand, type GuestSsh } from "./ssh.ts";
+
+export async function interruptSshDuringApt(guest: GuestSsh, log: string): Promise<void> {
+  const child = spawn("ssh", ["-tt", ...sshArguments(guest), installerRemoteCommand()], {
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let output = "";
+  let answered = false;
+  const collect = (chunk: Buffer): void => {
+    output += chunk.toString();
+    if (!answered && output.includes("Type BENCH to confirm stable bench power: ")) {
+      answered = true;
+      child.stdin.write("BENCH\n");
+    }
+  };
+  child.stdout.on("data", collect);
+  child.stderr.on("data", collect);
+  const exited = new Promise<number | null>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", resolve);
+  });
+  try {
+    const pid = await sshCommand(
+      guest,
+      `sudo sh -eu -c '
+for attempt in $(seq 1 150); do
+  group=$(systemctl show cool-eva-install-os.service --property=ControlGroup --value)
+  if [ -n "$group" ] && [ -f "/sys/fs/cgroup$group/cgroup.procs" ]; then
+    for process in $(cat "/sys/fs/cgroup$group/cgroup.procs"); do
+      if [ -r "/proc/$process/comm" ] && [ "$(cat "/proc/$process/comm")" = apt-get ]; then
+        printf "%s\\n" "$process"
+        exit 0
+      fi
+    done
+  fi
+  sleep 2
+done
+exit 1'`,
+      320_000
+    );
+    assert.match(pid.trim(), /^\d+$/, "Kill SSH only after real apt belongs to the independent OS unit");
+    assert(answered);
+    assert(child.kill("SIGKILL"));
+    await exited;
+    await writeFile(log, output + `\nSSH client killed while detached apt PID ${pid.trim()} was running.\n`, {
+      mode: 0o600,
+    });
+    const result = await sshCommand(
+      guest,
+      `sudo sh -eu -c '
+for attempt in $(seq 1 1200); do
+  state=$(systemctl show cool-eva-install-os.service --property=ActiveState --value)
+  case "$state" in
+    active) test "$(systemctl show cool-eva-install-os.service --property=ExecMainStatus --value)" = 0; echo OS_JOB_SURVIVED_SSH; exit 0 ;;
+    activating) sleep 2 ;;
+    *) journalctl -u cool-eva-install-os.service --no-pager -n 30; exit 1 ;;
+  esac
+done
+exit 1'`,
+      2450_000
+    );
+    assert.match(result, /OS_JOB_SURVIVED_SSH/);
+    console.log("Killed SSH during real apt; the independent OS job finished successfully. Resuming the same line.");
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+      await exited;
+    }
+  }
+}

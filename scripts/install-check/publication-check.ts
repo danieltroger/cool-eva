@@ -21,7 +21,12 @@ export async function checkPublicationOrder(directory: string, metadata: Release
     join(directory, "manifest.txt"),
     `release=${metadata.release}\nsha256=${await hashFile(join(directory, "bundle.tar.zst"))}\n`
   );
-  await writeFile(join(directory, "qemu-result.json"), JSON.stringify({ ok: true, release: metadata.release }));
+  const receipt = {
+    ok: true,
+    release: metadata.release,
+    archiveSha256: await hashFile(join(directory, "bundle.tar.zst")),
+  };
+  await writeFile(join(directory, "qemu-result.json"), JSON.stringify(receipt));
   const calls: string[][] = [];
   await publishRelease(
     directory,
@@ -39,6 +44,26 @@ export async function checkPublicationOrder(directory: string, metadata: Release
       return "";
     }
   );
+  const successfulCalls = calls.length;
+  await writeFile(join(directory, "qemu-result.json"), JSON.stringify({ ...receipt, archiveSha256: "0".repeat(64) }));
+  await assert.rejects(
+    () =>
+      publishRelease(
+        directory,
+        {
+          GITHUB_EVENT_NAME: "workflow_dispatch",
+          GITHUB_REPOSITORY: "danieltroger/cool-eva",
+          GITHUB_SHA: metadata.commit,
+          GITHUB_REF: "refs/heads/main",
+        },
+        async arguments_ => {
+          calls.push(arguments_);
+          return "";
+        }
+      ),
+    /QEMU gate archive checksum/
+  );
+  assert.equal(calls.length, successfulCalls, "Mismatched tested bytes must refuse before any GitHub call");
   const uploads = calls.filter(
     arguments_ => arguments_[1] === "upload" && arguments_[2] === `cool-eva-${metadata.release}`
   );

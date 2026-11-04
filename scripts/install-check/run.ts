@@ -16,6 +16,9 @@ import { guestSeed } from "./seed.ts";
 import { runInstaller, sshCommand, waitForSsh } from "./ssh.ts";
 import type { GuestConsole } from "./console.ts";
 import { verifyEncryptedFixture } from "./encryption.ts";
+import { hashFile } from "../release/files.ts";
+import { interruptSshDuringApt } from "./interrupt.ts";
+import { verifyUpdaterRecovery } from "./recovery.ts";
 import { verifyLegacyMigration } from "./legacy.ts";
 
 export async function checkInstallerInQemu(
@@ -26,6 +29,7 @@ export async function checkInstallerInQemu(
 ): Promise<void> {
   await mkdir(directory, { recursive: false });
   const inputs = await readBundleInputs(process.cwd());
+  const archiveSha256 = await hashFile(join(bundle, "bundle.tar.zst"));
   const metadata = JSON.parse(await readFile(join(bundle, "release.json"), "utf8")) as {
     release: string;
     testedImage: { sha256: string };
@@ -60,15 +64,17 @@ export async function checkInstallerInQemu(
     console.log(
       "Running the actual released installer over SSH: bench confirmation, apt catch-up, networks, public key, units and health checks."
     );
+    await interruptSshDuringApt(guest, join(directory, "interrupted-ssh.log"));
     const result = await runInstaller(guest, publicKey, join(directory, "install.log"));
     assert.match(result, /Encrypted ride recording ready/);
     await verifyNoRuntimeFaults(guest);
     console.log("Fresh install passed. Verifying permissions, updater, real NetworkManager and security policy.");
     await sshCommand(
       guest,
-      'sudo sh -eu -c \'test -e /etc/cool-eva-qemu-fixture; apt-mark showmanual | grep -qx jq; systemctl is-active --quiet cool-eva; grep -azq -- --no-wasm-lazy-compilation /proc/"$(systemctl show cool-eva --property=MainPID --value)"/cmdline; systemctl is-enabled --quiet cool-eva; test -x /usr/local/libexec/cool-eva-update; test ! -e /etc/systemd/system/can-capture.service; test "$(stat -c %a /var/lib/cool-eva/state/settings.json)" = 600; test "$(stat -c %a /var/lib/cool-eva/updater/state.json)" = 600; test "$(stat -c %a /etc/NetworkManager/system-connections/cool-eva-hotspot.nmconnection)" = 600; /usr/bin/curl -fsS http://127.0.0.1/os-update-ready | jq -e .ok==false; nmcli connection show; /usr/local/libexec/cool-eva-update recover\'',
+      'sudo sh -eu -c \'test -e /etc/cool-eva-qemu-fixture; apt-mark showmanual | grep -qx jq; systemctl is-active --quiet cool-eva; grep -azq -- --no-wasm-lazy-compilation /proc/"$(systemctl show cool-eva --property=MainPID --value)"/cmdline; systemctl is-enabled --quiet cool-eva; test -x /usr/local/libexec/cool-eva-update; test ! -e /etc/systemd/system/can-capture.service; test "$(stat -c %a /var/lib/cool-eva/state/settings.json)" = 600; test "$(stat -c %a /var/lib/cool-eva/updater/state.json)" = 600; test "$(stat -c %a /etc/NetworkManager/system-connections/cool-eva-hotspot.nmconnection)" = 600; /usr/bin/curl -fsS http://127.0.0.1/os-update-ready | jq -e .ok==false; nmcli connection show\'',
       90_000
     );
+    await verifyUpdaterRecovery(guest);
     const packageList = await sshCommand(guest, "dpkg-query -W '-f=${binary:Package}\\t${Version}\\n'");
     await writeFile(join(directory, "installed-os-packages.txt"), packageList);
     console.log("Rerunning the same line; existing network profiles and public key must survive.");
@@ -92,15 +98,21 @@ export async function checkInstallerInQemu(
     await verifyLegacyMigration(guest, directory, publicKey);
     await verifyNoRuntimeFaults(guest);
     await verifyAccessoryFiles(guest);
+    assert.equal(
+      await hashFile(join(bundle, "bundle.tar.zst")),
+      archiveSha256,
+      "Served archive changed during the gate"
+    );
     await writeFile(
       join(directory, "qemu-receipt.txt"),
-      `Pinned image ${inputs.testedImage.url}\nsha256 ${inputs.testedImage.sha256}\nRelease ${metadata.release}\nFresh install, hidden passwords, public key, native preflight, persistent profiles, settings permissions, updater recovery, rerun and reboot: passed.\nNo CAN/BLE/GPIO/SPI/PWM/Wi-Fi association/firmware boot/SD power-cut claim.\n`
+      `Pinned image ${inputs.testedImage.url}\nsha256 ${inputs.testedImage.sha256}\nRelease ${metadata.release}\nSSH killed during apt, detached job completion, resumed fresh install, hidden passwords, public key, native preflight, persistent profiles, settings permissions, updater recovery, rerun and reboot: passed.\nNo CAN/BLE/GPIO/SPI/PWM/Wi-Fi association/firmware boot/SD power-cut claim.\n`
     );
     await writeFile(
       join(directory, "qemu-result.json"),
       JSON.stringify({
         ok: true,
         release: metadata.release,
+        archiveSha256,
         testedImage: inputs.testedImage,
         machine: "raspi3ap",
         qemu: "11.1.3",

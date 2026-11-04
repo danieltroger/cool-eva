@@ -108,7 +108,7 @@ export interface GuestSsh {
   port: number;
 }
 
-function sshArguments(guest: GuestSsh): string[] {
+export function sshArguments(guest: GuestSsh): string[] {
   return [
     "-o",
     "BatchMode=yes",

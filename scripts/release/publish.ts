@@ -15,15 +15,17 @@ export async function publishRelease(
   const receipt = JSON.parse(await readFile(join(directory, "qemu-result.json"), "utf8")) as {
     ok: boolean;
     release: string;
+    archiveSha256: string;
   };
   if (receipt.ok !== true || receipt.release !== metadata.release) {
     throw new Error("No successful QEMU installer gate for this release");
   }
+  const archiveSha256 = await hashFile(join(directory, "bundle.tar.zst"));
+  if (receipt.archiveSha256 !== archiveSha256) {
+    throw new Error("QEMU gate archive checksum does not match the publication archive");
+  }
   const manifest = await readFile(join(directory, "manifest.txt"), "utf8");
-  if (
-    !manifest.includes(`release=${metadata.release}\n`) ||
-    !manifest.includes(`sha256=${await hashFile(join(directory, "bundle.tar.zst"))}\n`)
-  ) {
+  if (!manifest.includes(`release=${metadata.release}\n`) || !manifest.includes(`sha256=${archiveSha256}\n`)) {
     throw new Error("Publication archive does not match its manifest");
   }
   const tag = `cool-eva-${metadata.release}`;

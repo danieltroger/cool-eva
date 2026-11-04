@@ -20,6 +20,7 @@ export async function checkBootstrap(directory: string, repository: string): Pro
     "wrong-architecture",
     "pending-update",
     "cancel",
+    "apt-failure",
   ] as const) {
     const root = join(directory, variant);
     const payload = join(root, "payload");
@@ -45,13 +46,28 @@ export async function checkBootstrap(directory: string, repository: string): Pro
     for (const command of ["id", "mv", "curl", "realpath", "sha256sum", "flock", "sync"]) {
       await writeFile(join(commands, command), commandWrapper(command), { mode: 0o755 });
     }
-    for (const command of ["apt-get", "apt-mark", "systemctl", "git", "npm"]) {
+    for (const command of ["apt-get", "apt-mark", "journalctl", "git", "npm"]) {
       await writeFile(
         join(commands, command),
-        `#!/bin/sh\nprintf '%s\\n' '${command} '"$*" >> "$UPDATE_FIXTURE/commands.txt"\n${["git", "npm"].includes(command) ? "exit 99" : "exit 0"}\n`,
+        `#!/bin/sh\nprintf '%s\\n' '${command} '"$*" >> "$UPDATE_FIXTURE/commands.txt"\n${["git", "npm"].includes(command) ? "exit 99" : command === "apt-get" && variant === "apt-failure" ? "exit 42" : "exit 0"}\n`,
         { mode: 0o755 }
       );
     }
+    await writeFile(join(root, "os-state"), "inactive");
+    await writeFile(
+      join(commands, "systemctl"),
+      `#!/bin/sh
+printf 'systemctl %s\\n' "$*" >> "$UPDATE_FIXTURE/commands.txt"
+case "$1" in
+  show) cat "$UPDATE_FIXTURE/os-state" ;;
+  start)
+    if /bin/sh "$UPDATE_FIXTURE/cache/os-catch-up.sh"; then echo active; else echo failed; fi > "$UPDATE_FIXTURE/os-state"
+    ;;
+  stop) echo inactive > "$UPDATE_FIXTURE/os-state" ;;
+esac
+`,
+      { mode: 0o755 }
+    );
     await writeFile(
       join(commands, "dpkg"),
       `#!/bin/sh\nprintf 'dpkg %s\\n' "$*" >> "$UPDATE_FIXTURE/commands.txt"\nif [ "$1" = --print-architecture ]; then echo ${variant === "wrong-architecture" ? "armhf" : "arm64"}; fi\n`,
@@ -122,7 +138,11 @@ export async function checkBootstrap(directory: string, repository: string): Pro
         assert(call.startsWith("node --no-wasm-lazy-compilation --experimental-strip-types "));
       }
       assert(calls.includes("apt-mark manual jq"));
-      assert(calls.indexOf("apt-mark manual jq") < calls.indexOf("systemctl daemon-reload"));
+      assert(calls.includes("systemctl start --no-block cool-eva-install-os.service"));
+      assert(calls.indexOf("apt-mark manual jq") < calls.indexOf("src/install/main.ts"));
+      const unit = await readFile(join(root, "systemd/cool-eva-install-os.service"), "utf8");
+      assert(unit.includes("Type=oneshot\nRemainAfterExit=yes\n"));
+      assert(unit.includes(`ExecStart=/bin/sh ${root}/cache/os-catch-up.sh`));
       if (variant === "valid") {
         assert(calls.indexOf("src/release/preflight.ts native") < calls.indexOf("src/install/main.ts"));
       }
@@ -137,6 +157,7 @@ export async function checkBootstrap(directory: string, repository: string): Pro
         "wrong-architecture": /64-bit userspace/,
         "pending-update": /release changed while setup was starting/,
         cancel: /cancelled before any system change/,
+        "apt-failure": /setup stopped: OS catch-up failed[\s\S]*paste the same setup line/i,
       }[variant];
       assert.match(result.output, reason);
       if (variant === "cancel") {

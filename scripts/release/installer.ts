@@ -18,7 +18,7 @@ export function renderInstaller(template: string, metadata: ReleaseMetadata): st
 }
 
 export function installerRemoteCommand(): string {
-  return "sudo install -d -m 700 /var/cache/cool-eva-install && sudo curl -fsSL https://github.com/danieltroger/cool-eva/releases/latest/download/install.sh -o /var/cache/cool-eva-install/install.sh && sudo sh /var/cache/cool-eva-install/install.sh";
+  return "sudo install -d -m 700 /var/cache/cool-eva-install && sudo curl -fsSL --proto '=https' --proto-redir '=https' https://github.com/danieltroger/cool-eva/releases/latest/download/install.sh -o /var/cache/cool-eva-install/install.sh && sudo sh /var/cache/cool-eva-install/install.sh";
 }
 
 export function installerOneLine(): string {

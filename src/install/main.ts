@@ -46,7 +46,14 @@ export async function installBundle(directory: string): Promise<void> {
   await installNetworks(choices);
   await ensureSwap();
   const captureEnabled = await preserveCaptureChoice();
-  const backup = await prepareExistingService(directory);
+  let backup;
+  try {
+    backup = await prepareExistingService(directory);
+  } catch (error) {
+    throw new MigrationNeedsHelpError("The existing service could not complete its settings/data migration.", {
+      cause: error,
+    });
+  }
   const changes: Record<string, unknown> = {
     ...choices.accessories,
     ...(choices.hotspot ? { phoneHotspotSsid: choices.hotspot.ssid } : {}),
@@ -86,6 +93,14 @@ export async function installBundle(directory: string): Promise<void> {
   }
 }
 
+export class MigrationNeedsHelpError extends Error {}
+
+export function installationFailureAdvice(error: unknown): string {
+  return error instanceof MigrationNeedsHelpError
+    ? "No ride data was removed. Stop and ask for help; keep the migration service in place and do not keep rerunning setup."
+    : "No ride data was removed. Keep bench power on and paste the same setup line to retry.";
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     await installBundle(process.argv[2]);
@@ -98,7 +113,13 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
           ? error.message
           : "Check the service log."
     );
-    console.error("No ride data was removed. Keep bench power on and paste the same setup line to retry.");
+    if (error instanceof MigrationNeedsHelpError) {
+      console.error(
+        "Migration failure in the existing service:",
+        error.cause instanceof Error ? error.cause.name : "unknown error"
+      );
+    }
+    console.error(installationFailureAdvice(error));
     process.exitCode = 1;
   }
 }
