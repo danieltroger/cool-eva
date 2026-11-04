@@ -8,6 +8,7 @@ import { syncFilesystems } from "../storage/durable.ts";
 import { readSettingsBody, reserveSettingsRestart, settingsReply, type SettingsHttpContext } from "./settings.ts";
 import type { SettingsReply } from "../settings/view.ts";
 import { record } from "../settings/schema.ts";
+import { acquireWifiOperation } from "../wifi/operation.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -58,6 +59,11 @@ export async function handleUpdateEndpoint(
     // header or a cross-origin form, and neither reads JSON.
     res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
     res.end(`pulling and restarting needs the ${UPDATE_HEADER}: ${UPDATE_HEADER_VALUE} header\n`);
+    return;
+  }
+  const releaseWifi = acquireWifiOperation("settings");
+  if (!releaseWifi) {
+    respond(res, 409, { ok: false, message: "Wi-Fi recovery or a network change is running; try again in a moment." });
     return;
   }
   const startedAt = monotonicNow();
@@ -130,6 +136,8 @@ export async function handleUpdateEndpoint(
       ok: false,
       message: pulledSummary ? `${pulledSummary}\n\nCode pulled, but the service was not restarted: ${detail}` : detail,
     });
+  } finally {
+    releaseWifi();
   }
 }
 

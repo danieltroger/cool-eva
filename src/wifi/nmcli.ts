@@ -1,12 +1,12 @@
 import { execFile } from "child_process";
 import { monotonicNow, since } from "../monotonic.ts";
 
-// The only place in src/wifi that starts a process. Everything else takes strings.
+// The command runner for Wi-Fi diagnostics and recovery.
 //
 // ⚠️ `execFile` and never `exec`: the argument list is passed to the kernel as a vector,
 // so an SSID with a space, a quote or a `;` in it is an argument rather than shell syntax.
 // ../can/link-status.ts uses `exec` with an interpolated interface name and gets away with
-// it because that name is a constant; here the hotspot SSID comes from the environment.
+// it because that name is a constant; here the hotspot SSID comes from settings.
 //
 // ⚠️ Absolute paths, because `iw` and `rfkill` live in /usr/sbin and that is NOT on the
 // PATH of a non-login shell — measured on this Pi while pulling the 2026-09-19 evidence,

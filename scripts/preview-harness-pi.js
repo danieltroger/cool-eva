@@ -104,6 +104,9 @@ window.fetch = function previewFetch(input, init) {
   const method = ((init && init.method) || "GET").toUpperCase();
   const path = url.pathname;
 
+  const networkReply = networkPreview(path, method, init);
+  if (networkReply) return networkReply;
+
   if (path === "/settings") {
     if (method === "GET" && new URL(window.location.href).searchParams.get("settings") === "unconfirmed") {
       return json({ ok: false, message: "Synthetic unavailable settings" }, 503);

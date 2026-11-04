@@ -53,6 +53,7 @@ export async function openSettingsStore(
   }
   let queue: Promise<unknown> = Promise.resolve();
   let reservation: symbol | null = null;
+  let reservationKind: "restart" | "network" = "restart";
   const save = async (raw: Record<string, unknown>): Promise<void> => {
     try {
       await saveSettings(paths, raw);
@@ -91,7 +92,11 @@ export async function openSettingsStore(
     update: (expectedRevision, changes) =>
       serial("update", async () => {
         if (reservation !== null) {
-          throw new Error("A restart is reserved; wait for reconnection before saving.");
+          throw new Error(
+            reservationKind === "network"
+              ? "A Wi-Fi trial is reserved; wait until it finishes before saving."
+              : "A restart is reserved; wait for reconnection before saving."
+          );
         }
         const current = readySettings(loaded);
         if (current.document.revision !== expectedRevision) {
@@ -122,7 +127,7 @@ export async function openSettingsStore(
       }),
     learnHub: address =>
       serial("learn hub", async () => {
-        if (reservation !== null) return false;
+        if (reservation !== null && reservationKind === "restart") return false;
         const current = readySettings(loaded);
         if (
           !current.document.values.discoverHubOnce ||
@@ -160,7 +165,7 @@ export async function openSettingsStore(
     settled: async () => {
       await queue;
     },
-    reserve: expectedRevision =>
+    reserve: (expectedRevision, kind = "restart") =>
       serial("reserve restart", async () => {
         if (reservation !== null) {
           throw new Error("A restart is already reserved.");
@@ -171,7 +176,24 @@ export async function openSettingsStore(
         }
         const token = Symbol("restart");
         reservation = token;
+        reservationKind = kind;
         return {
+          update: changes =>
+            serial("network identity", async () => {
+              if (reservation !== token || Object.keys(changes).some(key => key !== "phoneHotspotSsid")) {
+                throw new Error("The Wi-Fi identity reservation is no longer valid.");
+              }
+              const current = readySettings(loaded);
+              if (changes.phoneHotspotSsid === current.document.values.phoneHotspotSsid) return;
+              const raw = {
+                ...current.raw,
+                revision: current.document.revision + 1,
+                values: { ...record(current.raw.values, "settings values"), ...changes },
+              };
+              const parsed = parseSettingsDocument(raw);
+              await save(parsed.raw);
+              loaded = { kind: "ready", ...parsed };
+            }),
           release: () =>
             serial("release restart", async () => {
               if (reservation === token) {
@@ -196,7 +218,10 @@ export interface SettingsStore {
   learnHub: (address: string) => Promise<boolean>;
   finishLegacyImport: (publicKeyPem: string | null, notices?: string[]) => Promise<SettingsDocument>;
   settled: () => Promise<void>;
-  reserve: (expectedRevision: number | null) => Promise<{ release: () => Promise<void> }>;
+  reserve: (
+    expectedRevision: number | null,
+    kind?: "restart" | "network"
+  ) => Promise<{ release: () => Promise<void>; update?: (changes: Partial<StartupSettings>) => Promise<void> }>;
 }
 
 async function loadSettings(paths: SettingsPaths): Promise<SettingsState> {

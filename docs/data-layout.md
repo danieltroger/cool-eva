@@ -11,6 +11,7 @@ The shared data root is **`/var/lib/cool-eva`**, outside every checkout and rele
 | **`state/settings.json`** | `root:root` | `0600` | Canonical settings, including credentials |
 | `state/installed.json` | `root:root` | `0600` | Prior-install marker and archive ownership |
 | **`state/data-move.json`** | `root:root` | `0600` | The sole one-time data-move journal |
+| `state/network-trials.json` | `root:root` | `0600` | Network UUID purposes and consumed trials; preserved across settings/software rollback, never contains passwords |
 | `ride-logs/` | `root:archive-group` | `2750` | Encrypted ride archives |
 | `vcu-params/` | `root:archive-group` | `2750` | Snapshots, partial reads, preferences and change history |
 | `wifi-diag/` | `root:archive-group` | `2750` | Wi-Fi diagnostic dumps; location is display-only |

@@ -14,4 +14,5 @@ export const SETTINGS_MAP = [
 export const SETTINGS_PAGE_TITLES = {
   ...Object.fromEntries(SETTINGS_MAP.map(item => [item.key, item.title])),
   access: "Who can control my bike?",
+  networks: "Wi-Fi networks",
 };

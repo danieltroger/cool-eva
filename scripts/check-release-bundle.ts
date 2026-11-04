@@ -46,6 +46,7 @@ export async function checkReleaseBundle(): Promise<void> {
     ...required,
     "public/app.js",
     "scripts/can-capture/capture.sh",
+    "scripts/configure-network-purposes.ts",
     "scripts/check-example.ts",
     "docs/setup.md",
     "ride-logs/trip.celog",
@@ -58,7 +59,8 @@ export async function checkReleaseBundle(): Promise<void> {
   assert(selected.includes("scripts/can-capture/capture.sh"));
   assert(!selected.includes("docs/setup.md"));
   assert(!selected.includes("scripts/check-example.ts"));
-  assert.equal(selected.length, required.length + 2);
+  assert(selected.includes("scripts/configure-network-purposes.ts"));
+  assert.equal(selected.length, required.length + 3);
   assert.throws(() => selectSourcePaths(required.filter(path => path !== "src/index.ts")));
   for (const path of [
     "../outside",
@@ -219,6 +221,7 @@ async function checkRuntimePayload(source: string, output: string): Promise<void
   }
   await mkdir(join(source, "scripts/can-capture"), { recursive: true });
   await writeFile(join(source, "scripts/can-capture/capture.sh"), "exit 0\n");
+  await writeFile(join(source, "scripts/configure-network-purposes.ts"), "export {};\n");
   await writeFile(join(source, "scripts/check-example.ts"), "throw new Error('not a runtime script');\n");
   await mkdir(join(source, "docs"));
   await writeFile(join(source, "docs/developer.md"), "developer fixture\n");
@@ -226,7 +229,8 @@ async function checkRuntimePayload(source: string, output: string): Promise<void
   await copyRuntimePayload(source, output);
   assert(!(await readdir(output)).includes("docs"));
   assert(!(await readdir(output)).includes("package-lock.json"));
-  assert.deepEqual(await readdir(join(output, "scripts")), ["can-capture"]);
+  assert.deepEqual((await readdir(join(output, "scripts"))).sort(), ["can-capture", "configure-network-purposes.ts"]);
+  assert.equal(await readFile(join(output, "scripts/configure-network-purposes.ts"), "utf8"), "export {};\n");
   await writeFile(join(output, "scripts/check-example.ts"), "not allowed\n");
   await assert.rejects(assertRuntimePayload(output), /Non-runtime script/);
   await rm(join(output, "scripts/check-example.ts"));

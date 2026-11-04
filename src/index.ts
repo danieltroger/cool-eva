@@ -6,6 +6,8 @@ import { startSettings } from "./settings/startup.ts";
 import { createSettingsRestart } from "./settings/restart.ts";
 import { handleRecordingFlushEndpoint } from "./http/recording-flush.ts";
 import { handleSettingsEndpoint } from "./http/settings.ts";
+import { handleNetworksEndpoint, type NetworksHttpRuntime } from "./http/networks.ts";
+import { startNetworkSettings } from "./wifi/network-startup.ts";
 import { scanHubCandidates } from "./settings/hub-discovery.ts";
 import { sampleServiceGate, restartMotionBlockers } from "./vcu/service-gate.ts";
 import { ageMs, latestValue } from "./can/signals.ts";
@@ -102,7 +104,7 @@ const SERVICE_WRITE_ENABLED = settingsRuntime.dataWritable;
 const CHARGE_AUTO_ENABLED = startup.automaticDcChargingEnabled;
 const BLE_SECRET = startup.dashboardBluetoothSecret;
 const WIFI_IFACE = "wlan0";
-const WIFI_HOTSPOT_SSID = startup.phoneHotspotSsid;
+let WIFI_HOTSPOT_SSID = startup.phoneHotspotSsid;
 const wifiContext: RecoverContext = {
   iface: WIFI_IFACE,
   hotspotSsid: WIFI_HOTSPOT_SSID,
@@ -413,16 +415,20 @@ const canLinkMonitor = startCanLinkMonitor(CAN_IFACE);
 // HERE rather than at module scope in src/wifi/status.ts, exactly as the line above is,
 // so importing that module in a check on a laptop does not shell out to an nmcli that
 // is not there. docs/wifi.md.
-const wifiMonitor = startWifiMonitor(WIFI_IFACE, WIFI_HOTSPOT_SSID, () => {
-  // Deliberately not awaited by the poll — see startWifiMonitor. The rejection arm is
-  // here because an escaped one ends the process and takes the CAN logging with it.
-  // ⚠️ The outcome is NOT captured here. runLadder owns it and publishes it; a
-  // refused-because-running call answers NONE, and writing that over a live outcome
-  // would make the signal disagree with the counter beside it.
-  void recoverWifi(wifiContext, RECOVER_TRIGGER.WATCHDOG).catch(error =>
-    console.warn("wifi-recover: the watchdog ladder threw:", error)
-  );
-});
+let wifiMonitor = startWifiMonitor(
+  WIFI_IFACE,
+  () => WIFI_HOTSPOT_SSID,
+  () => {
+    // Deliberately not awaited by the poll — see startWifiMonitor. The rejection arm is
+    // here because an escaped one ends the process and takes the CAN logging with it.
+    // ⚠️ The outcome is NOT captured here. runLadder owns it and publishes it; a
+    // refused-because-running call answers NONE, and writing that over a live outcome
+    // would make the signal disagree with the counter beside it.
+    void recoverWifi(wifiContext, RECOVER_TRIGGER.WATCHDOG).catch(error =>
+      console.warn("wifi-recover: the watchdog ladder threw:", error)
+    );
+  }
+);
 
 // --- Bluetooth: Connectivity Hub (torque/power, odometer, vehicle state, GPS) ---
 let bleClient: BleClient | undefined;
@@ -456,6 +462,20 @@ const settingsRestart = createSettingsRestart({
   motionBlockers: () =>
     restartMotionBlockers(sampleServiceGate(key => ({ value: latestValue(key), ageMs: ageMs(key) }))),
 });
+const networksHttp: NetworksHttpRuntime = {
+  controller: null,
+  fault: "Reading saved network changes. Try again in a moment.",
+};
+void startNetworkSettings(
+  settingsRuntime,
+  settingsRestart.generation,
+  () => restartMotionBlockers(sampleServiceGate(key => ({ value: latestValue(key), ageMs: ageMs(key) }))),
+  ssid => {
+    WIFI_HOTSPOT_SSID = ssid;
+    wifiContext.hotspotSsid = ssid;
+    settingsRuntime.active.phoneHotspotSsid = ssid;
+  }
+).then(runtime => Object.assign(networksHttp, runtime));
 const settingsHttp = {
   runtime: settingsRuntime,
   restart: settingsRestart,
@@ -537,6 +557,10 @@ const server = createServer(async (req, res) => {
     return;
   }
   if (url.pathname === "/settings" || url.pathname.startsWith("/settings/")) {
+    if (url.pathname === "/settings/networks" || url.pathname.startsWith("/settings/networks/")) {
+      await handleNetworksEndpoint(req, res, url.pathname, networksHttp);
+      return;
+    }
     await handleSettingsEndpoint(req, res, url.pathname, settingsHttp);
     return;
   }
@@ -759,6 +783,7 @@ async function shutdown(): Promise<void> {
   stopObd?.();
   canLinkMonitor.stop();
   wifiMonitor?.stop();
+  await networksHttp.controller?.close();
   void bleClient?.stop();
   void bleServer?.stop();
   // A sweep in flight is stopped rather than left to be killed with the process:

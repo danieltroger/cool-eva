@@ -25,7 +25,7 @@ export function selectSourcePaths(trackedPaths: string[]): string[] {
   return selected.sort();
 }
 
-export const RUNTIME_SCRIPTS = ["scripts/can-capture/capture.sh"] as const;
+export const RUNTIME_SCRIPTS = ["scripts/can-capture/capture.sh", "scripts/configure-network-purposes.ts"] as const;
 
 export function isRuntimeSourcePath(path: string): boolean {
   return (
