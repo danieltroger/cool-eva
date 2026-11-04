@@ -2,7 +2,7 @@
 
 Two static Cloudflare Workers serve this repository: `cool-eva-keys` serves `workers/keys/public/`; `cool-eva-dashboard` serves `public/` directly. They have separate origins. Neither runs server-side application code or holds a key, database or storage binding. Dashboard traffic goes between the phone and Pi through the existing Bluetooth tunnel.
 
-This is the first hosting stage of [#327](https://github.com/danieltroger/cool-eva/issues/327). The coordinator publishes the final addresses after the first main deployment is verified. Until the cutover is complete, the existing README/INSTALL instructions and Pages deployment remain in place. Do not interpret this document as evidence of a successful deployment or phone test.
+This is the first hosting stage of [#327](https://github.com/danieltroger/cool-eva/issues/327). The selected addresses are [the key page](https://cool-eva-keys.cool-eva.workers.dev) and [the dashboard](https://cool-eva-dashboard.cool-eva.workers.dev); the coordinator will verify their first main deployment. Until the cutover is complete, the existing README/INSTALL instructions and Pages deployment remain in place. Do not interpret this document as evidence of a successful deployment or phone test.
 
 ## Make recording keys
 
@@ -26,7 +26,7 @@ On an iPhone use **Safari**; on Android use **Chrome**. When starting in the Coo
 2. Return to the same browser tab. If the pair is still shown, you can retry its private download before confirming your backup. A browser may suffix repeated filenames, so compare the public fingerprint and keep one known matching pair. If the tab was cleared, use your saved matching files; generating again creates a different pair.
 3. Confirm the backup, download the public file, and find `ride-log-key.public.pem` as well. Join the Pi's Wi-Fi network, open its own HTTP dashboard, and use ride recording setup's Browse/Files picker to select **only `ride-log-key.public.pem`**. Never select the private file. Compare the fingerprint, apply the setting and check the active recorder status.
 
-The file-picker flow belongs to [#317](https://github.com/danieltroger/cool-eva/issues/317); its integration is outstanding until that UI exists. The HTTPS key page never POSTs to the HTTP Pi or attempts cross-origin installation. Until public-key upload is available, the manual installation route still copies the public file with SCP. [#324](https://github.com/danieltroger/cool-eva/issues/324)'s installation guide and #317 onboarding should link to the published key-page URL. No key argument is added to the installer.
+The file-picker flow belongs to [#317](https://github.com/danieltroger/cool-eva/issues/317); verification of the hosted-page handoff to Settings → Ride recording remains outstanding. The HTTPS key page never POSTs to the HTTP Pi or attempts cross-origin installation. Upload the public file through the Pi's own dashboard. [#324](https://github.com/danieltroger/cool-eva/issues/324)'s installation guide and #317 onboarding should link to the published key-page URL after hosting verification. No key argument is added to the installer.
 
 ## One-time account setup — coordinator only
 
@@ -39,12 +39,12 @@ The author lane must never access a Cloudflare account or token. Daniel authoris
 Keep both Worker names and the account subdomain stable. Changing either changes the origin and loses the dashboard's stored Bluetooth code at that address. The exact origin passed through the coordinator to #318 is:
 
 ```text
-https://cool-eva-dashboard.<subdomain>.workers.dev
+https://cool-eva-dashboard.cool-eva.workers.dev
 ```
 
 There is **no path or trailing slash**. Do not permit the key-page origin, wildcard workers.dev hosts, sibling Workers, deployment previews or the shared account GitHub Pages origin. #318 owns the committed exact-origin policy, its initial disabled state, native `cooleva://app/` allowance, legacy storage cleanup and any exposed-code rotation guidance.
 
-Use the single placeholder `<subdomain>` in this origin and the dashboard Wrangler config's origin comment until the coordinator confirms the naming decision. Wrangler derives the actual address from the Worker name and account subdomain; no placeholder is passed as a route or runtime setting.
+The selected account subdomain is `cool-eva`. Wrangler derives the addresses from each Worker name and this subdomain; the config comments record both canonical origins. The key page is `https://cool-eva-keys.cool-eva.workers.dev`. Configuring #318's BLE allow-list remains part of the separate cutover PR.
 
 ## CI and local checks
 

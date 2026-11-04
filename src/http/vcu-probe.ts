@@ -64,7 +64,7 @@ export async function handleVcuProbeEndpoint(
     return;
   }
   if (!options.enabled) {
-    respond(res, 403, options, null, "service mode is switched off on this Pi (SERVICE_MODE_ENABLED=0)");
+    respond(res, 403, options, null, "Service data is unavailable. Resolve the Settings fault before reading.");
     return;
   }
 

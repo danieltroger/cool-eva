@@ -17,7 +17,20 @@
 # §"Why the capture is compressed, and what a power cut now costs".
 set -eu
 
-DIRECTORY=/home/pi/ride-captures
+DIRECTORY=/var/lib/cool-eva/captures
+umask 022
+# Type=simple starts this unit before telemetry has finished migration. Never create
+# a conflicting destination, or write into an interrupted move. Real legacy folders
+# remain usable on refusal; the service stops this writer before its first rename.
+if [ -d /home/pi/ride-captures ] && [ ! -L /home/pi/ride-captures ]; then
+  DIRECTORY=/home/pi/ride-captures
+else
+  umask 027
+  while ! { [ -d "$DIRECTORY" ] && { grep -q '"source": "fresh"' /var/lib/cool-eva/state/settings.json 2>/dev/null || grep -q '"complete": true' /var/lib/cool-eva/state/data-move.json 2>/dev/null; }; }; do
+    echo "capture: waiting for the service to prepare the archive; inspect Settings if migration needs repair" >&2
+    sleep 5
+  done
+fi
 mkdir -p "$DIRECTORY"
 
 # All three binaries are checked HERE, before anything creates a file: `: > "$OUTPUT"`

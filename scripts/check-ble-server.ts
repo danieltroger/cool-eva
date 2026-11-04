@@ -6,6 +6,7 @@ import {
   Direction,
   FrameAssembler,
   MessageKind,
+  PROTOCOL_VERSION,
   clearEnvelope,
   concatenate,
   decodeMessage,
@@ -24,7 +25,6 @@ import {
 import { defineSignals, record } from "../src/can/signals.ts";
 import type { GattApplication, GattHandlers } from "../src/ble-server/gatt-app.ts";
 import { startBleServer } from "../src/ble-server/server.ts";
-import { HELLO_FAILURE_COOLDOWN_MS } from "../src/ble-server/session.ts";
 
 // The Pi's BLE server end to end, with a stand-in radio in place of BlueZ and a real HTTP
 // server on loopback behind the tunnel. No D-Bus, no Bluetooth, no bike.
@@ -33,7 +33,7 @@ import { HELLO_FAILURE_COOLDOWN_MS } from "../src/ble-server/session.ts";
 //
 // Run by `npm test` via scripts/run-checks.ts. docs/ble-server.md has the protocol.
 
-const SECRET = "a perfectly good secret";
+const SECRET = "0123456789abcdef".repeat(4);
 const failures: string[] = [];
 
 function expect(condition: boolean, description: string): void {
@@ -59,6 +59,7 @@ function standInRadio(): { radio: Radio; startGatt: (handlers: GattHandlers) => 
       radio.handlers = handlers;
       return {
         notify: frame => radio.delivered.push(frame),
+        isDeviceConnected: async () => true,
         stop: async () => {
           radio.stopped = true;
         },
@@ -94,7 +95,7 @@ class Phone {
     this.#nextCounter = 0;
     this.#lastInbound = -1;
     const proof = await helloProof(secret, info.serverNonce, clientNonce);
-    this.#write(clearEnvelope(encodeMessage(MessageKind.HELLO, { version: 1, clientNonce, proof })));
+    this.#write(clearEnvelope(encodeMessage(MessageKind.HELLO, { version: PROTOCOL_VERSION, clientNonce, proof })));
   }
 
   async send(kind: number, header: unknown, body?: Bytes, counter?: number): Promise<void> {
@@ -199,26 +200,18 @@ try {
     expect(outcome === "refused", "§1 a 5-character secret was accepted");
   }
 
-  // §2 A wrong secret is refused, and then the cooldown refuses even the right one.
+  // A refused attempt cannot lock the valid phone out of a fresh handshake.
   const phone = new Phone(radio);
   phone.subscribe();
-  {
-    await phone.hello("not the secret");
-    await phone.waitFor(() => phone.refusals.length >= 1, "§2 refusal of a wrong secret");
-    expect(phone.refusals[0] === "wrong secret", `§2 refusal said "${phone.refusals[0]}"`);
-    await phone.hello(SECRET);
-    await phone.waitFor(() => phone.refusals.length >= 2, "§2 cooldown refusal");
-    expect(phone.refusals[1] === "too soon after a failed attempt", `§2 second refusal said "${phone.refusals[1]}"`);
-    // A sealed request with no session is refused, never answered.
-    await phone.send(MessageKind.REQUEST, { id: 99, method: "GET", path: "/x", headers: {} });
-    await phone.waitFor(() => phone.refusals.length >= 3, "§2 refusal of a sealed message with no session");
-    expect(phone.takeKind(MessageKind.RESPONSE_HEAD).length === 0, "§2 something was answered without a session");
-  }
-
-  // §3 The right secret, after the cooldown, gets a sealed WELCOME.
-  await delay(HELLO_FAILURE_COOLDOWN_MS + 100);
+  await phone.hello("synthetic wrong key");
+  await phone.waitFor(() => phone.refusals.length === 1, "wrong-key refusal");
+  expect(phone.refusals[0] === "wrong secret", "wrong key was not refused");
+  await phone.send(MessageKind.REQUEST, { id: 99, method: "GET", path: "/x", headers: {} });
+  await delay(100);
+  await phone.drain();
+  expect(phone.takeKind(MessageKind.RESPONSE_HEAD).length === 0, "a request was answered without an owner");
   await phone.hello(SECRET);
-  await phone.waitFor(() => phone.takeKind(MessageKind.WELCOME).length === 1, "§3 WELCOME");
+  await phone.waitFor(() => phone.takeKind(MessageKind.WELCOME).length === 1, "WELCOME immediately after refusal");
 
   // §4 A request goes through the tunnel with its method, path, gate header and body; the
   // answer comes back with status and headers; hop-by-hop headers are the tunnel's own.
@@ -318,13 +311,12 @@ try {
     expect(phone.takeKind(MessageKind.STREAM).length === countAfterUnsubscribe, "§7 a patch arrived after UNSUBSCRIBE");
   }
 
-  // §8 Unsubscribing at the GATT level ends the session: the old key opens nothing more.
-  {
-    radio.handlers.onSubscribed(false);
-    await phone.send(MessageKind.REQUEST, { id: 4, method: "GET", path: "/after-end", headers: {} });
-    const refusalsBefore = phone.refusals.length;
-    await phone.waitFor(() => phone.refusals.length > refusalsBefore, "§8 refusal after the session ended");
-  }
+  // TX cleanup also discards refusals, even though no drain timer remains.
+  radio.handlers.onSubscribed(false);
+  await phone.send(MessageKind.REQUEST, { id: 4, method: "GET", path: "/after-end", headers: {} });
+  await delay(100);
+  expect(bleServer.stats().owner === null, "unsubscribe retained the owner");
+  expect(bleServer.stats().queuedBytes === 0, "unsubscribe retained outbound frames");
 } finally {
   await bleServer.stop();
   loopback.close();

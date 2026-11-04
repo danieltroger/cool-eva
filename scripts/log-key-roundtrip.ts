@@ -106,10 +106,17 @@ async function decrypt(inputPath: string, privatePath: string, outputPath: strin
   const projectDirectory = dirname(dirname(fileURLToPath(import.meta.url)));
   await promisify(execFile)(
     process.execPath,
-    ["--experimental-strip-types", join(projectDirectory, "scripts/decrypt-log.ts"), inputPath, "--out", outputPath],
+    [
+      "--experimental-strip-types",
+      join(projectDirectory, "scripts/decrypt-log.ts"),
+      inputPath,
+      "--out",
+      outputPath,
+      "--private-key",
+      privatePath,
+    ],
     {
       cwd: projectDirectory,
-      env: { ...process.env, RIDE_LOG_PRIVATE_KEY: privatePath },
       timeout: 30_000,
     }
   );

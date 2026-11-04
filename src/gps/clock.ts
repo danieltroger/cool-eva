@@ -16,7 +16,19 @@ const runCommand = promisify(execFile);
 // WHETHER to step lives in ./clock-gate.ts, with no clock reads and no child
 // processes, so it can be replayed against real captured sequences on a laptop.
 
-const SYNC_ENABLED = process.env.GPS_TIME_SYNC !== "0";
+let clockOptions: GpsClockOptions = {};
+
+export interface GpsClockOptions {
+  externalClock?: boolean;
+  wallTimeSeconds?: () => number;
+  now?: () => number;
+  userId?: () => number;
+  run?: (command: string, arguments_: string[]) => Promise<unknown>;
+}
+
+export function configureGpsClock(options: GpsClockOptions): void {
+  clockOptions = options;
+}
 
 /**
  * One gate for the process, deliberately shared by both transports. CAN 0x410 and
@@ -69,10 +81,8 @@ export type ClockTrust = "satellite-backed" | "never-synced" | "contested";
  * fix, and the review it came out of: docs/diagnostics-and-checks.md §8.5.
  */
 export function systemClockTrust(): ClockTrust {
-  if (!SYNC_ENABLED) {
-    // GPS_TIME_SYNC=0 says something else owns the clock — NTP on a bench, or a replay
-    // on a laptop. Claiming to know better than the operator who set that would refuse
-    // every waypoint on a machine whose clock is fine.
+  if (clockOptions.externalClock) {
+    // Explicit replay/test ownership must not run date on the host.
     return "satellite-backed";
   }
   if (clockContested) {
@@ -91,14 +101,18 @@ export function systemClockTrust(): ClockTrust {
  * still reaches the log — see the note on #decodeUtc in ./decode.ts.
  */
 export async function syncSystemClockFromGps(gpsEpochSeconds: number): Promise<void> {
-  if (!SYNC_ENABLED) {
+  if (clockOptions.externalClock) {
     return;
   }
 
   // Date.now() for the comparison and monotonicNow() for the elapsed time, which is
   // the split ../monotonic.ts describes: the wall clock is what we are measuring and
   // about to move, so it can only be sampled, never differenced.
-  const verdict = gate.offer(gpsEpochSeconds, Date.now() / 1000, monotonicNow());
+  const verdict = gate.offer(
+    gpsEpochSeconds,
+    (clockOptions.wallTimeSeconds ?? (() => Date.now() / 1000))(),
+    (clockOptions.now ?? monotonicNow)()
+  );
   if (!verdict.step) {
     if (verdict.reason === "in-agreement") {
       // The one verdict that confirms the clock without touching it: several readings
@@ -118,7 +132,7 @@ export async function syncSystemClockFromGps(gpsEpochSeconds: number): Promise<v
     return;
   }
 
-  if (process.getuid?.() !== 0) {
+  if ((clockOptions.userId ?? (() => process.getuid?.() ?? -1))() !== 0) {
     // The clock IS wrong — corroborated readings say so — and this process cannot fix
     // it. That is a contradiction that will stand for the whole session, so it must not
     // leave an earlier confirmation looking current.
@@ -136,7 +150,7 @@ export async function syncSystemClockFromGps(gpsEpochSeconds: number): Promise<v
   try {
     // `date -u -s @<epoch>` rather than `timedatectl set-time`, which refuses
     // outright while NTP is enabled.
-    await runCommand("date", ["-u", "-s", `@${Math.round(verdict.epochSeconds)}`]);
+    await (clockOptions.run ?? runCommand)("date", ["-u", "-s", `@${Math.round(verdict.epochSeconds)}`]);
     // Marked only after `date` returned. Until it does, the clock is still whatever it
     // was, and a verdict asking for a step is evidence against it rather than for it.
     clockConfirmed = true;

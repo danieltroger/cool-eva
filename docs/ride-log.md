@@ -6,6 +6,8 @@ The [browser key setup](hosted-pages.md#make-recording-keys) generates compatibl
 
 > The following sections preserve the former README at commit `58c7eba` (2026-11-03), including dated measurements and limitations. For first installation, use the [current README](../README.md). Older validation/status claims are historical; the existing subsystem findings and current code take precedence.
 
+The menu seals the current buffer through a protected POST before downloading. Direct `GET /dl` returns already sealed segments without a disk write.
+
 The sealed ride log can be downloaded from `http://<pi>/dl` — short enough to type on a phone, and ~10x smaller than the old SQLite download. What crosses the wire is ciphertext: without the laptop's private key those bytes are noise. That is a claim about the **bytes**, not about the **transfer** — `/dl` is unauthenticated plain HTTP, so anyone on that network can pull the whole log and keep the ciphertext against the day the key leaks, and anyone in the middle can truncate it, because segments are sealed one by one and nothing signs the sequence. See [What this does and doesn't hide](#what-this-does-and-doesnt-hide). Decrypt it on the laptop (see below) to get a `.db` for Grafana.
 
 ## Encrypted ride log
@@ -17,12 +19,12 @@ Set it up once, on the laptop:
 ```bash
 node --experimental-strip-types scripts/generate-log-key.ts   # writes both keys
 # back the PRIVATE key up (password manager) — it is the only thing that can ever read the logs
-scp ride-log-key.public.pem pi@cool-eva.local:/home/pi/cool-eva/
+# after service startup, choose the public file in Settings → Ride recording
 ```
 
-The pair is generated on the laptop and never on the Pi, deliberately: the bike is supposed to hold a public key only, and a Pi that generated the pair would have had the private half on the SD card — which is exactly what the sealed log exists to make worthless. `scripts/setup-service.ts` checks for the key and prints these commands with your hostname filled in if it's missing.
+The pair is generated on the laptop and never on the Pi, deliberately: the bike is supposed to hold a public key only, and a Pi that generated the pair would have had the private half on the SD card — which is exactly what the sealed log exists to make worthless. The dashboard and setup script report recording as unconfigured until a public key is supplied.
 
-Restart the service; it logs `ride-log: encrypting to …` once it finds the key. Sealed segments land in `ride-logs/*.celog`. To read them back:
+Save the public key in Settings → Ride recording and explicitly Restart. Confirm its active fingerprint and Recording status. New sealed segments default to `/var/lib/cool-eva/ride-logs/*.celog`; an existing explicit external path is retained. To read them back:
 
 ```bash
 # a /dl download is a single file; ride-logs/ off the Pi is a directory — both work
@@ -30,8 +32,7 @@ node --experimental-strip-types scripts/decrypt-log.ts cool-eva-2026-08-01.celog
 node --experimental-strip-types scripts/decrypt-log.ts ride-logs/ --out rides.db
 
 # the key is looked up relative to the CWD, so from anywhere else:
-RIDE_LOG_PRIVATE_KEY=~/Documents/cool-eva/ride-log-key.private.pem \
-  node --experimental-strip-types scripts/decrypt-log.ts ~/Downloads/cool-eva-2026-08-01.celog
+node --experimental-strip-types scripts/decrypt-log.ts --private-key ~/Documents/cool-eva/ride-log-key.private.pem ~/Downloads/cool-eva-2026-08-01.celog
 ```
 
 That rebuilds an ordinary SQLite file, so Grafana and the dashboards work against it — with one exception since the route map's track was materialised: its map panel and its "GPS points mapped" tile read a `route_track` table that only the import step builds, and both show an error badge until `scripts/import-ride-log.ts --materialise-only <db>` has been run against the file. ⚠️ And a `--force` decrypt into a database that already has that table leaves it **stale** rather than absent, which looks like nothing at all — `docs/route-map.md` §"If the table is missing" has the measurement.

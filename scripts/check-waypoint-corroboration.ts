@@ -7,7 +7,8 @@
 // which time a corrupt first fix has been superseded — so with the clock gate in the way
 // the corroboration rule is unreachable and every assertion below would pass on a build
 // that had none. GPS_TIME_SYNC=0 is the configuration in which the hole is open.
-process.env.GPS_TIME_SYNC = "0";
+const { configureGpsClock } = await import("../src/gps/clock.ts");
+configureGpsClock({ externalClock: true });
 
 import { boundsFor } from "../public/lib/bounds.js";
 import { WAYPOINT_REFUSAL_TEXT } from "../public/lib/announce.js";

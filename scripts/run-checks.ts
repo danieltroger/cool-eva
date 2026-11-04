@@ -2,8 +2,8 @@ import { spawn } from "child_process";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
-// `npm test` — runs every self-check that needs nothing but Node, in order, and exits
-// non-zero if any of them does.
+// `npm test` runs the self-checks without hardware, in order. Bundle shell fixtures
+// also need POSIX sh, jq and tar/zstd; systemd recovery has a separate disposable CI job.
 //
 // A runner, not a framework: the checks predate it and are top-level
 // scripts that report failure with `process.exit(1)`, so each gets its OWN PROCESS.
@@ -68,6 +68,36 @@ const CHECKS: SelfCheck[] = [
       "and a whole sweep against the simulated micros: the poller parked for those 25 rows and none of the other " +
       "277, a refused park ending the block after one attempt with nothing on the wire, and a gate that closes " +
       "while the poller parks stopping the read",
+  },
+  {
+    script: "scripts/check-bundle-admission.ts",
+    covers:
+      "bundle queueing through the shared settings revision and bus restart reservation, busy/motion/Bluetooth handover refusal, duplicate admission and cleanup without a second app restart",
+  },
+  {
+    script: "scripts/check-bundle-stop.ts",
+    covers:
+      "stop-time localhost shared reservation; movement, busy bus, stale revision and Bluetooth-key refusal leave the app running; verified download reuse and reservation held through SIGTERM",
+  },
+  {
+    script: "scripts/check-bundle-boundaries.ts",
+    covers:
+      "valid-checksum archive link/traversal refusals and configured data paths blocking release cleanup before any data deletion",
+  },
+  {
+    script: "scripts/check-bundle-recovery.ts",
+    covers:
+      "shell updater interrupted trials, explicit rollback targets, restart causes, late settings compatibility, repeat recovery and locally edited releases; real systemd behavior has its own Linux CI lane",
+  },
+  {
+    script: "scripts/check-bundle-update.ts",
+    covers:
+      "bundle download and checksum gate, promotion, failed trial, next update, edit archive, migration gate and helper replacement without Git or npm; commands are fixture adapters and the archive is real",
+  },
+  {
+    script: "scripts/check-bundle-runtime.ts",
+    covers:
+      "release metadata, service-owned migration health, CSRF guards, fixed updater unit, OS drift text and dashboard polling through a release restart",
   },
   {
     script: "scripts/check-can-adapter-rebind.ts",
@@ -167,13 +197,22 @@ const CHECKS: SelfCheck[] = [
   {
     script: "scripts/check-ble-server.ts",
     covers:
-      "the Pi's BLE GATT server end to end, with a stand-in radio and a real loopback HTTP server: that a short " +
-      "secret is refused at startup, a wrong secret is refused and arms the cooldown that then refuses even the " +
-      "right one, a sealed message with no session is refused and never answered, the right secret gets a sealed " +
-      "WELCOME, a tunnelled POST reaches the endpoint with its method, path, body and X-Cool-Eva gate header while " +
-      "Host is the tunnel's own, a 150 kB incompressible body arrives whole and in order through the paced queue, " +
-      "a replayed counter is dropped, SUBSCRIBE answers with a snapshot and coalesces ten changes into fewer " +
-      "patches, UNSUBSCRIBE stops them, and a GATT unsubscribe ends the session",
+      "the real BLE server with a stand-in radio and loopback: generated-key startup, immediate recovery after a wrong proof, unchanged HTTP header/body gates, whole paced downloads, replay rejection, telemetry coalescing and unsubscribe cleanup",
+  },
+  {
+    script: "scripts/check-ble-hardening.ts",
+    covers:
+      "stateless pre-auth framing, no refusal backlog, proof-before-owner-read, per-device ownership/MTU, zero-payload storage guard, stale handshake commits, independent admission/output/seal budgets and suppression accounting",
+  },
+  {
+    script: "scripts/check-ble-client.ts",
+    covers:
+      "the actual browser/server link: exact origins and native scheme, normalized CSPRNG keys, production HELLO replay, advisory recovery without re-entering the key, same-radio service restart and fresh read/write chains, authenticated download liveness and request inactivity cleanup without POST replay",
+  },
+  {
+    script: "scripts/check-ble-gatt.ts",
+    covers:
+      "actual D-Bus watcher and advertisement exports behind a fake bus: trusted device/removal/adapter/daemon signals, registration recovery, bounded read-only owner liveness and no advertised name",
   },
   {
     script: "scripts/check-ble-wire.ts",
@@ -1016,6 +1055,72 @@ const CHECKS: SelfCheck[] = [
       "assertion still passing",
   },
   {
+    script: "scripts/check-capture-pruner.ts",
+    covers:
+      "the fixed non-interactive capture deletion helper: no arguments, capture-only basenames, " +
+      "current-boot and symlink refusal, protected root-owned directories, exact sudoers rule " +
+      "and the SSH client's legacy/new-layout selection",
+  },
+  {
+    script: "scripts/check-settings-storage.ts",
+    covers:
+      "literal effective-environment migration, private settings modes and serial writers, " +
+      "learned hub state without pending/revision churn, untouched future/corrupt settings, " +
+      "additive-field preservation, concurrent atomic replacements and selective orphan cleanup",
+  },
+  {
+    script: "scripts/check-settings-first-boot.ts",
+    covers:
+      "injected Pi first-boot privileges/probe/order, partial recording pause, refusal archive modes, field-level migration and marker recovery",
+  },
+  {
+    script: "scripts/check-mutation-guard.ts",
+    covers: "the real HTTP CSRF guard, cached-dashboard reload instruction and non-mutating spoken Siri compatibility",
+  },
+  {
+    script: "scripts/check-settings-cutover.ts",
+    covers: "legacy instruction removal, unit cutover ordering, CSRF waypoint client and GPS command seams",
+  },
+  {
+    script: "scripts/check-settings-discovery.ts",
+    covers:
+      "bounded read-only candidate scanning, handshake/single-flight refusal and cleanup without pairing or resets",
+  },
+  {
+    script: "scripts/check-settings-http.ts",
+    covers:
+      "settings redaction, strict HTTP mutations, pending/active state, canonical public keys and Bluetooth key handover",
+  },
+  {
+    script: "scripts/check-settings-phone.ts",
+    covers:
+      "phone drafts scoped to the confirmed Pi, stale edit CAS, active/learned revision semantics and disarm on process changes",
+  },
+  {
+    script: "scripts/check-settings-restart.ts",
+    covers:
+      "revision/bus reservation, bounded BLE drain and restart expiry, generation idempotence and existing motion rules",
+  },
+  {
+    script: "scripts/check-settings-runtime.ts",
+    covers:
+      "fresh and migrated service starts, durable pre-move capture, interrupted startup, degraded faults, M8 and M12",
+  },
+  {
+    script: "scripts/check-settings-data-move.ts",
+    covers:
+      "the single journalled move of default ride/service/wifi/capture data, interruption at " +
+      "every persisted boundary, compatibility links, archive-group access, untouched explicit " +
+      "paths/conflicting destinations, public-key retry and canonical migration precedence",
+  },
+  {
+    script: "scripts/check-settings-migration-guards.ts",
+    covers:
+      "archive symlink/hard-link refusal before every rename, untouched sources and journal on interrupted attempts, " +
+      "named migration faults, shared logger/import parsing of newline/BOM/text-prefixed public keys, " +
+      "and refusal of foreign or released locks before journal/data writes",
+  },
+  {
     script: "scripts/check-power-cut-durability.ts",
     covers:
       "the four things the service writes, against the power cut this Pi takes every ride: that appendDurably " +
@@ -1121,6 +1226,12 @@ const CHECKS: SelfCheck[] = [
       "recovered with nothing looking at it, which is the exact shape that issue was filed for, and is now refused; " +
       "an ordinary 19 m step at the same cadence sits beside it, or the assertion is satisfied by a rule that " +
       "refuses 93 % of this hub's pairs",
+  },
+  {
+    script: "scripts/check-release-bundle.ts",
+    covers:
+      "pinned release inputs, tracked-source boundaries, private data and escaping symlinks, ARM64 ELF rejection, " +
+      "the shell-readable manifest and the extracted file inventory; native builds and loads run in ARM64 release CI",
   },
   {
     script: "scripts/check-waypoint-endpoint.ts",

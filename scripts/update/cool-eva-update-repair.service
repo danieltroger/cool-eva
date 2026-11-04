@@ -1,0 +1,9 @@
+[Unit]
+Description=Resume Cool Eva after an interrupted updater job
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/cool-eva-update repair
+TimeoutStartSec=40min
+User=root
+UMask=0077

@@ -604,6 +604,8 @@ The checks predate the runner and were written as scripts, because that is what 
 
 Only checks that pass or fail on their own, with no bike and no local-only files, belong there.
 
+Bundle updater fixtures additionally require POSIX sh, jq and tar/zstd on the development machine; CI installs jq and zstd explicitly. They adapt systemctl/downloads and execute the shell state machine without touching host services. `check-updater-systemd.ts` runs separately, as root on a disposable Linux Actions runner, to test the actual start limiter, OnFailure and shared lock. See [bundle-updater.md](bundle-updater.md) for its limits.
+
 ⚠️ **And nothing in the suite reads prose.** `npm test`, `tsc` and `prettier --check` all passed, green, over a `docs/` edit that had destroyed a numbered list — stranding one fact mid-sentence and re-attaching another's conclusion to the wrong paragraph, in a section headed "do not delete this before reading it". Prettier reformats Markdown; it does not know what the text was supposed to say. So "gates green" is evidence about the code, and says nothing at all about a documentation change: check those by reading the rendered file, or by grepping for the structure you expect.
 
 | script | why it is out |

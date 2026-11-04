@@ -1,4 +1,5 @@
-import { mkdir, readFile } from "fs/promises";
+import { ensureArchiveDirectory } from "../storage/archive-access.ts";
+import { readFile } from "fs/promises";
 import { replaceFileDurably } from "../storage/durable.ts";
 import { join } from "path";
 import { decodeFreezeFrameResponse } from "../diagnostics/freeze-frame.ts";
@@ -135,7 +136,7 @@ export async function writeLifetimeRead(
 ): Promise<{ stored: boolean; reason: string; answered: number }> {
   const answered = answeredCount(read.replies);
   const path = join(directory, LATEST_FILE);
-  await mkdir(directory, { recursive: true });
+  await ensureArchiveDirectory(directory);
   await archive(directory, read);
   const previous = await loadStoredRead(directory);
   const previousAnswered = previous === null ? 0 : answeredCount(previous.replies);

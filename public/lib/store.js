@@ -6,7 +6,7 @@ import { ringFor } from "./ring.js";
 import { monotonicNow } from "./clock.js";
 import { observeAndPublish } from "./pack-resistance-live.js";
 import { POLL_MS, createConnection } from "./connection.js";
-import { BLE_MODE, openStream } from "./ble-link.js";
+import { BLE_MODE, openStream, abandonSilentSession } from "./ble-link.js";
 
 /** @typedef {import("../../src/can/signals.ts").LiveValue} LiveValue */
 /** @typedef {import("../../src/ws.ts").DashboardMessage} DashboardMessage */
@@ -44,6 +44,7 @@ export const chartTick = van.state(0);
 
 /** Server clock from the last message, so staleness is judged the same way it is logged. */
 export const serverTime = van.state(0);
+export const systemStatus = van.state(/** @type {import("../../src/ws.ts").DashboardSystemStatus | null} */ (null));
 
 /** @type {Map<string, import("../vendor/van-1.6.1.js").State<LiveValue | null>>} */
 const states = new Map();
@@ -218,6 +219,7 @@ function isStaleWith(reading, now, maxAgeMs, linkIsLive) {
  */
 export function connect() {
   const link = createConnection({
+    silence: BLE_MODE ? abandonSilentSession : undefined,
     hidden: () => document.hidden,
     now: monotonicNow,
     report: status => {
@@ -308,6 +310,9 @@ const CHART_TICK_MS = 500;
  */
 export function apply(message) {
   serverTime.val = message.ts;
+  if (message.system) {
+    systemStatus.val = message.system;
+  }
   let added = false;
   // Readings that survive the plausibility gate below, offered to the pack-resistance
   // buffer as one frame. It pairs pack_v with pack_a only when both are in here, which

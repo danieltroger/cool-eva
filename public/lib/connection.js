@@ -76,6 +76,7 @@ export const POLL_MS = 1000;
  * @property {() => boolean} hidden `document.hidden`
  * @property {() => number} now monotonic milliseconds — durations only, see lib/clock.js
  * @property {(status: LinkStatus) => void} report where the header's dot gets its colour
+ * @property {(() => boolean)} [silence] BLE can retain a session while authenticated downloads are arriving
  */
 
 /**
@@ -244,6 +245,7 @@ function tick(state) {
     return;
   }
   if (state.socket !== null && state.lastTrafficAt !== null && now - state.lastTrafficAt > SILENCE_LIMIT_MS) {
+    if (state.effects.silence && !state.effects.silence()) return;
     // OPEN, and carrying nothing. The heartbeat in ws.ts means this cannot be a quiet
     // bus, so the socket is dead however healthy it claims to be — a hotspot dropping
     // out reaches this state with no visibility change to announce it.

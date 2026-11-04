@@ -17,7 +17,7 @@ export function serviceRefusal(state) {
     return null;
   }
   if (!state.enabled) {
-    return "🔒  Reads are off on this Pi (SERVICE_MODE_ENABLED=0)";
+    return "Service data is unavailable. Resolve the Settings fault before reading.";
   }
   if (!state.gate.safe) {
     // Deliberately not repeating the reasons: they are in full above the buttons, and a

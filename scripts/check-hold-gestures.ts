@@ -56,7 +56,8 @@ import { DOUBLE_CLICK_WINDOW_MS } from "../public/lib/gestures.js";
 // import is dynamic. With it unset, systemClockTrust() answers "never-synced" in a
 // process that has no GPS, and every waypoint below would be refused for that one reason
 // — hiding the three gates this file is actually here to check.
-process.env.GPS_TIME_SYNC = "0";
+const { configureGpsClock } = await import("../src/gps/clock.ts");
+configureGpsClock({ externalClock: true });
 const {
   WAYPOINT_GESTURE_BUTTON,
   WAYPOINT_HOLD_MS,

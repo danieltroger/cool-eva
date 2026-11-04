@@ -1,0 +1,27 @@
+{
+  "format": 1,
+  "node": {
+    "version": "24.22.2",
+    "sha256": "eb187837a2230d4047161ac0be008584e16b46f726e9c9490ee35dc6b17d9ba8"
+  },
+  "builder": {
+    "image": "debian:trixie-slim@sha256:1470991b497d26788dc4d6f438bf5690c6ba0d499235d237e55f4b43caea7a75",
+    "aptSnapshot": "20261027T000000Z"
+  },
+  "testedImage": {
+    "url": "https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2026-10-06/2026-10-06-raspios-trixie-arm64-lite.img.xz",
+    "sha256": "483db18a48da399b5b7022ffae9a07bc6d99daab30e593aedac09b69ff422843",
+    "packagesSha256": "39b54efe2cce2912f3e1d0ccee9a0f384813d7b5254f82b31ec5fa6ce1a739e4"
+  },
+  "runtimeLibraries": [
+    "ld-linux-aarch64.so.1",
+    "libatomic.so.1",
+    "libc.so.6",
+    "libdl.so.2",
+    "libgcc_s.so.1",
+    "libm.so.6",
+    "libpthread.so.0",
+    "librt.so.1",
+    "libstdc++.so.6"
+  ]
+}

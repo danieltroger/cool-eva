@@ -3,6 +3,8 @@
 import van from "../vendor/van-1.6.1.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 import { request } from "../lib/transport.js";
+import { followUpdate } from "../lib/update-progress.js";
+import { restartRequest, acceptSettings, settingsConfirmed, settingsError, settings } from "../lib/settings.js";
 
 const { button, div } = van.tags;
 
@@ -46,28 +48,30 @@ const canRestarting = van.state(false);
  */
 export function CanRestartButton() {
   return div(
-    button(
-      {
-        class: "action",
-        disabled: canRestarting,
-        // One held Enter must not arm and then fire. See ../lib/arming.js.
-        onkeydown: refuseKeyRepeat,
-        onclick: () => {
-          if (armed.val !== CAN_RESTART_KEY) {
-            arm(CAN_RESTART_KEY);
-            return;
-          }
-          if (!armDwellElapsed()) {
-            return;
-          }
-          armed.val = "";
-          void performCanRestart();
+    { class: "settings-action" },
+    div(
+      { class: "settings-row" },
+      div({ class: "settings-note" }, "CAN link goes down and back up. Other CAN sockets close."),
+      button(
+        {
+          class: "settings-button",
+          disabled: canRestarting,
+          // One held Enter must not arm and then fire. See ../lib/arming.js.
+          onkeydown: refuseKeyRepeat,
+          onclick: () => {
+            if (armed.val !== CAN_RESTART_KEY) {
+              arm(CAN_RESTART_KEY);
+              return;
+            }
+            if (!armDwellElapsed()) {
+              return;
+            }
+            armed.val = "";
+            void performCanRestart();
+          },
         },
-      },
-      () =>
-        armed.val === CAN_RESTART_KEY
-          ? "⚠️  Tap again — the link goes down and back up, and any other CAN socket dies with it"
-          : "🔄  CAN bus restart"
+        () => (armed.val === CAN_RESTART_KEY ? "Confirm restart" : "Restart CAN")
+      )
     ),
     () =>
       canRestartMessage.val
@@ -81,11 +85,9 @@ const updateFailed = van.state(false);
 const updating = van.state(false);
 
 /**
- * Pulls the latest code on the Pi. POSTs to /update, which runs `git pull` and returns
- * git's own output verbatim — that is the useful thing to show, since "Already up to
- * date." and a summary of what changed are both worth reading. It then restarts the
- * service so the new code takes effect, which drops this WebSocket; the store reconnects
- * on its own once the service is back.
+ * Checkouts return Git's own output. Bundle installs return a queued job sequence,
+ * then report download/trial/rollback results through update-progress.js. A queued
+ * job is not a successful update; the store reconnects after the service restarts.
  *
  * The note is styled from `ok`, not just filled from `message`: a failed pull used to
  * render in the same grey as a successful one, which is the bug style.css argues against
@@ -93,24 +95,32 @@ const updating = van.state(false);
  */
 export function UpdateButton() {
   return div(
-    button(
-      {
-        class: "action",
-        disabled: updating,
-        onkeydown: refuseKeyRepeat,
-        onclick: () => {
-          if (armed.val !== UPDATE_KEY) {
-            arm(UPDATE_KEY);
-            return;
-          }
-          if (!armDwellElapsed()) {
-            return;
-          }
-          armed.val = "";
-          void performUpdate();
+    { class: "settings-action" },
+    div(
+      { class: "settings-row" },
+      div(
+        { class: "settings-note" },
+        "Install new code, then restart. Readings and recording pause; Wi-Fi or Bluetooth may disconnect."
+      ),
+      button(
+        {
+          class: "settings-button",
+          disabled: () => updating.val || !settingsConfirmed.val || !!settingsError.val,
+          onkeydown: refuseKeyRepeat,
+          onclick: () => {
+            if (armed.val !== UPDATE_KEY) {
+              arm(UPDATE_KEY);
+              return;
+            }
+            if (!armDwellElapsed()) {
+              return;
+            }
+            armed.val = "";
+            void performUpdate();
+          },
         },
-      },
-      () => (armed.val === UPDATE_KEY ? "⚠️  Tap again — pulls new code and restarts the service" : "⬆  Update")
+        () => (armed.val === UPDATE_KEY ? "Confirm update" : "Update")
+      )
     ),
     () =>
       updateMessage.val
@@ -151,11 +161,32 @@ async function performUpdate() {
   updating.val = true;
   updateFailed.val = false;
   updateMessage.val = "updating…";
+  const requestedFrom = settings.rawVal;
   try {
-    const response = await request("/update", { method: "POST", headers: { "X-Cool-Eva": "update" } });
+    const response = await request("/update", {
+      method: "POST",
+      headers: { "X-Cool-Eva": "update" },
+      body: JSON.stringify(restartRequest()),
+    });
     const reply = /** @type {UpdateReply} */ (await response.json());
+    if (
+      settings.rawVal?.instanceId !== requestedFrom?.instanceId ||
+      settings.rawVal?.processGeneration !== requestedFrom?.processGeneration
+    ) {
+      updateMessage.val = "The connection or process changed. Check its running version before another update.";
+      return;
+    }
+    if (reply.settings && settingsConfirmed.rawVal) {
+      acceptSettings(reply.settings);
+    }
     updateMessage.val = reply.message;
     updateFailed.val = !reply.ok;
+    if (reply.ok && reply.sequence !== undefined) {
+      await followUpdate(reply.sequence, status => {
+        updateMessage.val = status.message;
+        updateFailed.val = !status.ok;
+      });
+    }
   } catch (error) {
     console.warn("update: request failed", error);
     updateMessage.val = "Update request failed — is the Pi reachable?";

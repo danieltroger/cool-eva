@@ -503,8 +503,16 @@ async function decryptLog(directory: string, privateKeyPath: string, outPath: st
   try {
     const result = await execFileAsync(
       process.execPath,
-      ["--experimental-strip-types", "scripts/decrypt-log.ts", directory, "--out", outPath],
-      { env: { ...process.env, RIDE_LOG_PRIVATE_KEY: privateKeyPath }, cwd: repoRoot }
+      [
+        "--experimental-strip-types",
+        "scripts/decrypt-log.ts",
+        directory,
+        "--out",
+        outPath,
+        "--private-key",
+        privateKeyPath,
+      ],
+      { cwd: repoRoot }
     );
     stdout = result.stdout;
     stderr = result.stderr;

@@ -413,6 +413,20 @@ export function serviceGateSignalKeys(): string[] {
   return GATE_SIGNAL_KEYS;
 }
 
+export function restartMotionBlockers(readings: ServiceGateReadings): string[] {
+  return RULES.filter(rule => {
+    if (rule.whileCharging === "excuse-unsafe") return false;
+    const sample = readings[rule.key];
+    return (
+      sample?.value !== null &&
+      sample?.value !== undefined &&
+      sample.ageMs !== null &&
+      sample.ageMs <= rule.maxAgeMs &&
+      !rule.isSafe(sample.value)
+    );
+  }).map(rule => rule.requirement);
+}
+
 // Derived once at import, from the tables, because they cannot change afterwards — 16× the
 // work of the old hand-kept list when it was rebuilt on every call, and this runs on two
 // 200 ms watchdogs. Still derived, which is the whole point of the note above; just once.

@@ -1,0 +1,12 @@
+[Unit]
+Description=Download and trial a Cool Eva release
+After=network-online.target
+Wants=network-online.target
+OnFailure=cool-eva-update-repair.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/cool-eva-update update
+TimeoutStartSec=30min
+User=root
+UMask=0077

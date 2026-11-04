@@ -1,4 +1,5 @@
-import { mkdir, readFile, rm } from "fs/promises";
+import { ensureArchiveDirectory } from "../storage/archive-access.ts";
+import { readFile, rm } from "fs/promises";
 import { join } from "path";
 import { openDeferredAppend, replaceFileDurably, syncDirectory } from "../storage/durable.ts";
 import {
@@ -111,7 +112,7 @@ export async function loadPartialRows(directory: string): Promise<Map<number, Vc
  * shutdown — closes it.
  */
 export async function openPartialSweepLog(directory: string): Promise<PartialSweepLog> {
-  await mkdir(directory, { recursive: true });
+  await ensureArchiveDirectory(directory);
   // ../storage/durable.ts rather than an open() here: it flushes the directory entry on the
   // call that creates the file, closes the handle if that flush throws, and flushes the rows
   // once at close(). Hand-rolling those three leaked the handle on the middle one.
@@ -214,7 +215,7 @@ export async function loadLatestSweep(directory: string): Promise<LatestSweep | 
  * than leaving no trace at all. `latest.json` follows rule 5.
  */
 export async function writeSnapshot(directory: string, swept: VcuParameterSnapshot): Promise<void> {
-  await mkdir(directory, { recursive: true });
+  await ensureArchiveDirectory(directory);
   // Rule 4, and it happens before EVERYTHING else in this function: the archive, the
   // latest file, the diff and the log lines all describe the same rows, so they all have
   // to describe them under the same names.

@@ -1,7 +1,9 @@
 import { spawn } from "child_process";
-import { open, rename, rm } from "fs/promises";
-import { dirname } from "path";
+import { randomUUID } from "crypto";
+import { open, rename, rm, stat } from "fs/promises";
+import { dirname, join } from "path";
 import type { FileHandle } from "fs/promises";
+import { managedArchiveFileMode } from "./archive-access.ts";
 
 // Getting bytes onto the SD card, on a Pi that loses power with the bike every time.
 //
@@ -92,12 +94,25 @@ export async function openDeferredAppend(path: string): Promise<DeferredAppend> 
  * partial file. For JSON that is the difference between an old answer and no answer —
  * a half-written snapshot does not parse, so in-place truncation costs the whole file.
  */
-export async function replaceFileDurably(path: string, data: string): Promise<void> {
-  const temporaryPath = `${path}.tmp`;
+export async function replaceFileDurably(path: string, data: string, options: ReplacementOptions = {}): Promise<void> {
+  const temporaryPath = join(dirname(path), `.cool-eva-replace-${randomUUID()}.tmp`);
+  const existing = await replacementMetadata(path);
+  let temporaryCreated = false;
   try {
-    const handle = await open(temporaryPath, "w");
+    const handle = await open(temporaryPath, "wx", 0o600);
+    temporaryCreated = true;
 
     try {
+      const created = await handle.stat();
+      const userId = options.userId ?? existing?.uid ?? created.uid;
+      const groupId = options.groupId ?? existing?.gid ?? created.gid;
+      if (created.uid !== userId || created.gid !== groupId) {
+        await handle.chown(userId, groupId);
+      }
+      // The handle mode also fixes replacements of existing files; open's mode only affects creation.
+      await handle.chmod(
+        options.mode ?? managedArchiveFileMode(path) ?? (existing ? existing.mode & 0o777 : 0o666 & ~process.umask())
+      );
       await handle.writeFile(data);
       await flush(handle, temporaryPath);
     } finally {
@@ -110,9 +125,28 @@ export async function replaceFileDurably(path: string, data: string): Promise<vo
     // flush too, not just the write. writeSnapshot's archive name is unique per sweep, so an
     // orphan there is overwritten by nothing and would accumulate for the life of a card
     // whose free space may be why the write failed. A power cut can still leave one behind.
-    await rm(temporaryPath, { force: true }).catch((removeError: unknown) => {
-      console.warn(`durable: could not remove ${temporaryPath} after a failed write:`, removeError);
-    });
+    if (temporaryCreated) {
+      await rm(temporaryPath, { force: true }).catch((removeError: unknown) => {
+        console.warn(`durable: could not remove ${temporaryPath} after a failed write:`, removeError);
+      });
+    }
+    throw error;
+  }
+}
+
+export interface ReplacementOptions {
+  mode?: number;
+  userId?: number;
+  groupId?: number;
+}
+
+async function replacementMetadata(path: string) {
+  try {
+    return await stat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
     throw error;
   }
 }
@@ -217,11 +251,14 @@ async function openForAppend(path: string): Promise<FileHandle> {
     handle = await open(path, "a");
     created = false;
   }
-  if (!created) {
-    return handle;
-  }
   try {
-    await syncDirectory(dirname(path));
+    const mode = managedArchiveFileMode(path);
+    if (mode !== undefined) {
+      await handle.chmod(mode);
+    }
+    if (created) {
+      await syncDirectory(dirname(path));
+    }
   } catch (error) {
     await closeReportingOnly(handle, path);
     throw error;

@@ -1,0 +1,50 @@
+name: ARM64 release bundle
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/release-bundle.yml
+      - scripts/release/**
+      - scripts/check-release-bundle.ts
+      - scripts/update/**
+      - src/release/**
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Bundle channel (main or a branch channel, e.g. branch-can-fix)
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.22.2
+      - name: Check bundle boundaries and pinned inputs
+        run: node --experimental-strip-types scripts/check-release-bundle.ts
+      - name: Build and load the complete ARM64 bundle
+        env:
+          BUNDLE_CHANNEL: ${{ inputs.channel || 'main' }}
+          BUNDLE_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: node --experimental-strip-types scripts/release/build.ts dist/release
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bundle-arm64-${{ github.sha }}
+          path: |
+            dist/release/bundle.tar.zst
+            dist/release/manifest.txt
+            dist/release/release.json
+            dist/release/tested-os-packages.txt
+          if-no-files-found: error
+          retention-days: 14

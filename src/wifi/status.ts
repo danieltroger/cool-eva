@@ -74,8 +74,8 @@ export function startWifiMonitor(
     // `wifi_hotspot_seen` has no meaning and the fault dump can never fire — the radio's
     // own state is still recorded. docs/wifi.md §2.
     console.warn(
-      "wifi: WIFI_HOTSPOT_SSID is not set, so the hotspot half is OFF — no wifi_hotspot_seen, " +
-        "no wifi_network and no fault dumps. Set it in /etc/default/cool-eva and restart."
+      "wifi: the phone hotspot name is not configured, so the hotspot half is OFF — no wifi_hotspot_seen, " +
+        "no wifi_network and no fault dumps. Set it in Settings → Connections and restart."
     );
   }
 
@@ -213,8 +213,8 @@ export function describeState(
     // No SSID to compare against, so every sentence below that mentions the hotspot
     // would be inventing one. Say only what the device state actually proves.
     return linkState === WIFI_LINK_STATE.CONNECTED
-      ? "connected (no WIFI_HOTSPOT_SSID set)"
-      : `not connected (no WIFI_HOTSPOT_SSID set)`;
+      ? "connected (hotspot name not configured in Settings → Connections)"
+      : `not connected (hotspot name not configured in Settings → Connections)`;
   }
   if (linkState === WIFI_LINK_STATE.CONNECTED) {
     const where = reading?.activeSsid ?? null;
