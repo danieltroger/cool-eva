@@ -44,11 +44,11 @@ exit 1'`,
     );
     assert.match(pid.trim(), /^\d+$/, "Kill SSH only after real apt belongs to the independent OS unit");
     assert(answered);
+    console.log(`Killing the SSH client while real apt PID ${pid.trim()} runs under systemd.`);
     assert(child.kill("SIGKILL"));
     await exited;
-    await writeFile(log, output + `\nSSH client killed while detached apt PID ${pid.trim()} was running.\n`, {
-      mode: 0o600,
-    });
+    output += `\nSSH client killed while detached apt PID ${pid.trim()} was running.\n`;
+    await writeFile(log, output, { mode: 0o600 });
     const result = await sshCommand(
       guest,
       `sudo sh -eu -c '
@@ -66,6 +66,7 @@ exit 1'`,
     assert.match(result, /OS_JOB_SURVIVED_SSH/);
     console.log("Killed SSH during real apt; the independent OS job finished successfully. Resuming the same line.");
   } finally {
+    await writeFile(log, output, { mode: 0o600 });
     if (child.exitCode === null && child.signalCode === null) {
       child.kill("SIGKILL");
       await exited;

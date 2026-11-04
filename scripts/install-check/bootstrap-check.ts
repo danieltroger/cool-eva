@@ -59,6 +59,9 @@ export async function checkBootstrap(directory: string, repository: string): Pro
       `#!/bin/sh
 printf 'systemctl %s\\n' "$*" >> "$UPDATE_FIXTURE/commands.txt"
 case "$1" in
+  reset-failed)
+    if [ "$(cat "$UPDATE_FIXTURE/os-state")" != failed ]; then echo 'Unit not loaded' >&2; exit 1; fi
+    ;;
   show) cat "$UPDATE_FIXTURE/os-state" ;;
   start)
     if /bin/sh "$UPDATE_FIXTURE/cache/os-catch-up.sh"; then echo active; else echo failed; fi > "$UPDATE_FIXTURE/os-state"

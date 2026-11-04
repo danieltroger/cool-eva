@@ -137,7 +137,9 @@ OS_UNIT
     case "$os_state" in
         activating|active) note 'Resuming the existing OS job; keep power on.' ;;
         *)
-            systemctl reset-failed "$os_unit" || fail 'Cannot reset the OS job.'
+            if [ "$os_state" = failed ]; then
+                systemctl reset-failed "$os_unit" || fail 'Cannot reset the OS job.'
+            fi
             systemctl start --no-block "$os_unit" || fail 'Cannot start the independent OS job.'
             ;;
     esac
