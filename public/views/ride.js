@@ -1,6 +1,7 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
+import { SubTabs } from "../lib/sub-tabs.js";
 import { chartTick, isStale, peek, signalState, valueOf } from "../lib/store.js";
 import { differenceByTime, ringFor } from "../lib/ring.js";
 import { monotonicNow } from "../lib/clock.js";
@@ -27,6 +28,7 @@ const { div, span } = van.tags;
 export function RideView() {
   return div(
     { class: "view" },
+    SubTabs("ride"),
     SpeedHero(),
     SectionLabel("Thermal"),
     CoolantDeltaTile(),

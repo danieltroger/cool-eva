@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { arm, armed } from "../public/lib/arming.js";
-import { advanceTab, currentTab, showTab, startRouting } from "../public/lib/router.js";
+import { advanceTab, currentTab, currentView, showView, showTab, startRouting } from "../public/lib/router.js";
 
 const environmentKeys = ["history", "location", "addEventListener"] as const;
 const originalDescriptors = new Map(
@@ -50,6 +50,13 @@ try {
   advanceTab();
   assert.equal(currentTab(), "all");
   assert.equal(armed.val, "", "Gesture navigation must also disarm.");
+
+  showView("cooling");
+  assert.equal(currentTab(), "ride");
+  arm("charge-stop");
+  showTab("ride");
+  assert.equal(currentView(), "ride", "current-parent tap must restore the parent's overview.");
+  assert.equal(armed.val, "", "A current-parent tap is a real route change and must disarm.");
 
   for (const eventName of ["popstate", "hashchange"]) {
     arm("charge-stop");

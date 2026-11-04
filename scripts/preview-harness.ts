@@ -30,6 +30,7 @@ export const HARNESS_PARTS = [
   "preview-harness-bike.js",
   "preview-harness-write.js",
   "preview-harness-pi.js",
+  "preview-harness-riding.js",
 ];
 
 /**

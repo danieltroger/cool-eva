@@ -1,13 +1,12 @@
 // @ts-check
 import van from "../vendor/van-1.6.1.js";
-import { readPhoneValue, writePhoneValue } from "../lib/phone-storage.js";
+import { setupNoticeDismissed, dismissSetupNotice } from "../lib/setup-notice.js";
 import { settings } from "../lib/settings.js";
 import { destination, openDestination } from "../lib/destination.js";
 import { BLE_MODE } from "../lib/ble-link.js";
 import { SettingsCard } from "./settings-fields.js";
 
 const { a, button, div } = van.tags;
-const dismissed = van.state("");
 
 /** @param {boolean} dismissible @param {boolean} [riding] */
 export function MigrationSummary(dismissible, riding = false) {
@@ -15,7 +14,7 @@ export function MigrationSummary(dismissible, riding = false) {
     const current = settings.val;
     if (!current?.instanceId || (riding && (destination.val || current.source !== "legacy"))) return div();
     const id = `cool-eva.setup-seen:${current.instanceId}`;
-    if (dismissible && (dismissed.val === id || readPhoneValue(id))) return div();
+    if (dismissible && setupNoticeDismissed(id)) return div();
     const legacy = current.source === "legacy";
     const text = legacy
       ? [
@@ -70,8 +69,7 @@ export function MigrationSummary(dismissible, riding = false) {
               {
                 class: "settings-button",
                 onclick: () => {
-                  writePhoneValue(id, "1");
-                  dismissed.val = id;
+                  dismissSetupNotice(id);
                 },
               },
               "Got it"

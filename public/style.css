@@ -86,7 +86,7 @@
 
   /* The tab bar is fixed; every scrolling surface has to clear it plus the home
      indicator, or the last tile sits permanently under your thumb. */
-  --tabs-height: 4.2rem;
+  --tabs-height: 50px;
 }
 
 /* ---------- the light palette ----------
@@ -161,7 +161,7 @@ body {
   display: flex;
   align-items: center;
   gap: 0.8rem;
-  padding: calc(env(safe-area-inset-top) + 0.5rem) 0.9rem 0.6rem;
+  padding: env(safe-area-inset-top) 0.9rem 8px;
 }
 
 .brand {
@@ -505,6 +505,8 @@ body {
 /* ---------- tabs ---------- */
 
 .tabs {
+  box-sizing: border-box;
+  height: calc(var(--tabs-height) + env(safe-area-inset-bottom));
   position: fixed;
   bottom: 0;
   left: 0;
@@ -518,6 +520,7 @@ body {
 }
 
 .tab {
+  height: 49px;
   flex: 1;
   background: none;
   border: 0;
@@ -527,7 +530,7 @@ body {
   font-weight: 500;
   letter-spacing: 0.06em;
   /* Deliberately tall: this is aimed at with a gloved thumb, in motion. */
-  padding: 1.05rem 0.2rem;
+  padding: 0 0.2rem;
   /* The Faults tab widens to "⚠ Faults" when a code sets. With five tabs sharing
      the width that can wrap on a narrow phone, and --tabs-height is a fixed
      constant that body's padding-bottom derives from — so a wrapped label makes
@@ -1794,4 +1797,113 @@ body {
   z-index: 20;
   background: var(--bg);
   border-bottom: 1px solid var(--tile-edge);
+}
+
+/* Fixed riding geometry; the system insets are reserved once by the shell. */
+.riding-view {
+  grid-template-columns: minmax(0, 1fr);
+  padding: 8px;
+}
+.riding-view > .span2 {
+  grid-column: 1 / -1;
+}
+.cooling-view > .tile {
+  height: 112px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.cooling-view > .cooling-short {
+  height: 96px;
+}
+.cooling-values {
+  white-space: nowrap;
+}
+.sub-tabs {
+  display: flex;
+  height: 44px;
+}
+.sub-tab {
+  flex: 1;
+  min-width: 44px;
+  height: 44px;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--tile-edge);
+  color: var(--label);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+}
+.sub-tab.on {
+  border-bottom: 3px solid var(--good);
+  color: var(--fg);
+  font-weight: 600;
+}
+.brand-slot {
+  flex: 1;
+  min-width: 44px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 44px;
+}
+.brand-slot .brand {
+  min-width: 0;
+  overflow: visible;
+  text-overflow: clip;
+}
+.header-notice {
+  width: 100%;
+  min-width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font:
+    500 13px system-ui,
+    sans-serif;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.header-notice svg {
+  flex-shrink: 0;
+}
+.header-notice[hidden],
+.brand[hidden],
+.notice-count[hidden] {
+  display: none;
+}
+.header-notice[data-compact="true"] .notice-label {
+  display: none;
+}
+.notice-count {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.notice-measure {
+  position: fixed;
+  left: -10000px;
+  visibility: hidden;
+  white-space: nowrap;
+  font:
+    500 13px system-ui,
+    sans-serif;
+  letter-spacing: 0;
+}
+.can-status-link,
+.ble-connect {
+  min-width: 44px;
+  min-height: 44px;
+}
+.destination-header .brand {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  letter-spacing: 0;
 }

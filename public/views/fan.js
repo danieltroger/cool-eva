@@ -10,6 +10,7 @@ import {
   describeAutoReason,
   dutyStopIndex,
   dutyStops,
+  fanDriveState,
   formatDuty,
 } from "../lib/fan-display.js";
 import { createFanCommandQueue } from "../lib/fan-command-queue.js";
@@ -164,27 +165,20 @@ function Situation() {
     const duty = valueOf("fan_duty_pct");
     const target = valueOf("fan_target_pct");
     const driverEnabled = valueOf("fan_driver_enabled");
-    if (duty == null || driverEnabled == null) {
+    const driveState = fanDriveState(duty, target, driverEnabled);
+    if (driveState === "unreported") {
       return div({ style: `color:${MUTED}` }, "The fan driver has not reported yet.");
     }
-    if (driverEnabled !== 1) {
+    if (driveState === "standby") {
       return div({ style: `color:${MUTED}` }, "Standby — both enables LOW, so the rotor freewheels.");
     }
-    // ⚠️ Enabled at 0 % is NOT a stopped fan: with the high side never switching the
-    // BTS7960 leaves both low sides on, which shorts the winding and brakes the rotor.
-    // src/fan/control.ts refuses to reach this state on purpose, so seeing it means a
-    // stop failed halfway. It is the loudest thing this tile can say, not a green one.
-    if (duty === 0) {
+    if (driveState === "braking") {
       return div(
         { style: `color:${BAD}` },
         "⚠️  Enables HIGH at 0 % — the bridge is BRAKING the rotor, not idling it. Cut power to the IBT-2."
       );
     }
-    // ⚠️ Enabled and driving with nothing asked for. src/fan/control.ts sets the target
-    // before it touches the bridge, so this is not a transient — it is a STOP that got
-    // as far as failing to drop the enables and correctly refused to zero the duty
-    // underneath them (which would have braked the rotor). The fan is still spinning.
-    if (target === 0) {
+    if (driveState === "stop-failed") {
       return div(
         { style: `color:${BAD}` },
         `⚠️  Still driving at ${formatDuty(duty)} % after a stop that failed. The PWM was left alone on purpose — ` +
@@ -193,7 +187,7 @@ function Situation() {
       );
     }
     // The kick-start, which is the only other time the applied duty runs ahead of the target.
-    if (target != null && duty > target) {
+    if (driveState === "kick-start") {
       return div(
         { style: `color:${WARN}` },
         `Kick-starting at ${formatDuty(duty)} % — it settles at ${formatDuty(target)} % in a moment.`

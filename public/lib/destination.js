@@ -1,6 +1,6 @@
 // @ts-check
 import van from "../vendor/van-1.6.1.js";
-import { hashForTab, peekTab, TABS } from "./router.js";
+import { hashForTab, currentViewLabel } from "./router.js";
 import { SETTINGS_PAGE_TITLES } from "./settings-map.js";
 import { armed } from "./arming.js";
 
@@ -27,7 +27,7 @@ export function openDestination(name, section = "", onReturn) {
     ? destinationName(destination.rawVal, destinationSection.rawVal)
     : onReturn
       ? "Menu"
-      : (TABS.find(tab => tab.name === peekTab())?.label ?? "Ride");
+      : currentViewLabel();
   history.pushState({ coolEvaPanel: true, backName }, "", url);
   backDestinationName.val = backName;
   destination.val = name;
@@ -59,7 +59,7 @@ export function startDestinationRouting() {
 
 function readDestination() {
   const before = destination.rawVal;
-  backDestinationName.val = history.state?.backName ?? TABS.find(tab => tab.name === peekTab())?.label ?? "Ride";
+  backDestinationName.val = history.state?.backName ?? currentViewLabel();
   const url = new URL(location.href);
   const name = url.searchParams.get("panel") ?? "";
   destination.val = ["settings", "session", "bike-information", "advanced-service"].includes(name)

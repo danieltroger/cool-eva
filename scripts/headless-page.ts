@@ -42,6 +42,29 @@ export interface Viewport {
   mobile: boolean;
 }
 
+export interface SafeAreaInsets {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+export async function setPageInsets(page: HeadlessPage, insets: SafeAreaInsets): Promise<void> {
+  try {
+    await sendCommand(page.connection, "Emulation.setSafeAreaInsetsOverride", { insets }, page.sessionId);
+  } catch (error) {
+    throw new Error(`Required safe-area override failed; zero-inset fallback is forbidden: ${String(error)}`);
+  }
+}
+
+export async function resizePage(page: HeadlessPage, viewport: Viewport): Promise<void> {
+  await sendCommand(page.connection, "Emulation.setDeviceMetricsOverride", { ...viewport }, page.sessionId);
+}
+
+export async function reloadPage(page: HeadlessPage): Promise<void> {
+  await sendCommand(page.connection, "Page.reload", {}, page.sessionId);
+}
+
 interface PendingCommand {
   method: string;
   resolve: (result: Record<string, unknown>) => void;
