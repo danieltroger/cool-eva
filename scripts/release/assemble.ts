@@ -1,4 +1,4 @@
-import { copyFile, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { captureCommand, runCommand } from "./commands.ts";
@@ -15,6 +15,7 @@ import {
   type DependencyLock,
 } from "./dependencies.ts";
 import { assertRuntimePayload, copyRuntimePayload } from "./payload.ts";
+import { renderInstaller } from "./installer.ts";
 
 export async function assembleBundle(sourceDirectory: string, outputDirectory: string): Promise<void> {
   if (process.platform !== "linux" || process.arch !== "arm64") {
@@ -131,6 +132,11 @@ export async function assembleBundle(sourceDirectory: string, outputDirectory: s
   await runCommand("sha256sum", ["--check", "--strict", "--quiet", "files.sha256"], extractedOptions);
   await copyFile(join(sourceDirectory, "release.json"), join(outputDirectory, "release.json"));
   await copyFile(packageList, join(outputDirectory, "tested-os-packages.txt"));
+  await writeFile(
+    join(outputDirectory, "install.sh"),
+    renderInstaller(await readFile(join(sourceDirectory, "install.sh"), "utf8"), metadata),
+    { mode: 0o755 }
+  );
   await writeFile(
     join(outputDirectory, "manifest.txt"),
     renderReleaseManifest(metadata, await hashFile(archive), (await stat(archive)).size)

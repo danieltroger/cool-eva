@@ -8,6 +8,13 @@ on:
       - scripts/release/**
       - scripts/check-release-bundle.ts
       - scripts/update/**
+      - install.sh
+      - scripts/install-check/**
+      - scripts/check-bundle-install.ts
+      - src/install/**
+      - src/os-updates.ts
+      - src/http/os-update-ready.ts
+      - src/settings/configure.ts
       - src/release/**
   workflow_dispatch:
     inputs:
@@ -21,9 +28,23 @@ permissions:
   contents: read
 
 jobs:
+  windows-line:
+    runs-on: windows-2025
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.22.2
+      - name: Paste the line in both Windows shells, capturing native SSH arguments
+        shell: powershell
+        run: ./scripts/check-install-line.ps1
+
   bundle:
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -33,11 +54,38 @@ jobs:
           node-version: 24.22.2
       - name: Check bundle boundaries and pinned inputs
         run: node --experimental-strip-types scripts/check-release-bundle.ts
-      - name: Build and load the complete ARM64 bundle
+      - name: Reject a main-channel dispatch from another branch
         env:
           BUNDLE_CHANNEL: ${{ inputs.channel || 'main' }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$BUNDLE_CHANNEL" = main ] && [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo 'Main-channel releases can only be cut from main.' >&2
+            exit 1
+          fi
+      - name: Build and load the complete ARM64 bundle
+        env:
+          BUNDLE_CHANNEL: ${{ github.event_name == 'pull_request' && format('branch-pr-{0}', github.event.number) || inputs.channel || 'main' }}
           BUNDLE_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: node --experimental-strip-types scripts/release/build.ts dist/release
+      - name: Preserve the native artifact for local reproduction (not a published release)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: unverified-bundle-arm64-${{ github.sha }}
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Build pinned QEMU (test host only)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config libglib2.0-dev libpixman-1-dev python3-venv xz-utils
+          sh scripts/install-check/setup-tools.sh dist/qemu-tools
+      - name: Install, rerun and reboot the pinned Lite image
+        run: |
+          mkdir -p dist/installer-guests
+          node --experimental-strip-types scripts/install-check/run.ts dist/release dist/installer-guests/release dist/qemu-tools/qemu-build/qemu-system-aarch64 dist/image-cache
+          cp dist/installer-guests/release/installed-os-packages.txt dist/release/installed-os-packages.txt
+          cp dist/installer-guests/release/qemu-receipt.txt dist/release/qemu-receipt.txt
+          cp dist/installer-guests/release/qemu-result.json dist/release/qemu-result.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: bundle-arm64-${{ github.sha }}
@@ -46,5 +94,47 @@ jobs:
             dist/release/manifest.txt
             dist/release/release.json
             dist/release/tested-os-packages.txt
+            dist/release/install.sh
+            dist/release/installed-os-packages.txt
+            dist/release/qemu-receipt.txt
+            dist/release/qemu-result.json
           if-no-files-found: error
           retention-days: 14
+      - name: Preserve guest diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: installer-diagnostics-${{ github.sha }}
+          path: |
+            dist/installer-guests/**/*.log
+            dist/installer-guests/**/*.txt
+            dist/installer-guests/**/*.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'danieltroger/cool-eva'
+    needs: [bundle, windows-line]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: cool-eva-release-publication
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.22.2
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: bundle-arm64-${{ github.sha }}
+          path: dist/release
+      - name: Publish immutable assets, then the manifest, then the channel pointer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node --experimental-strip-types scripts/release/publish.ts dist/release

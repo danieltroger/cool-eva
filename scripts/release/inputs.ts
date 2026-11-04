@@ -51,9 +51,12 @@ export function parseBundleInputs(document: unknown): BundleInputs {
 
 export function validateBuildIdentity(commit: string, channel: string, branch: string, epoch: string): void {
   text(commit, "commit", /^[a-f0-9]{40}$/);
-  text(channel, "channel", /^[a-z][a-z0-9-]{0,47}$/);
+  text(channel, "channel", /^(main|branch-[a-z0-9][a-z0-9.-]{0,40})$/);
   text(branch, "branch", /^[a-zA-Z0-9_./-]{1,200}$/);
   text(epoch, "source epoch", /^[1-9][0-9]{8,10}$/);
+  if (channel === "main" && branch !== "main") {
+    throw new Error("Main-channel bundles can only be built from main");
+  }
 }
 
 function record(value: unknown, field: string): Record<string, unknown> {

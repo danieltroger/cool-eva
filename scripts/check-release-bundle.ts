@@ -46,8 +46,16 @@ export async function checkReleaseBundle(): Promise<void> {
   assert.throws(() => validateBuildIdentity("HEAD", identity.channel, identity.branch, identity.epoch));
   assert.throws(() => validateBuildIdentity(commit, "main\narchive=evil", identity.branch, identity.epoch));
   assert.throws(() => validateBuildIdentity(commit, identity.channel, "$(command)", identity.epoch));
+  assert.throws(() => validateBuildIdentity(commit, "main", "feature", identity.epoch), /only be built from main/);
 
-  const required = ["package.json", "package-lock.json", "LICENSE", "src/index.ts", "scripts/release/inputs.json"];
+  const required = [
+    "package.json",
+    "package-lock.json",
+    "LICENSE",
+    "src/index.ts",
+    "install.sh",
+    "scripts/release/inputs.json",
+  ];
   const selected = selectSourcePaths([
     ...required,
     "public/app.js",
@@ -112,7 +120,7 @@ export async function checkReleaseBundle(): Promise<void> {
   assert.throws(() => selectNativeBinaries("socketcan", ["can.node"]), /can_signals/);
   const workflow = await readFile(join(root, ".github/workflows/release-bundle.yml"), "utf8");
   const actions = workflow.split("\n").filter(line => line.includes("uses:"));
-  assert.equal(actions.length, 3);
+  assert(actions.length >= 3);
   for (const action of actions) {
     assert.match(action, /uses: actions\/[a-z-]+@[a-f0-9]{40} # v\d+\.\d+\.\d+$/);
   }
@@ -143,14 +151,14 @@ export async function checkReleaseBundle(): Promise<void> {
     const output = join(directory, "output");
     const produced = join(output, ".build/output");
     await mkdir(produced, { recursive: true });
-    for (const name of ["bundle.tar.zst", "manifest.txt", "release.json", "tested-os-packages.txt"]) {
+    for (const name of ["bundle.tar.zst", "manifest.txt", "release.json", "tested-os-packages.txt", "install.sh"]) {
       await writeFile(join(produced, name), `fixture ${name}\n`);
     }
     await copyBundleArtifacts(produced, output);
     assert.equal(await readFile(join(output, "manifest.txt"), "utf8"), "fixture manifest.txt\n");
     await assert.rejects(copyBundleArtifacts(produced, output), /EEXIST/);
     await symlink("manifest.txt", join(produced, "unexpected-link"));
-    await assert.rejects(copyBundleArtifacts(produced, output), /exactly the four/);
+    await assert.rejects(copyBundleArtifacts(produced, output), /exactly the five/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

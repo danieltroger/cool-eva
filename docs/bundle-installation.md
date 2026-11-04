@@ -1,0 +1,89 @@
+# Bundle installer and release gate
+
+The rider route is Raspberry Pi Imager → current Raspberry Pi OS **Lite 64-bit** for the Zero 2 W → one pasted SSH line from Windows PowerShell or macOS Terminal. Imager sets user `pi`, hostname `cool-eva`, home Wi-Fi/country and SSH. The phone hotspot must support 2.4 GHz. Keep the Pi on a mains USB supply throughout setup, with the bike parked. There is no custom image or Imager manifest.
+
+```sh
+ssh -tt pi@cool-eva.local "sudo install -d -m 700 /var/cache/cool-eva-install && sudo curl -fsSL https://github.com/danieltroger/cool-eva/releases/latest/download/install.sh -o /var/cache/cool-eva-install/install.sh && sudo sh /var/cache/cool-eva-install/install.sh"
+```
+
+Substitute the Imager username/address if different; an IP address works when mDNS is unavailable. Both shells pass the quoted remote command as one argument; Windows CI captures the actual native arguments in Windows PowerShell 5.1 and PowerShell 7. This uses the built-in OpenSSH client, with no laptop Node, Git, WSL, Homebrew, `.ps1` or launcher download. The rider accepts the new Pi's SSH host key and enters the Imager password when asked.
+
+The README/manual-install replacement is the following documentation PR, after this installer is reviewed. The line requires an actual published main-channel release; a PR artifact is not a rider download. The `install.sh` in the checkout is an assembly template and refuses to run unrendered.
+
+Copying one boot-partition file could return later for a rider who cannot paste a line, after its own real first-boot test; that route is not part of this release.
+
+## What the installer absorbs
+
+| Previously manual work | Installer behavior |
+| --- | --- |
+| `apt update`, build tools, Python, Git, NodeSource script, Node version check | Confirm `BENCH`, repair an interrupted dpkg transaction, update package lists and perform the catch-up full upgrade. Install the named runtime apt packages, including `jq`, and mark `jq` manual **before writing units**. |
+| Swap config, size caps, swap-manager drop-ins, reboot to enable compilation | Keep existing active OS swap, including Lite's default zram. Only if no swap is active, install a separate 512 MiB fallback; preserve OS swap-manager/fstab settings. No compilation swap is needed. |
+| Clone/cd, delete and restore the lockfile, npm install/approve/rebuild, inspect `can.node` | Download this installer's immutable CI bundle over HTTPS; verify identity, bounded size, SHA-256, safe archive paths/types, inventory and native loads before selection. The bundle contains pinned Node, production dependencies and prebuilt native modules. No Pi npm/Git/build step. |
+| Laptop Node/repository download, key-generation script, scp/key copy | Generate/download/back up the private key on #327's browser key page; paste **only the public PEM** into setup, or add it later in dashboard Settings. A supplied public key requires backup acknowledgement and fingerprint/active-recording readback. The installer never asks for a private key. |
+| Configuration JSON piping, legacy environment import and data relocation | Reuse #317's settings writer. For an existing checkout, invoke the **existing service** under its original environment sources and working directory to run #317's migration. Verify completion before replacement. There is one mover/journal, owned by that service. |
+| Add the other Wi-Fi network with nmcli; configure hotspot name | Save both home and phone-hotspot NetworkManager profiles and the dashboard hotspot name. Hidden passwords go directly into root `0600` keyfiles, never argv, environment or logs. Load profiles without disconnecting the installation link. Later changes belong to #317's dashboard. |
+| Service setup, old thermometer unit removal, daemon-reload, enable/start/restart | Install the stable shell updater/launcher and units; start the bundle and enable future boots. Keep the old checkout and unit backup. |
+| Optional raspi-config SPI, fan PWM/safe GPIO boot lines, raspi-utils/pinctrl, reboot and device checks | Ask only about already-wired supported accessories on fresh setup; default both OFF. For selected/migrated accessories, write the managed boot include, reboot automatically after installation, and run device/service checks from the post-boot finish unit. The dashboard reports actual sensor/fan faults. |
+| `systemctl status`, follow journal, exit pager, interpret encryption warnings and restart after key copy | Require 60 continuous seconds of release/storage health, then report dashboard name/IP, bundle, service, memory/swap, encrypted recording fingerprint or **NOT SAVING RIDES**, and a concrete CAN/waiting result. |
+| Optional raw-capture installation | Fresh rider installs keep it **OFF**. It is unencrypted developer data. Preserve only a prior explicit owner opt-in; capture uses a stable script and #317's external `captures/`, never a release folder. |
+| Security-update configuration | Enable unattended OS updates, including kernel/firmware, behind the charging-power condition below. No OS-update button or automatic reboot. |
+
+The installer itself does not need Python. Debian/Raspberry Pi OS tools, including unattended-upgrades, can depend on OS-supplied Python; do not purge it. Runtime apt set: `jq curl ca-certificates tar zstd coreutils util-linux iproute2 iw rfkill network-manager bluez dbus openssh-server avahi-daemon libatomic1 libstdc++6 libgcc-s1 raspi-utils unattended-upgrades`. Only an existing raw-capture opt-in adds `can-utils`.
+
+Stock settings leave coolant probes/fan and motorcycle enrolment off. Existing settings, accessory configuration and explicit external data paths survive migration. Physical wiring, Imager, private-key backup, choosing the motorcycle in Settings, and opening the dashboard remain rider work. Optional cooling hardware must be wired before enabling it; see [cooling hardware](cooling-hardware.md). QEMU cannot certify those peripherals. Laptop Grafana and historical-log decryption are separate from installation.
+
+## Migration, interruption and retry
+
+The sole data layout and journal are [#317's contract](data-layout.md): `/var/lib/cool-eva`, `state/settings.json`, `state/data-move.json`, the four archive directories, and private `updater/`. The installer does not rename/copy legacy data, create a second data journal, or traverse these paths during cleanup. It stops capture, then runs the installed service's migration entry using a persistent systemd drop-in. That entry checks its own `MainPID` before calling `startSettings`. The original unit's `EnvironmentFile` and drop-ins remain effective. If power is lost mid-move, that service resumes #317's journal on boot; rerun the line to finish bundle cutover. Never restart an old writer against an unfinished move.
+
+Fresh setup uses the installing user's primary group as archive reader; migration resolves the old checkout owner's group through #317 and retains its marker. State/updater directories are `0700`, their files `0600`; archives are `2750`/`0640`, readable through the archive group. The original checkout remains for recovery/scratch work. No package-lock state can block a bundle update.
+
+The shell downloads into a root-only cache under a lock, extracts into a separate release directory, checks it and renames it before selecting `current`. An interrupted download can be retried; orphan installer downloads are removed under the same lock. On existing bundles, a change of release goes through the [updater's shared stop reservation and rollback](bundle-updater.md). The same-release installer rerun keeps local release edits and repeats configuration/health checks. If the first bundle cutover fails after a completed migration, restore the previous service unit; fresh-install failure retains a complete bundle and SSH for retry. A damaged/missing data journal is a visible failure, never permission to start legacy writers.
+
+Wrong Wi-Fi credentials do not disconnect the currently active setup link. Re-run the same line while reachable, or re-image if both saved networks are unreachable. A recovery access point is deferred. A reflash erases the card, including unbacked ride logs/settings; it is not bundle rollback.
+
+## Automatic OS updates and power
+
+The actual Trixie [raspi-firmware package](https://archive.raspberrypi.com/debian/pool/main/r/raspi-firmware/raspi-firmware_1.20260915-1_all.deb), opened/extracted during planning, uses `cp -r /usr/lib/raspi-firmware/* /boot/firmware/`; its kernel and initramfs hooks use `cp -v "$image_path" "$kernel_dst"` and `cp -v "$initrd_path" "$initrd_dst"`. The [kernel postinst](https://archive.raspberrypi.com/debian/pool/main/l/linux/linux-image-6.18.50+rpt-rpi-v8_6.18.50-1+rpt1_arm64.deb) invokes `linux-run-hooks image postinst`. These FAT writes have no atomic rename/backup. Gate package **installation** on two minutes of fresh positive AC/DC charging evidence, speed zero and SOC ≤70%; missing/stale/offline data or a busy bus defers it. Debian's actual `apt.systemd.daily` separates `update` (metadata/download-only) from `install` (`unattended-upgrade`); the condition is on `apt-daily-upgrade.service`, with a 15-minute retry timer. Before installing unattended-upgrades, bootstrap installs a closed condition; setup replaces it with the localhost charging guard. No reboot is automatic. An unexpected unplug can still prevent boot: dashboard/logging stop, and `/var/lib/cool-eva` is on that **same SD card**. Rescue/back up that data before re-imaging; unbacked history/settings can be lost.
+
+The charging check is read-only: fresh CAN speed, SOC, positive pack charging power, inlet-connected status and actual AC input or DC contactor. The guard endpoint accepts only loopback GET without the BLE-tunnel marker. Its monotonic qualification resets after a sampling gap or lost charging evidence. The SOC margin is a practical stable-power condition, not a guarantee against unplugging or a full/failed card. No eligible charging session means delayed OS patches.
+
+Set `Unattended-Upgrade::InstallOnShutdown` explicitly false too: [the actual 2.12 shutdown helper](https://github.com/mvo5/unattended-upgrades/blob/2.12/unattended-upgrade-shutdown#L259) can launch upgrades itself when that option is enabled, bypassing the guarded apt unit. Failed/empty/malformed power-check responses defer installation.
+
+## QEMU release gate
+
+Run locally with Node 24 and normal host build prerequisites (C compiler, pkg-config, GLib/pixman headers, Python venv and xz). These are **test-host** tools. The helper pins/checks QEMU 11.1.3 and libslirp 4.9.7 source SHA-256s and builds only the ARM64 system emulator:
+
+```sh
+sh scripts/install-check/setup-tools.sh dist/qemu-tools
+mkdir -p dist/installer-guests
+node --experimental-strip-types scripts/install-check/run.ts dist/release dist/installer-guests/local dist/qemu-tools/qemu-build/qemu-system-aarch64 dist/image-cache
+```
+
+`dist/release` is the exact CI-built artifact under test; choose a new guest directory on each run. `scripts/release/inputs.json` pins the tested official Lite64 image URL/SHA; raw image cache is read-only, the guest is a disposable expanded 8 GiB copy. Each release stores that pin, the image's package list, and the **actual post-install package versions** exported from its QEMU guest. Newer OS releases warn and proceed to native/service health checks. A later release can move the pin.
+
+[QEMU's actual board documentation](https://github.com/qemu/qemu/blob/v11.1.3/docs/system/arm/raspi.rst) lists `raspi3ap`: four Cortex-A53 cores, 512 MiB. The gate uses that machine with TCG, the pinned image's own kernel/initramfs and **Zero 2 W DTB**. The earlier planning suggestion of an A+ DTB did not boot this image; its Zero DTB does. A VM-only DT adapter disables unsupported GPU power-domain probing and Bluetooth, and enables the console. The image's gzip kernel is decompressed for the minimal QEMU build; mini-UART uses `ttyS0` with `8250.nr_uarts=1`.
+
+Fixtures replace Imager's user/SSH seed and the physical Wi-Fi link with a synthetic user/key and NetworkManager USB-Ethernet NAT profile. They mask userconfig, gadget-ICS, EEPROM updater and trim units that do not apply to this VM. A curl transport fixture serves only this test artifact's fixed GitHub release URLs over the host's loopback; manifest/SHA/archive/native checks and the actual installer remain active. OS apt/network activity is real. No production test/bypass option is added. The host-only private key never enters the guest; an encrypted fixture is sealed there with the installed public key and decrypted on the host.
+
+The gate runs fresh install, same-line rerun, boot with installed units, settings/permissions, real NM profile loading, updater recovery and a synthetic legacy unit's original environment/service-owned move. It must pass locally and in the release CI job. CAN/Korlan, BLE radio/hub, physical GPIO/SPI probes/fan PWM and Wi-Fi **association** are absent: setup reports absent/waiting hardware; pure input/power tests use labelled synthetic values. Direct kernel boot does not test VideoCore boot firmware, EEPROM, actual SD power cuts or FAT recovery. QEMU poweroff may end in the unimplemented power-controller path; the harness waits for filesystem shutdown before stopping the process.
+
+## Publication and work only when Daniel chooses to ship
+
+No scheduled CI or human boot checks. Explicit release dispatch builds the pinned ARM64 bundle, runs native loading and pinned-image installation, and records its tested packages. Build jobs are read-only; PR/fork builds never publish. The separate publication job runs only on an upstream manual dispatch; `main` channel requires the `main` branch in both workflow and publisher checks. Branch bundles are prereleases on demand. Publish payload/install/test evidence first, **manifest last**, then the static channel-pointer asset. Keep published release assets indefinitely. Existing published assets cannot be overwritten; an interrupted draft may resume. Update discovery uses static asset URLs rather than the unauthenticated GitHub API quota. HTTPS plus SHA-256 is the agreed trust model; there is no separate signing key in the same GitHub account.
+
+Release-time external dependencies: GitHub/Actions/host runners, retained official Raspberry Pi OS image and package list, Node binary download, pinned Debian builder/snapshot, npm registry tarballs, pinned QEMU/libslirp source downloads and test-host build/Python packages, and Debian/Raspberry Pi apt repositories for the real catch-up. An outage fails that release's CI; it does not remove an installed local bundle. Pins change only with a chosen release. Effort estimates are provisional development effort, **zero recurring scheduled maintenance**.
+
+What can still break without a maintainer:
+
+- GitHub/assets/HTTPS, DNS, network credentials or apt repositories become unavailable: setup/Update reports a download/package error; retry later. Existing bundles stay local.
+- OS drift changes the kernel series, BlueZ or NetworkManager: native/service or hardware checks can fail. **Bundle rollback cannot undo OS changes.** Existing version/status text says “OS updated since this release was tested” after package drift from its promotion baseline.
+- No qualifying charge, apt outage, or a frozen Node/dependency vulnerability: security fixes can be delayed; Node fixes require a new bundle. A vulnerability may have no visible symptom. A year of functional operation cannot guarantee security without future upstream fixes.
+- SD full/corrupt, unexpected power loss during firmware writes or card failure: storage fault or no boot/dashboard. Rescue data/backups before re-imaging; bundle rollback does not repair the OS/card.
+- New cooling/CAN/BLE hardware or wrong credentials: setup shows a concrete missing/waiting result, not a claim the hardware passed. Correct it while reachable and rerun/setup through Settings.
+
+## Daniel's first real migration — GO at the bike
+
+Daniel's bike moves to bundles too. It is the **first real use** of this install path, only after reviewed CI/local QEMU gates and Daniel's explicit **GO at the bike**. This lane must not SSH/deploy/test the bike.
+
+Before GO: off-card backup of the SD's existing ride logs, VCU history, Wi-Fi diagnostics/captures, settings and unit/environment sources; confirm the private ride-log key backup; record the old checkout and effective unit. Keep those private. Cut a branch-channel prerelease for this first migration, leaving main-channel publication until it passes. Use that immutable release's `/releases/download/<tag>/install.sh` in the same pasted line; it still fetches its own exact bundle. At GO: park, connect stable bench power, use his existing SSH user/address, and preserve his public key/settings and existing explicit capture choice. The running service performs/finishes #317's move before bundle cutover. Verify the plain health results, old bytes/reader permissions, public fingerprint, actual CAN/BLE/accessory behavior and dashboard Update on the bike. Keep the checkout for scratch edits; CI branch bundles remain available on demand, and active-release edits with `sudoedit` over SSH remain possible. After publishing the first main-channel release, rerun the normal line to move his bike onto that channel. No rider rollout before his migration has passed.
