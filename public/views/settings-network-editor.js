@@ -26,14 +26,13 @@ export function NetworkEditor(draft) {
         select(
           {
             "aria-label": "Network purpose",
-            value: () => draft.purpose.val,
             onchange: event => {
               draft.purpose.val = event.target.value;
               armed.val = "";
             },
           },
-          option({ value: "home" }, "Home Wi-Fi"),
-          option({ value: "hotspot" }, "Phone hotspot")
+          option({ value: "home", selected: () => draft.purpose.val === "home" }, "Home Wi-Fi"),
+          option({ value: "hotspot", selected: () => draft.purpose.val === "hotspot" }, "Phone hotspot")
         )
       ),
       label(
@@ -88,7 +87,6 @@ export function NetworkEditor(draft) {
               select(
                 {
                   "aria-label": "Password choice",
-                  value: () => draft.passwordMode.val,
                   onchange: event => {
                     draft.passwordMode.val = event.target.value;
                     draft.password.val = "";
@@ -96,8 +94,8 @@ export function NetworkEditor(draft) {
                     armed.val = "";
                   },
                 },
-                option({ value: "keep" }, "Keep saved password"),
-                option({ value: "change" }, "Change password")
+                option({ value: "keep", selected: () => draft.passwordMode.val === "keep" }, "Keep saved password"),
+                option({ value: "change", selected: () => draft.passwordMode.val === "change" }, "Change password")
               )
             ),
           ]

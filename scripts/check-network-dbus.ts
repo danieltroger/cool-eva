@@ -8,8 +8,9 @@ export async function checkNetworkDbus(): Promise<void> {
   const settings = new Map<string, SettingsMap>();
   const calls: { method: string; parameters: unknown[] }[] = [];
   const checkpoints: string[] = [];
-  let fail = false;
+  let failMethod: string | null = null;
   let persistedBackend = "";
+  let refusePersistence = false;
   const bus: NetworkBus = {
     getProxyObject: async (_service, path) => ({
       getInterface: () =>
@@ -19,8 +20,10 @@ export async function checkNetworkDbus(): Promise<void> {
             get:
               (_target, method) =>
               async (...parameters: unknown[]) => {
-                if (fail) {
-                  throw new Error("synthetic-secret-must-not-escape");
+                if (method === failMethod) {
+                  throw Object.assign(new Error("synthetic-secret-must-not-escape"), {
+                    type: "org.freedesktop.NetworkManager.SyntheticFailure",
+                  });
                 }
                 calls.push({ method: String(method), parameters });
                 switch (method) {
@@ -79,7 +82,10 @@ export async function checkNetworkDbus(): Promise<void> {
     on: () => {},
     disconnect: () => {},
   };
-  const backend = createNetworkBackend(bus, async (_uuid, _filename, netplan) => {
+  const backend = createNetworkBackend(bus, async (_uuid, _filename, netplan, absent) => {
+    if (refusePersistence && !absent) {
+      throw new Error("Synthetic source verification failure");
+    }
     persistedBackend = netplan ? "netplan" : "keyfile";
   });
   const profile: NetworkProfile = {
@@ -112,11 +118,31 @@ export async function checkNetworkDbus(): Promise<void> {
   await backend.policy(UUID, 12);
   assert.equal(settings.get(PROFILE_PATH)!.connection["auth-retries"].value, 0);
   assert.equal(settings.get(PROFILE_PATH)!.connection["autoconnect-priority"].value, 12);
+  await backend.policy(UUID, 12, false);
+  assert.equal(settings.get(PROFILE_PATH)!.connection.autoconnect.value, false);
+  assert.equal(settings.get(PROFILE_PATH)!.connection["auth-retries"].value, 1);
   assert.deepEqual(await backend.active(), { uuid: UUID, address: "192.0.2.30" });
+  for (const method of ["AddConnection2", "Update2", "GetSecrets"]) {
+    failMethod = method;
+    const operation =
+      method === "AddConnection2"
+        ? backend.add(profile, "synthetic-secret-must-not-escape", true)
+        : method === "Update2"
+          ? backend.policy(UUID, 12)
+          : backend.secret(UUID);
+    await assert.rejects(operation, error => error instanceof Error && /did not confirm/.test(error.message));
+  }
+  failMethod = null;
   await backend.remove(UUID);
   assert.equal(settings.size, 0);
   await backend.verify(UUID, true, "netplan");
-  fail = true;
+  await backend.add(profile, "synthetic-secret-must-not-escape", true);
+  refusePersistence = true;
+  await assert.rejects(backend.verify(UUID), /source verification/);
+  await backend.discard(UUID);
+  assert.equal(settings.size, 0, "candidate cleanup deletes NM's secret even when source verification failed");
+  refusePersistence = false;
+  failMethod = "ListConnections";
   await assert.rejects(backend.list(), error => error instanceof Error && !error.message.includes("synthetic-secret"));
   backend.close();
   console.log(

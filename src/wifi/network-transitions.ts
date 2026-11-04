@@ -1,4 +1,5 @@
 import type { WifiNetworks } from "./networks.ts";
+import { RESTORATION_MS } from "./network-reconciliation.ts";
 
 export async function finaliseNetwork(networks: WifiNetworks): Promise<void> {
   const backend = networks.options.backend;
@@ -31,12 +32,22 @@ export async function finaliseNetwork(networks: WifiNetworks): Promise<void> {
     const state = networks.state();
     await networks.persist({
       purposes: { ...state.purposes, [change.uuid]: change.purpose },
+      ...(change.purpose === "hotspot" ? { hotspotUuid: change.uuid } : {}),
       excluded: state.excluded.filter(uuid => uuid !== change.uuid),
       change: { ...change, phase: "retiring" },
     });
   }
   change = networks.state().change!;
   if (change.phase === "retiring") {
+    const settings = networks.options.settings.read();
+    if (
+      change.purpose === "hotspot" &&
+      settings.kind === "ready" &&
+      settings.document.values.phoneHotspotSsid !== change.ssid
+    ) {
+      await networks.reservation!.update!({ phoneHotspotSsid: change.ssid });
+      networks.options.hotspotChanged(change.ssid);
+    }
     if (change.replaced) {
       await backend.remove(change.replaced.uuid);
       await backend.verify(change.replaced.uuid, true, change.replaced.backend);
@@ -57,8 +68,15 @@ export async function restoreNetwork(networks: WifiNetworks, reason: string): Pr
   const change = networks.state().change;
   if (!change) return;
   const backend = networks.options.backend;
-  await networks.persist({ change: { ...change, phase: "restoring", message: reason } });
+  await networks.persist({
+    excluded: [...new Set([...networks.state().excluded, change.uuid])],
+    change: { ...change, phase: "restoring", message: reason },
+  });
   await backend.deactivate(change.uuid);
+  const candidate = (await backend.list()).find(profile => profile.uuid === change.uuid);
+  if (candidate?.autoconnect) {
+    await backend.policy(change.uuid, change.priority, false);
+  }
   if (change.checkpoint && (await backend.checkpoints()).includes(change.checkpoint)) {
     await backend.rollback(change.checkpoint);
     if ((await backend.checkpoints()).includes(change.checkpoint)) {
@@ -74,6 +92,15 @@ export async function restoreNetwork(networks: WifiNetworks, reason: string): Pr
   }
   const active = await backend.active();
   const restored = fallback !== null && active?.uuid === fallback.uuid;
+  if (change.purpose === "hotspot" && change.previousHotspot) {
+    const previous = change.previousHotspot;
+    const settings = networks.options.settings.read();
+    if (settings.kind === "ready" && settings.document.values.phoneHotspotSsid !== previous.ssid) {
+      await networks.reservation!.update!({ phoneHotspotSsid: previous.ssid });
+      networks.options.hotspotChanged(previous.ssid);
+    }
+    await networks.persist({ hotspotUuid: previous.uuid });
+  }
   await networks.persist({
     change: {
       ...change,
@@ -86,4 +113,6 @@ export async function restoreNetwork(networks: WifiNetworks, reason: string): Pr
           : `No previous connection is available. ${reason}`,
     },
   });
+  networks.restorationDeadline = !restored && fallback ? networks.now() + RESTORATION_MS : null;
+  networks.fault = "";
 }

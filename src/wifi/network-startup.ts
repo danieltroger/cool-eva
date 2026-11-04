@@ -4,21 +4,20 @@ import type { NetworksHttpRuntime } from "../http/networks.ts";
 import { WifiNetworks } from "./networks.ts";
 import { openNetworkLedger } from "./network-ledger.ts";
 import { createNetworkBackend } from "./network-dbus.ts";
-import { pauseWifiRecovery } from "./operation.ts";
+import type { NetworkBackend } from "./network-types.ts";
 
 export async function startNetworkSettings(
   runtime: SettingsRuntime,
   generation: string,
   motionBlockers: () => string[],
-  hotspotChanged: (ssid: string) => void
+  hotspotChanged: (ssid: string) => void,
+  backend: () => NetworkBackend = createNetworkBackend
 ): Promise<NetworksHttpRuntime> {
-  pauseWifiRecovery(true);
   const settings = runtime.store.read();
   if (settings.kind !== "ready" || typeof settings.raw.instanceId !== "string" || !runtime.dataWritable) {
     return {
       controller: null,
-      fault:
-        "Repair the settings/data fault first. Saved Wi-Fi stays with NetworkManager; automatic recovery is paused.",
+      fault: "Repair the settings/data fault first. Saved Wi-Fi and automatic recovery remain available.",
     };
   }
   try {
@@ -29,7 +28,7 @@ export async function startNetworkSettings(
     );
     const controller = new WifiNetworks({
       ledger,
-      backend: createNetworkBackend(),
+      backend: backend(),
       settings: runtime.store,
       generation,
       motionBlockers,
@@ -42,10 +41,9 @@ export async function startNetworkSettings(
       },
     });
     await controller.start();
-    pauseWifiRecovery(!!controller.fault);
     return { controller, fault: controller.fault };
   } catch {
-    console.warn("wifi-settings: network settings unavailable; original state retained and recovery paused");
+    console.warn("wifi-settings: network settings unavailable; original state retained; recovery remains available");
     return {
       controller: null,
       fault:

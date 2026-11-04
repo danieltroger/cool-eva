@@ -58,6 +58,7 @@ export function parseNetworkLedger(raw: unknown, instanceId: string): NetworkLed
     Number(raw.revision) < 0 ||
     !isRecord(raw.purposes) ||
     !Object.values(raw.purposes).every(purpose => purpose === "home" || purpose === "hotspot") ||
+    (raw.hotspotUuid !== undefined && !validUuid(raw.hotspotUuid)) ||
     !Array.isArray(raw.excluded) ||
     !raw.excluded.every(validUuid)
   ) {
@@ -75,6 +76,10 @@ export function parseNetworkLedger(raw: unknown, instanceId: string): NetworkLed
       !Number.isSafeInteger(change.attempts) ||
       typeof change.message !== "string" ||
       typeof change.resumedAtBoot !== "boolean" ||
+      (change.previousHotspot !== undefined &&
+        (!isRecord(change.previousHotspot) ||
+          typeof change.previousHotspot.ssid !== "string" ||
+          (change.previousHotspot.uuid !== undefined && !validUuid(change.previousHotspot.uuid)))) ||
       !(
         change.checkpoint === null ||
         (typeof change.checkpoint === "string" &&

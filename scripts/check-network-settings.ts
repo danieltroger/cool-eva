@@ -1,10 +1,20 @@
 import assert from "assert/strict";
 import { readFile, stat, writeFile } from "fs/promises";
-import { WifiNetworks, CHECKPOINT_SECONDS, TRIAL_MS, RECOVERY_BUSY } from "../src/wifi/networks.ts";
+import { CHECKPOINT_SECONDS, TRIAL_MS, RECOVERY_BUSY } from "../src/wifi/networks.ts";
 import { acquireWifiOperation, networkCandidateExcluded } from "../src/wifi/operation.ts";
-import type { NetworkDraft, NetworkRequestIdentity, NetworkProof } from "../src/wifi/network-types.ts";
-import { networkScenario as scenario, HOME, HOTSPOT, PASSWORD } from "./network-check-fixtures.ts";
+import {
+  networkScenario as scenario,
+  HOME,
+  HOTSPOT,
+  PASSWORD,
+  networkIdentity as identity,
+  networkDraft as draft,
+  BLE,
+  WIFI,
+} from "./network-check-fixtures.ts";
 import { installNetworkSecretSpies } from "./network-secret-spies.ts";
+import { checkNetworkRegressions } from "./network-regressions.ts";
+import { checkNetworkRecovery } from "./network-recovery-check.ts";
 
 async function checkNetworks(): Promise<void> {
   assert.ok(CHECKPOINT_SECONDS * 1000 > TRIAL_MS, "checkpoint outlives the owner's trial");
@@ -129,7 +139,7 @@ async function checkNetworks(): Promise<void> {
     await assert.rejects(fixture.networks.trial(identity(fixture.networks)), /parked/);
     fixture.moving = false;
     await fixture.networks.trial(identity(fixture.networks));
-    await assert.rejects(fixture.settings.reserve(fixture.networks.settingsRevision()), /reserved/);
+    await assert.rejects(fixture.settings.reserve(fixture.networks.settingsRevision()), /A Wi-Fi trial is running/);
     await assert.rejects(
       fixture.settings.update(fixture.networks.settingsRevision()!, { coolantProbesEnabled: true }),
       /reserved/
@@ -159,6 +169,10 @@ async function checkNetworks(): Promise<void> {
       await fixture.networks.tick();
       fixture.backend.failAt = cut;
       await assert.rejects(fixture.networks.keep(identity(fixture.networks), WIFI), /power cut/);
+      await fixture.settings.update(fixture.networks.settingsRevision()!, {
+        phoneHotspotSsid: "Synthetic rolled-back name",
+      });
+      fixture.hotspot = "Synthetic rolled-back name";
       await fixture.restart(false);
       assert.equal(fixture.networks.state().change!.phase, "kept");
       assert.match(fixture.networks.state().change!.message, /Wi-Fi may switch at power-on/);
@@ -176,6 +190,11 @@ async function checkNetworks(): Promise<void> {
     fixture.backend.disk.delete(uuid);
     await fixture.restart();
     assert.equal(fixture.backend.profiles.has(uuid), false);
+    assert.equal(fixture.networks.state().change!.phase, "failed");
+    assert.match(fixture.networks.state().change!.message, /could not be restored/);
+    const view = await fixture.networks.view(BLE);
+    assert.equal(view.change!.phase, "failed");
+    assert.match(view.change!.message, /could not be restored/, "readback must not hide the missing candidate");
     await assert.rejects(fixture.networks.trial(identity(fixture.networks)));
     assert.equal(fixture.backend.events.filter(event => event === `activate:${uuid}`).length, 0);
   });
@@ -212,6 +231,8 @@ async function checkNetworks(): Promise<void> {
     fixture.backend.loseWrite = true;
     await assert.rejects(fixture.networks.save(identity(fixture.networks), draft(), true));
     assert.equal(fixture.networks.state().change, null);
+    assert.deepEqual([...fixture.backend.profiles.keys()], [HOME.uuid, HOTSPOT.uuid]);
+    assert.equal(fixture.backend.passwords.size, 2, "failed Save removes the new password from NM");
     fixture.backend.boot();
     assert.equal(fixture.backend.current?.uuid, HOME.uuid);
   });
@@ -309,32 +330,12 @@ async function checkNetworks(): Promise<void> {
       assert.equal(stored.document.learned.hubAddress, "02:00:00:00:00:08");
     }
   });
-  console.log("Wi-Fi network settings: 27 scenarios passed (no radio/device operations).");
+  await checkNetworkRegressions();
+  await checkNetworkRecovery();
+  console.log(
+    "Wi-Fi network settings: 38 scenarios and 4 startup/recovery fault cases passed (no radio/device operations)."
+  );
 }
-
-function identity(networks: WifiNetworks): NetworkRequestIdentity {
-  const state = networks.state();
-  return {
-    instanceId: state.instanceId,
-    generation: networks.generation,
-    revision: state.revision,
-    settingsRevision: networks.settingsRevision(),
-  };
-}
-function draft(): NetworkDraft {
-  return {
-    ssid: "Synthetic replacement",
-    purpose: "home",
-    replacedUuid: HOME.uuid,
-    passwordMode: "change",
-    password: PASSWORD,
-    hidden: false,
-    accessPointChange: true,
-    bluetoothTested: true,
-  };
-}
-const BLE: NetworkProof = { localAddress: "127.0.0.1", remoteAddress: "127.0.0.1", tunnel: true };
-const WIFI: NetworkProof = { localAddress: "192.0.2.30", remoteAddress: "192.0.2.40", tunnel: false };
 
 installNetworkSecretSpies([PASSWORD]);
 await checkNetworks();

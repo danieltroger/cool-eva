@@ -69,18 +69,41 @@ export async function configureNetworkPurposes(): Promise<void> {
     if (networks.fault) {
       throw new Error("Resolve the interrupted network change before installation writes network profiles.");
     }
-    const profiles = await backend.list();
     const purposes = submitted as Record<string, NetworkPurpose>;
-    for (const uuid of Object.keys(purposes)) {
-      if (!profiles.some(profile => profile.uuid === uuid) || ledger.read().excluded.includes(uuid)) {
-        throw new Error("Register only confirmed profiles that exist on this Pi.");
-      }
-    }
-    await ledger.write({ ...ledger.read(), purposes: { ...ledger.read().purposes, ...purposes } });
+    await registerNetworkPurposes(networks, purposes);
     console.log("Network purposes registered. No new Wi-Fi trial was authorised.");
   } finally {
     await networks?.close();
     await lock.release();
+  }
+}
+
+export async function registerNetworkPurposes(
+  networks: WifiNetworks,
+  purposes: Record<string, NetworkPurpose>
+): Promise<void> {
+  const profiles = await networks.options.backend.list();
+  for (const uuid of Object.keys(purposes)) {
+    if (!profiles.some(profile => profile.uuid === uuid) || networks.state().excluded.includes(uuid)) {
+      throw new Error("Register only confirmed profiles that exist on this Pi.");
+    }
+  }
+  const hotspots = profiles.filter(profile => purposes[profile.uuid] === "hotspot");
+  const hotspot = hotspots.length === 1 ? hotspots[0] : null;
+  await networks.take(networks.settingsRevision());
+  try {
+    const settings = networks.options.settings.read();
+    if (hotspot && settings.kind === "ready" && settings.document.values.phoneHotspotSsid !== hotspot.ssid) {
+      await networks.reservation!.update!({ phoneHotspotSsid: hotspot.ssid });
+      networks.options.hotspotChanged(hotspot.ssid);
+    }
+    const state = networks.state();
+    await networks.persist({
+      purposes: { ...state.purposes, ...purposes },
+      ...(hotspot ? { hotspotUuid: hotspot.uuid } : {}),
+    });
+  } finally {
+    await networks.release();
   }
 }
 

@@ -94,10 +94,10 @@ const MUTATIONS: Mutation[] = [
   },
   {
     name: "trial-at-plain-start",
-    file: "src/wifi/networks.ts",
-    before: 'if (["saved", "failed", "restored"].includes(change.phase)) {',
+    file: "src/wifi/network-reconciliation.ts",
+    before: "if (!pendingNetworkChange(networks)) {\n    if (!profiles.some",
     after:
-      'if (["saved", "failed", "restored"].includes(change.phase)) {\n        await this.options.backend.activate(change.uuid);',
+      "if (!pendingNetworkChange(networks)) {\n    await networks.options.backend.activate(change.uuid);\n    if (!profiles.some",
   },
   {
     name: "ap-change-single-shot",
@@ -166,6 +166,106 @@ const MUTATIONS: Mutation[] = [
     before: "[await connection.device()], seconds, 0",
     after: "[], seconds, 0",
     check: "scripts/check-network-dbus.ts",
+  },
+  {
+    name: "dbus-failure-logs-secret-parameters",
+    file: "src/wifi/network-dbus.ts",
+    before: "    } catch (error) {\n      console.warn(`wifi-settings: NetworkManager",
+    after:
+      "    } catch (error) {\n      console.warn(JSON.stringify(parameters));\n      console.warn(`wifi-settings: NetworkManager",
+    check: "scripts/check-network-dbus.ts",
+  },
+  {
+    name: "recovery-activates-excluded-candidate",
+    file: "src/wifi/recovery-profile.ts",
+    before: "if (networkCandidateExcluded(uuid)) continue;",
+    after: "// Mutated candidate exclusion.",
+  },
+  {
+    name: "recovery-activates-unknown-orphan",
+    file: "src/wifi/recovery-profile.ts",
+    before: 'if (/^(?:netplan-)?cool-eva-/.test(name) && autoconnect === "no") continue;',
+    after: "// Mutated orphan exclusion.",
+  },
+  {
+    name: "network-csrf-json-without-header",
+    file: "src/http/networks.ts",
+    before: 'req.headers["x-cool-eva"] !== "settings" ||',
+    after: "false ||",
+    check: "scripts/check-network-http.ts",
+  },
+  {
+    name: "boot-lost-candidate-not-detected",
+    file: "src/wifi/network-reconciliation.ts",
+    before: "if (!profiles.some(profile => profile.uuid === change.uuid)) {",
+    after: "if (false) {",
+  },
+  {
+    name: "netplan-change-lands-in-keyfile",
+    file: "src/wifi/network-save.ts",
+    before: 'if (replaced?.backend === "netplan" && candidate?.backend !== "netplan") {',
+    after: "if (false) {",
+  },
+  {
+    name: "failed-save-keeps-password-in-nm",
+    file: "src/wifi/network-save.ts",
+    before: "await networks.options.backend.discard(uuid);",
+    after: "// Mutated failed candidate cleanup.",
+  },
+  {
+    name: "failed-result-polls-without-bound",
+    file: "src/wifi/network-reconciliation.ts",
+    before: "if (networks.now() >= networks.restorationDeadline) {",
+    after: "if (false) {",
+  },
+  {
+    name: "startup-fault-blocks-existing-recovery",
+    file: "src/wifi/network-startup.ts",
+    before: "  const settings = runtime.store.read();",
+    after:
+      '  const { acquireWifiOperation } = await import("./operation.ts"); acquireWifiOperation("settings");\n  const settings = runtime.store.read();',
+  },
+  {
+    name: "transient-startup-list-is-permanent-fault",
+    file: "src/wifi/network-reconciliation.ts",
+    before: "if (!pendingNetworkChange(networks)) return;",
+    after: "// Mutated boot listing refusal.",
+  },
+  {
+    name: "hotspot-rollback-forgets-confirmed-identity",
+    file: "src/wifi/network-transitions.ts",
+    before: '...(change.purpose === "hotspot" ? { hotspotUuid: change.uuid } : {}),',
+    after: "// Mutated kept hotspot identity.",
+  },
+  {
+    name: "use-previous-leaves-promoted-candidate-autoconnecting",
+    file: "src/wifi/network-transitions.ts",
+    before: "await backend.policy(change.uuid, change.priority, false);",
+    after: "// Mutated candidate quarantine.",
+  },
+  {
+    name: "result-readback-bypasses-operation-queue",
+    file: "src/wifi/networks.ts",
+    before: "return this.serial(() => networkView(this, proof));",
+    after: "return networkView(this, proof);",
+  },
+  {
+    name: "readback-hides-missing-candidate-warning",
+    file: "src/wifi/network-view.ts",
+    before: "if (!change || profiles.some(profile => profile.uuid === change.uuid)) {",
+    after: "if (true) {",
+  },
+  {
+    name: "installer-repair-forgets-hotspot-identity",
+    file: "scripts/configure-network-purposes.ts",
+    before: "...(hotspot ? { hotspotUuid: hotspot.uuid } : {}),",
+    after: "// Mutated installer identity hand-off.",
+  },
+  {
+    name: "resumed-retirement-keeps-rolled-back-hotspot-name",
+    file: "src/wifi/network-transitions.ts",
+    before: 'change.purpose === "hotspot" &&\n      settings.kind === "ready" &&',
+    after: 'false &&\n      settings.kind === "ready" &&',
   },
 ];
 await checkNetworkMutations();

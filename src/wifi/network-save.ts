@@ -49,22 +49,34 @@ export async function saveNetworkDraft(
     validateNetworkDraft({ ...draft, passwordMode: "change", password });
     // Publish the exclusion before NM sees this UUID; a partial save must never reach recovery.
     await networks.persist({ excluded: [...state.excluded, uuid] });
-    await networks.options.backend.add(
-      {
-        uuid,
-        name: `${replaced?.backend === "netplan" ? "netplan-" : ""}cool-eva-${uuid}`,
-        ssid: draft.ssid,
-        priority,
-        autoconnect: false,
-        authRetries: 1,
-        security: "wpa-psk",
-        backend: replaced?.backend ?? "keyfile",
-      },
-      password,
-      draft.hidden
-    );
-    await networks.options.backend.verify(uuid);
+    try {
+      await networks.options.backend.add(
+        {
+          uuid,
+          name: `${replaced?.backend === "netplan" ? "netplan-" : ""}cool-eva-${uuid}`,
+          ssid: draft.ssid,
+          priority,
+          autoconnect: false,
+          authRetries: 1,
+          security: "wpa-psk",
+          backend: replaced?.backend ?? "keyfile",
+        },
+        password,
+        draft.hidden
+      );
+      await networks.options.backend.verify(uuid);
+      const candidate = (await networks.options.backend.list()).find(profile => profile.uuid === uuid);
+      if (replaced?.backend === "netplan" && candidate?.backend !== "netplan") {
+        throw new NetworkRefusal(
+          "This image cannot replace that Netplan connection safely. Use Add to keep the old network separately."
+        );
+      }
+    } catch (error) {
+      await networks.options.backend.discard(uuid);
+      throw error;
+    }
     const previous = state.change;
+    const settings = networks.options.settings.read();
     await networks.persist({
       revision: state.revision + 1,
       change: {
@@ -79,6 +91,9 @@ export async function saveNetworkDraft(
         attempts: 0,
         message: "Saved. Ready to try.",
         resumedAtBoot: false,
+        ...(settings.kind === "ready"
+          ? { previousHotspot: { ssid: settings.document.values.phoneHotspotSsid, uuid: state.hotspotUuid } }
+          : {}),
       },
     });
     if (previous && previous.phase !== "kept") {

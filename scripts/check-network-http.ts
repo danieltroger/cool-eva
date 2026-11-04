@@ -51,6 +51,7 @@ async function checkNetworkHttp(): Promise<void> {
       assert.equal((await fetch(`${base}/${route}`)).status, 405);
       const refusal = await fetch(`${base}/${route}`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: '{"password":"synthetic-private-input"}',
       });
       assert.equal(refusal.status, 403);

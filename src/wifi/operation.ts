@@ -1,5 +1,5 @@
 export function acquireWifiOperation(owner: "recovery" | "settings"): (() => void) | null {
-  if (heldBy !== null || (owner === "recovery" && recoveryPaused)) return null;
+  if (heldBy !== null) return null;
   heldBy = owner;
   let held = true;
   return () => {
@@ -20,8 +20,3 @@ export function networkCandidateExcluded(uuid: string): boolean {
 
 let heldBy: "recovery" | "settings" | null = null;
 let excluded = new Set<string>();
-let recoveryPaused = false;
-
-export function pauseWifiRecovery(paused: boolean): void {
-  recoveryPaused = paused;
-}

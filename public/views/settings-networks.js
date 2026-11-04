@@ -39,6 +39,7 @@ export function WifiNetworksView() {
           )
         : div(),
     () => (networkDraft.val ? NetworkEditor(networkDraft.val) : div()),
+    () => (networks.val?.message ? SettingsCard("Wi-Fi change needs attention", networks.val.message) : div()),
     () => NetworkStatus(),
     () =>
       ["confirming", "promoting", "identity", "retiring"].includes(networks.val?.change?.phase ?? "")
@@ -162,7 +163,7 @@ function NetworkStatus() {
                 disabled: () => !networkConfirmed.val || networkBusy.val,
                 onclick: editSavedNetworkChange,
               },
-              "Edit details"
+              change.phase === "saved" ? "Edit details" : "Edit"
             ),
           ]
         : []),
@@ -170,7 +171,16 @@ function NetworkStatus() {
         ? [TrialButton(change.phase === "saved" ? "Try network" : "Try again")]
         : []),
       ...(change.phase === "saved" ? [Action("Cancel change", cancelNetworkChange)] : []),
-      ...(live ? [Action("Use previous", usePreviousNetwork)] : []),
+      ...(["failed", "restored"].includes(change.phase) ? [Action("Dismiss", cancelNetworkChange)] : []),
+      ...(["failed", "restored", "kept"].includes(change.phase)
+        ? [
+            Action("Read again", async () => {
+              await refreshNetworks();
+              return true;
+            }),
+          ]
+        : []),
+      ...(live || (current.message && networkOperationActive()) ? [Action("Use previous", usePreviousNetwork)] : []),
       ...(change.phase === "waiting" && current.canKeep ? [Action("Keep network", keepNetwork)] : [])
     )
   );

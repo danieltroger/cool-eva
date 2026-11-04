@@ -38,11 +38,11 @@ export class FakeNetworkManager implements NetworkBackend {
       throw new Error("Persistent profile mismatch");
     }
   };
-  policy = async (uuid: string, priority: number): Promise<void> => {
+  policy = async (uuid: string, priority: number, confirmed = true): Promise<void> => {
     this.trip("policy");
     this.events.push("policy");
     const profile = this.profiles.get(uuid)!;
-    Object.assign(profile, { autoconnect: true, authRetries: 0, priority });
+    Object.assign(profile, { autoconnect: confirmed, authRetries: confirmed ? 0 : 1, priority });
     this.disk.set(uuid, structuredClone(profile));
   };
   remove = async (uuid: string): Promise<void> => {
@@ -50,7 +50,9 @@ export class FakeNetworkManager implements NetworkBackend {
     this.events.push(`remove:${uuid}`);
     this.profiles.delete(uuid);
     this.disk.delete(uuid);
+    this.passwords.delete(uuid);
   };
+  discard = async (uuid: string): Promise<void> => this.remove(uuid);
   activate = async (uuid: string): Promise<void> => {
     this.events.push(`activate:${uuid}`);
     const profile = this.profiles.get(uuid);

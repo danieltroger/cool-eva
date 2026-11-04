@@ -35,6 +35,7 @@ export interface NetworkChange {
   attempts: number;
   message: string;
   resumedAtBoot: boolean;
+  previousHotspot?: { ssid: string; uuid?: string };
 }
 
 export interface NetworkLedger {
@@ -42,6 +43,7 @@ export interface NetworkLedger {
   instanceId: string;
   revision: number;
   purposes: Record<string, NetworkPurpose>;
+  hotspotUuid?: string;
   excluded: string[];
   change: NetworkChange | null;
 }
@@ -57,8 +59,9 @@ export interface NetworkBackend {
   add: (profile: NetworkProfile, password: string, hidden: boolean) => Promise<void>;
   secret: (uuid: string) => Promise<string>;
   verify: (uuid: string, absent?: boolean, backend?: NetworkProfile["backend"]) => Promise<void>;
-  policy: (uuid: string, priority: number) => Promise<void>;
+  policy: (uuid: string, priority: number, confirmed?: boolean) => Promise<void>;
   remove: (uuid: string) => Promise<void>;
+  discard: (uuid: string) => Promise<void>;
   activate: (uuid: string) => Promise<void>;
   deactivate: (uuid: string) => Promise<void>;
   checkpoint: (seconds: number) => Promise<string>;
@@ -82,6 +85,7 @@ export interface NetworkView {
   remainingMs: number | null;
   canKeep: boolean;
   viaBluetooth: boolean;
+  observingRestoration: boolean;
 }
 
 export interface NetworkRequestIdentity {

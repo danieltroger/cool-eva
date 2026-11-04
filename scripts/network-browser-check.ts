@@ -1,5 +1,6 @@
 import assert from "assert/strict";
 import { evaluateOnPage, gotoPage, waitOnPage, type HeadlessPage } from "./headless-page.ts";
+import { checkNetworkPurposeBrowser } from "./network-purpose-browser.ts";
 
 export async function checkNetworkBrowser(page: HeadlessPage, previewFile: string): Promise<void> {
   const base = `file://${previewFile}?scene=parked&panel=settings&section=networks`;
@@ -50,6 +51,7 @@ export async function checkNetworkBrowser(page: HeadlessPage, previewFile: strin
       assert.equal(await evaluateOnPage(page, "document.body.innerText.includes('profile was replaced')"), true);
     }
   }
+  await checkNetworkPurposeBrowser(page, base);
   await gotoPage(page, `${base}&network-state=list&editor-check=1`);
   await waitOnPage(page, "document.body.innerText.includes('Synthetic home')", "network editor readback");
   await evaluateOnPage(
@@ -148,7 +150,7 @@ export async function checkNetworkBrowser(page: HeadlessPage, previewFile: strin
 async function assertPhoneLayout(page: HeadlessPage, state: string): Promise<void> {
   const layout = await evaluateOnPage(
     page,
-    "({width:innerWidth,scroll:document.body.scrollWidth,targets:[...document.querySelectorAll('.settings-page button')].filter(button=>button.offsetParent!==null).every(button=>{const rect=button.getBoundingClientRect();return rect.width>=44&&rect.height>=44})})"
+    "({width:innerWidth,scroll:document.body.scrollWidth,targets:[...document.querySelectorAll('.settings-page button')].filter(button=>button.offsetParent!==null).every(button=>{const rect=button.getBoundingClientRect();return rect.width>=44&&rect.height>=44&&rect.left>=0&&rect.right<=innerWidth})})"
   );
   const measured = layout as { width: number; scroll: number; targets: boolean };
   assert.equal(measured.width, 390, state);

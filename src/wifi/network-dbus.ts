@@ -14,8 +14,9 @@ export function createNetworkBackend(
     add: (profile, password, hidden) => connection.add(profile, password, hidden),
     secret: uuid => connection.secret(uuid),
     verify: (uuid, absent, backend) => connection.verify(uuid, absent, backend),
-    policy: (uuid, priority) => connection.policy(uuid, priority),
+    policy: (uuid, priority, confirmed) => connection.policy(uuid, priority, confirmed),
     remove: uuid => connection.remove(uuid),
+    discard: uuid => connection.remove(uuid, false),
     activate: async uuid => {
       await connection.manager("ActivateConnection", await connection.path(uuid), await connection.device(), "/");
     },
@@ -66,8 +67,8 @@ class NetworkDbus {
           timer = setTimeout(() => reject(new Error("deadline")), 8_000);
         }),
       ]);
-    } catch {
-      console.warn(`wifi-settings: NetworkManager ${method} did not confirm; arguments and errors are redacted`);
+    } catch (error) {
+      console.warn(`wifi-settings: NetworkManager ${method} failed (${dbusErrorName(error)}); no values logged`);
       this.proxies.delete(path);
       // NM errors can echo the settings dictionary, including a submitted secret.
       throw new NetworkRefusal("NetworkManager did not confirm the operation. Read this Pi again before trying it.");
@@ -176,20 +177,20 @@ class NetworkDbus {
     }
     return password;
   }
-  async policy(uuid: string, priority: number): Promise<void> {
+  async policy(uuid: string, priority: number, confirmed = true): Promise<void> {
     const path = await this.path(uuid);
     const settings = await this.settings(path);
     const secret = await this.secret(uuid);
-    settings.connection.autoconnect = new dbus.Variant("b", true);
-    settings.connection["auth-retries"] = new dbus.Variant("i", 0);
+    settings.connection.autoconnect = new dbus.Variant("b", confirmed);
+    settings.connection["auth-retries"] = new dbus.Variant("i", confirmed ? 0 : 1);
     settings.connection["autoconnect-priority"] = new dbus.Variant("i", priority);
     settings["802-11-wireless-security"].psk = new dbus.Variant("s", secret);
     await this.call(path, CONNECTION, "Update2", settings, 1, {});
-    const confirmed = await this.settings(path);
+    const readback = await this.settings(path);
     if (
-      value(confirmed, "connection", "autoconnect") !== true ||
-      value(confirmed, "connection", "auth-retries") !== 0 ||
-      value(confirmed, "connection", "autoconnect-priority") !== priority
+      value(readback, "connection", "autoconnect") !== confirmed ||
+      value(readback, "connection", "auth-retries") !== (confirmed ? 0 : 1) ||
+      value(readback, "connection", "autoconnect-priority") !== priority
     ) {
       throw new NetworkRefusal("The confirmed network policy could not be verified.");
     }
@@ -209,10 +210,12 @@ class NetworkDbus {
     }
     await this.persistence(uuid, absent ? null : known.filename, known.netplan, absent);
   }
-  async remove(uuid: string): Promise<void> {
+  async remove(uuid: string, verifyBefore = true): Promise<void> {
     const profiles = await this.list();
     if (!profiles.some(profile => profile.uuid === uuid)) return;
-    await this.verify(uuid);
+    if (verifyBefore) {
+      await this.verify(uuid);
+    }
     await this.call(await this.path(uuid), CONNECTION, "Delete");
     await this.verify(uuid, true);
   }
@@ -251,6 +254,12 @@ type SettingsMap = Record<string, Record<string, dbus.Variant<unknown>>>;
 const SERVICE = "org.freedesktop.NetworkManager";
 const ROOT = "/org/freedesktop/NetworkManager";
 const CONNECTION = `${SERVICE}.Settings.Connection`;
+function dbusErrorName(error: unknown): string {
+  const name = error && typeof error === "object" && "type" in error ? error.type : null;
+  return typeof name === "string" && /^(?:[A-Za-z_][A-Za-z0-9_]*\.)+[A-Za-z_][A-Za-z0-9_]*$/.test(name)
+    ? name
+    : "UnknownError";
+}
 function value(settings: SettingsMap, group: string, key: string): unknown {
   return settings[group]?.[key]?.value;
 }

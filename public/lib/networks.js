@@ -251,7 +251,13 @@ van.derive(() => {
   }
 });
 setInterval(() => {
-  if (destination.rawVal === "settings" && destinationSection.rawVal === "networks") {
+  const current = networks.rawVal;
+  const terminal = ["failed", "restored", "kept"].includes(current?.change?.phase ?? "");
+  if (
+    destination.rawVal === "settings" &&
+    destinationSection.rawVal === "networks" &&
+    (!networkConfirmed.rawVal || !terminal || current?.observingRestoration)
+  ) {
     void refreshNetworks();
   }
 }, 1_500);

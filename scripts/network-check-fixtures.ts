@@ -3,7 +3,13 @@ import { join } from "path";
 import { freshSettings } from "../src/settings/schema.ts";
 import { WifiNetworks } from "../src/wifi/networks.ts";
 import { openNetworkLedger } from "../src/wifi/network-ledger.ts";
-import type { NetworkProfile, NetworkPhase } from "../src/wifi/network-types.ts";
+import type {
+  NetworkProfile,
+  NetworkPhase,
+  NetworkDraft,
+  NetworkRequestIdentity,
+  NetworkProof,
+} from "../src/wifi/network-types.ts";
 import { FakeNetworkManager } from "./fake-network-manager.ts";
 import { settingsFixture, closeSettingsFixture } from "./settings-check-fixtures.ts";
 
@@ -115,3 +121,27 @@ export const HOTSPOT: NetworkProfile = {
   ssid: "Synthetic hotspot",
   priority: 10,
 };
+
+export function networkIdentity(networks: WifiNetworks): NetworkRequestIdentity {
+  const state = networks.state();
+  return {
+    instanceId: state.instanceId,
+    generation: networks.generation,
+    revision: state.revision,
+    settingsRevision: networks.settingsRevision(),
+  };
+}
+export function networkDraft(): NetworkDraft {
+  return {
+    ssid: "Synthetic replacement",
+    purpose: "home",
+    replacedUuid: HOME.uuid,
+    passwordMode: "change",
+    password: PASSWORD,
+    hidden: false,
+    accessPointChange: true,
+    bluetoothTested: true,
+  };
+}
+export const BLE: NetworkProof = { localAddress: "127.0.0.1", remoteAddress: "127.0.0.1", tunnel: true };
+export const WIFI: NetworkProof = { localAddress: "192.0.2.30", remoteAddress: "192.0.2.40", tunnel: false };

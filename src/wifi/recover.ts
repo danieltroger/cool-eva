@@ -2,11 +2,11 @@ import { uptime } from "os";
 import { ageMs, freshValue, record } from "../can/signals.ts";
 import { monotonicNow, since } from "../monotonic.ts";
 import type { HoldGesture } from "../gestures/runner.ts";
-import { COMMAND_TIMEOUT_MS } from "./collect.ts";
 import { writeWifiDump } from "./dump.ts";
 import { NMCLI, runCommand } from "./nmcli.ts";
-import { acquireWifiOperation, networkCandidateExcluded } from "./operation.ts";
-import { WIFI_LINK_STATE, parseWifiList, parseWifiProfileNames, type WifiLinkState } from "./parse.ts";
+import { acquireWifiOperation } from "./operation.ts";
+import { hotspotProfileUuid } from "./recovery-profile.ts";
+import { WIFI_LINK_STATE, parseWifiList, type WifiLinkState } from "./parse.ts";
 import {
   HOLD_ACTION,
   REJOIN_OUTCOME,
@@ -186,12 +186,12 @@ function outcomeOf(attempt: { ok: boolean; profile: string | null }): RejoinOutc
  * this must never run on the poll path, whose contract is 2 × WIFI_POLL_TIMEOUT_MS <
  * WIFI_POLL_MS.
  */
-function realEffects(context: RecoverContext): LadderEffects {
+export function realEffects(context: RecoverContext, command: typeof runCommand = runCommand): LadderEffects {
   return {
     dump: () =>
       context.dumpDirectory === null ? refusedDump() : writeWifiDump(context.dumpDirectory, context.iface, uptime()),
     scanShowsHotspot: async () => {
-      const list = await runCommand(
+      const list = await command(
         NMCLI,
         ["-t", "-f", "ACTIVE,SSID,SIGNAL", "device", "wifi", "list", "--rescan", "yes"],
         RESCAN_TIMEOUT_MS
@@ -203,13 +203,13 @@ function realEffects(context: RecoverContext): LadderEffects {
       return parseWifiList(list.stdout, context.hotspotSsid).hotspotSeen;
     },
     activate: async () => {
-      const profile = await hotspotProfileUuid(context.hotspotSsid);
+      const profile = await hotspotProfileUuid(context.hotspotSsid, command);
       if (profile === null) {
         console.warn("wifi-recover: no saved profile carries the configured SSID — nothing to activate");
         return { ok: false, profile: null };
       }
       // UUID keeps same-SSID candidates out of explicit recovery as well as autoconnect.
-      const up = await runCommand(NMCLI, ["connection", "up", "uuid", profile], ACTIVATE_TIMEOUT_MS);
+      const up = await command(NMCLI, ["connection", "up", "uuid", profile], ACTIVATE_TIMEOUT_MS);
       if (up.exitCode !== 0) {
         console.warn(`wifi-recover: activating "${profile}" failed: ${up.stderr.trim() || up.stdout.trim()}`);
       }
@@ -221,27 +221,6 @@ function realEffects(context: RecoverContext): LadderEffects {
 /** ⚠️ Generous, because `--rescan yes` waits on real scan results. */
 const RESCAN_TIMEOUT_MS = 25_000;
 const ACTIVATE_TIMEOUT_MS = 30_000;
-
-/** Which saved profile carries the configured SSID. */
-async function hotspotProfileUuid(hotspotSsid: string): Promise<string | null> {
-  const listing = await runCommand(NMCLI, ["-t", "-f", "UUID,TYPE", "connection", "show"], COMMAND_TIMEOUT_MS);
-  if (listing.exitCode !== 0) {
-    console.warn(`wifi-recover: ${listing.command} exited ${listing.exitCode}: ${listing.stderr.trim()}`);
-    return null;
-  }
-  for (const name of parseWifiProfileNames(listing.stdout)) {
-    if (networkCandidateExcluded(name)) continue;
-    const ssid = await runCommand(
-      NMCLI,
-      ["-g", "802-11-wireless.ssid", "connection", "show", "uuid", name],
-      COMMAND_TIMEOUT_MS
-    );
-    if (ssid.exitCode === 0 && ssid.stdout.trim() === hotspotSsid) {
-      return name;
-    }
-  }
-  return null;
-}
 
 /** Re-records both on every poll, so the group never reads part-dark. ./status.ts calls it. */
 export function republishRejoin(): void {

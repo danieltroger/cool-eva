@@ -5,6 +5,7 @@ import { acquireWifiOperation, excludeNetworkCandidates } from "./operation.ts";
 import type { NetworkLedgerStore } from "./network-ledger.ts";
 import { saveNetworkDraft } from "./network-save.ts";
 import { finaliseNetwork, restoreNetwork } from "./network-transitions.ts";
+import { reconcileNetworkStart, observeNetworkRestoration, pendingNetworkChange } from "./network-reconciliation.ts";
 import {
   NetworkRefusal,
   type NetworkBackend,
@@ -21,6 +22,7 @@ export class WifiNetworks {
   deadline: number | null = null;
   attemptAt: number | null = null;
   nextAttempt = 0;
+  restorationDeadline: number | null = null;
   fault = "";
   releaseWifi: (() => void) | null = null;
   reservation: Awaited<ReturnType<SettingsStore["reserve"]>> | null = null;
@@ -34,42 +36,7 @@ export class WifiNetworks {
   }
 
   async start(): Promise<void> {
-    await this.serial(async () => {
-      const profiles = await this.options.backend.list();
-      const state = this.state();
-      const orphans = profiles
-        .filter(profile => /^(?:netplan-)?cool-eva-/.test(profile.name) && !profile.autoconnect)
-        .map(profile => profile.uuid)
-        .filter(uuid => !state.excluded.includes(uuid));
-      if (orphans.length) {
-        await this.persist({ excluded: [...state.excluded, ...orphans] });
-      }
-      const change = this.state().change;
-      if (!change || change.phase === "kept") return;
-      if (["saved", "failed", "restored"].includes(change.phase)) {
-        if (!(await this.options.backend.list()).some(profile => profile.uuid === change.uuid)) {
-          await this.persist({
-            change: {
-              ...change,
-              phase: "failed",
-              message: "Saved network change could not be restored; enter its details again.",
-            },
-          });
-        }
-        return;
-      }
-      await this.take(this.settingsRevision());
-      try {
-        await this.persist({ change: { ...change, resumedAtBoot: true } });
-        if (["confirming", "promoting", "identity", "retiring"].includes(change.phase)) {
-          await finaliseNetwork(this);
-        } else {
-          await restoreNetwork(this, "The trial was interrupted. It will not run at power-on.");
-        }
-      } finally {
-        await this.release();
-      }
-    }).catch(() => {
+    await this.serial(() => reconcileNetworkStart(this)).catch(() => {
       this.fault =
         "Network change recovery needs repair. Wi-Fi may switch at power-on after an interrupted confirmation.";
       console.warn("wifi-settings: interrupted network change could not be reconciled; no values logged");
@@ -102,7 +69,7 @@ export class WifiNetworks {
   }
 
   view(proof: NetworkProof): Promise<NetworkView> {
-    return networkView(this, proof);
+    return this.serial(() => networkView(this, proof));
   }
 
   save(identity: NetworkRequestIdentity, draft: NetworkDraft, fromBluetooth: boolean): Promise<void> {
@@ -134,6 +101,7 @@ export class WifiNetworks {
             resumedAtBoot: false,
           },
         });
+        this.restorationDeadline = null;
         const trialStarted = this.now();
         const checkpoint = await this.options.backend.checkpoint(CHECKPOINT_SECONDS);
         this.deadline = trialStarted + TRIAL_MS;
@@ -153,19 +121,8 @@ export class WifiNetworks {
 
   tick(): Promise<void> {
     return this.serial(async () => {
+      await observeNetworkRestoration(this);
       const change = this.state().change;
-      if (change && ["failed", "restored"].includes(change.phase) && change.fallback) {
-        const active = await this.options.backend.active();
-        if (active?.uuid === change.fallback.uuid && change.phase !== "restored") {
-          await this.persist({
-            change: {
-              ...change,
-              phase: "restored",
-              message: `Could not confirm ${change.ssid}. Reconnected to ${change.fallback.ssid}.`,
-            },
-          });
-        }
-      }
       if (this.deadline === null || !change || !["trying", "waiting"].includes(change.phase)) return;
       if (this.now() >= this.deadline) {
         try {
@@ -219,7 +176,7 @@ export class WifiNetworks {
   keep(identity: NetworkRequestIdentity, proof: NetworkProof): Promise<void> {
     return this.serial(async () => {
       this.check(identity);
-      const view = await this.view(proof);
+      const view = await networkView(this, proof);
       if (!view.canKeep) {
         throw new NetworkRefusal("Open this Pi's address on the new Wi-Fi before keeping the network.");
       }
@@ -237,12 +194,16 @@ export class WifiNetworks {
 
   previous(identity: NetworkRequestIdentity): Promise<void> {
     return this.serial(async () => {
-      this.check(identity);
+      this.check(identity, true);
       if (!this.releaseWifi) {
-        throw new NetworkRefusal("There is no live trial to cancel. Read back its result.");
+        if (!pendingNetworkChange(this)) {
+          throw new NetworkRefusal("There is no live trial to cancel. Read back its result.");
+        }
+        await this.take(identity.settingsRevision);
       }
       try {
         await restoreNetwork(this, "The network trial was cancelled.");
+        this.fault = "";
       } finally {
         await this.release();
       }
@@ -253,13 +214,14 @@ export class WifiNetworks {
     return this.serial(async () => {
       this.check(identity);
       const change = this.state().change;
-      if (!change || change.phase !== "saved") {
+      if (!change || !["saved", "failed", "restored"].includes(change.phase)) {
         throw new NetworkRefusal("Use previous during a live trial, or read its result.");
       }
       await this.take(identity.settingsRevision);
       try {
         await this.options.backend.remove(change.uuid);
         await this.persist({ revision: this.state().revision + 1, change: null });
+        this.restorationDeadline = null;
       } finally {
         await this.release();
       }
@@ -268,13 +230,17 @@ export class WifiNetworks {
 
   maintenance(identity: NetworkRequestIdentity): Promise<void> {
     return this.serial(async () => {
-      this.check(identity);
+      this.check(identity, true);
+      if (!this.releaseWifi && pendingNetworkChange(this)) {
+        await this.take(identity.settingsRevision);
+      }
       if (this.releaseWifi) {
         try {
           await restoreNetwork(
             this,
             "Installation maintenance interrupted the trial. Try again explicitly when ready."
           );
+          this.fault = "";
         } finally {
           await this.release();
         }
@@ -334,9 +300,9 @@ export class WifiNetworks {
       throw new NetworkRefusal("Wait until the motorcycle is proven parked before trying Wi-Fi.");
     }
   }
-  private check(identity: NetworkRequestIdentity): void {
+  private check(identity: NetworkRequestIdentity, allowRecovery = false): void {
     const state = this.state();
-    if (this.fault) {
+    if (this.fault && !allowRecovery) {
       throw new NetworkRefusal(this.fault);
     }
     if (

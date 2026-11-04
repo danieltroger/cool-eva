@@ -1,14 +1,16 @@
 // Synthetic Wi-Fi fixtures only; the shipped editor/status views render these responses.
+const NETWORK_PURPOSE =
+  new URL(window.location.href).searchParams.get("network-purpose") === "hotspot" ? "hotspot" : "home";
 const NETWORK_PROFILE = {
   uuid: "00000000-0000-4000-8000-000000000001",
-  name: "Synthetic home profile",
-  ssid: "Synthetic home",
+  name: `Synthetic ${NETWORK_PURPOSE} profile`,
+  ssid: `Synthetic ${NETWORK_PURPOSE}`,
   priority: 20,
   autoconnect: true,
   authRetries: 0,
   security: "wpa-psk",
   backend: "keyfile",
-  purpose: "home",
+  purpose: NETWORK_PURPOSE,
 };
 const NETWORK_CHANGE = {
   uuid: "00000000-0000-4000-8000-000000000003",
@@ -37,7 +39,9 @@ const NETWORKS = {
   remainingMs: null,
   canKeep: false,
   viaBluetooth: true,
+  observingRestoration: false,
 };
+let NETWORK_READS = 0;
 if (NETWORKS.change) {
   if (NETWORK_SCENE === "trying") {
     NETWORKS.change.phase = "trying";
@@ -73,6 +77,7 @@ function networkPreview(path, method, init) {
     return json({ ok: false, message: "Lost contact with Cool Eva. Network result unconfirmed." }, 503);
   }
   if (path === "/settings/networks" && method === "GET") {
+    NETWORK_READS++;
     NETWORKS.settingsRevision = SETTINGS.revision;
     return json(NETWORKS);
   }

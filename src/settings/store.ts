@@ -168,7 +168,9 @@ export async function openSettingsStore(
     reserve: (expectedRevision, kind = "restart") =>
       serial("reserve restart", async () => {
         if (reservation !== null) {
-          throw new Error("A restart is already reserved.");
+          throw new Error(
+            reservationKind === "network" ? "A Wi-Fi trial is running." : "A restart is already reserved."
+          );
         }
         const revision = loaded.kind === "ready" ? loaded.document.revision : null;
         if (expectedRevision !== revision) {
