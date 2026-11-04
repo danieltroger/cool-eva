@@ -12,6 +12,7 @@ export async function checkMigrationFailures(directory: string, repository: stri
     ["completed-stop", "Service stop timed out", false],
     ["legacy-checkout", "checkout could not be identified", true],
     ["legacy-conflict", "Destination conflict; preserve both folders", true],
+    ["legacy-corrupt", "Stored configuration could not be read.", true],
   ] as const) {
     const fixture = join(directory, mode);
     await mkdir(fixture);
@@ -48,12 +49,18 @@ export async function checkMigrationFailures(directory: string, repository: stri
     const messages: string[] = [];
     printInstallationFailure(failure, (...values) => messages.push(values.join(" ")));
     const output = messages.join("\n");
+    if (mode === "legacy-corrupt") {
+      assert(failure instanceof MigrationNeedsHelpError);
+      assert(failure.cause instanceof SyntaxError);
+      assert.match(failure.cause.message, /SYNTHETIC/, "The parser excerpt must contain the synthetic secret");
+      assert(!output.includes("SYNTHETIC"), "Migration parse errors must hide synthetic secret fragments");
+    }
     assert(output.includes(reason), output);
     assert.equal(output.includes("Stop and ask for help"), needsHelp, output);
     assert.equal(output.includes("paste the same setup line"), !needsHelp, output);
   }
   console.log(
-    "Migration advice: fresh/completed failures resume; only legacy failures ask for help and print the cause message."
+    "Migration advice: fresh/completed failures resume; legacy failures ask for help, with parser excerpts redacted."
   );
 }
 
@@ -62,14 +69,17 @@ function preparationAdapter(mode: string): string {
 export async function readFile(){return '{}';}
 export function settingsPaths(){return {settingsFile:'/synthetic/settings.json'};}
 export function parseSettingsDocument(){return {document:{migration:{complete:true}}};}
-export async function exists(path){return path.endsWith('settings.json') ? mode.startsWith('completed') : path.endsWith('src/index.ts') && mode==='legacy-conflict';}
+export async function exists(path){return path.endsWith('settings.json') ? mode.startsWith('completed') : path.endsWith('src/index.ts') && (mode==='legacy-conflict'||mode==='legacy-corrupt');}
 export async function unitLoadState(unit){return mode==='fresh-failure'||unit!=='cool-eva.service'?'not-found':'loaded';}
 export async function selectInitialRelease(){if(mode==='fresh-failure'){throw new Error('Fresh release selection failed');}}
-export async function verifyReleaseStorage(){if(mode==='completed-storage'){throw new Error('Storage verification failed');}}
+export async function verifyReleaseStorage(){
+ if(mode==='completed-storage'){throw new Error('Storage verification failed');}
+ if(mode==='legacy-corrupt'){JSON.parse('{"dashboardBluetoothSecret":SYNTHETIC-SECRET}');}
+}
 export async function command(name,args){
  if(args[0]==='show'){return mode==='legacy-checkout'?'relative':'/synthetic/checkout';}
  if(args[0]==='stop'&&mode==='completed-stop'){throw new Error('Service stop timed out');}
- if(args[0]==='restart'){throw new Error('Destination conflict; preserve both folders');}
+ if(args[0]==='restart'&&mode==='legacy-conflict'){throw new Error('Destination conflict; preserve both folders');}
  return '';
 }
 export async function installFile(){}

@@ -10,7 +10,11 @@ export function printInstallationFailure(error: unknown, log: (...values: unknow
   if (error instanceof MigrationNeedsHelpError) {
     log(
       "Migration failure in the existing service:",
-      error.cause instanceof Error ? error.cause.message : "unknown error"
+      error.cause instanceof SyntaxError
+        ? "Stored configuration could not be read."
+        : error.cause instanceof Error
+          ? error.cause.message
+          : "unknown error"
     );
   }
   log(installationFailureAdvice(error));
