@@ -5,7 +5,7 @@ import { bluetoothCodeId, type SettingsRuntime } from "../settings/startup.ts";
 import { pendingSettings, record } from "../settings/schema.ts";
 import { validateSettingsPatch } from "../settings/validation.ts";
 import { publicSettings, type SettingsReply, type HubCandidate } from "../settings/view.ts";
-import type { SettingsRestart } from "../settings/restart.ts";
+import type { SettingsRestart, RestartOperation } from "../settings/restart.ts";
 import { retiredLegacyChoices } from "../settings/legacy.ts";
 import { csrfRefusal } from "./mutation-guard.ts";
 
@@ -17,6 +17,9 @@ export async function handleSettingsEndpoint(
 ): Promise<void> {
   try {
     if (path === "/settings" && req.method === "GET") {
+      if (context.readVersion) {
+        context.version = await context.readVersion();
+      }
       respond(res, 200, settingsReply(context));
       return;
     }
@@ -58,7 +61,7 @@ export async function handleSettingsEndpoint(
     if (path === "/settings/apply") {
       const fromBluetooth =
         req.headers["x-cool-eva-tunnel"] === "1" &&
-        (req.socket.remoteAddress === "127.0.0.1" || req.socket.remoteAddress === "::1");
+        ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress ?? "");
       const reserved = await reserveSettingsRestart(req, body, context);
       let finished: () => void = () => {};
       const delivery = new Promise<void>(resolve => {
@@ -123,6 +126,7 @@ export async function handleSettingsEndpoint(
 
 export interface SettingsHttpContext {
   version?: string;
+  readVersion?: () => Promise<string>;
   runtime: SettingsRuntime;
   restart: SettingsRestart;
   codeDirectory: string;
@@ -191,23 +195,37 @@ export async function readSettingsBody(req: IncomingMessage): Promise<unknown> {
 export async function reserveSettingsRestart(
   req: IncomingMessage,
   body: Record<string, unknown>,
-  context: SettingsHttpContext
+  context: SettingsHttpContext,
+  operation?: RestartOperation
 ): Promise<boolean> {
   if (typeof body.expectedGeneration !== "string" || (body.revision !== null && !Number.isSafeInteger(body.revision))) {
     throw new Error("Reload settings before restarting.");
   }
   if (body.expectedGeneration !== context.restart.generation) return false;
-  const view = settingsReply(context);
   const fromBluetooth =
-    req.headers["x-cool-eva-tunnel"] === "1" && ["127.0.0.1", "::1"].includes(req.socket.remoteAddress ?? "");
+    req.headers["x-cool-eva-tunnel"] === "1" &&
+    ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress ?? "");
+  validateRestartBluetoothKey(body, context, fromBluetooth);
+  return context.restart.reserve(
+    body.expectedGeneration,
+    body.revision === null ? null : Number(body.revision),
+    operation
+  );
+}
+
+export function validateRestartBluetoothKey(
+  body: Record<string, unknown>,
+  context: SettingsHttpContext,
+  fromBluetooth: boolean
+): void {
+  if (!fromBluetooth) return;
+  const view = settingsReply(context);
   if (
-    fromBluetooth &&
     view.saved.bluetoothCodeId !== view.active.bluetoothCodeId &&
     (!view.saved.bluetoothCodeId || body.bluetoothCodeId !== view.saved.bluetoothCodeId)
   ) {
     throw new Error("Save this Pi’s pending Bluetooth key on this phone, or reconnect over Wi-Fi, before restarting.");
   }
-  return context.restart.reserve(body.expectedGeneration, body.revision === null ? null : Number(body.revision));
 }
 
 function respond(res: ServerResponse, status: number, value: unknown): void {

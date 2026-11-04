@@ -30,14 +30,14 @@ export function createSettingsRestart(options: RestartOptions): SettingsRestart 
   return {
     generation,
     status: () => ({ ...status }),
-    reserve: async (expectedGeneration, revision) => {
+    reserve: async (expectedGeneration, revision, operation) => {
       if (expectedGeneration !== generation) return false;
       if (reserving || releaseSettings || status.state === "stopping") return false;
       reserving = true;
       try {
         const blockers = options.motionBlockers();
         if (blockers.length > 0) {
-          throw new Error(`Wait until the motorcycle is parked: ${blockers.join("; ")}.`);
+          throw new RestartMotionError(`Wait until the motorcycle is parked: ${blockers.join("; ")}.`);
         }
         const reservation = await options.store.reserve(revision);
         releaseSettings = reservation.release;
@@ -47,7 +47,7 @@ export function createSettingsRestart(options: RestartOptions): SettingsRestart 
         }
         lease = admission.lease;
         if (options.motionBlockers().length > 0) {
-          throw new Error("The motorcycle started moving. Park it before restarting.");
+          throw new RestartMotionError("The motorcycle started moving. Park it before restarting.");
         }
         status = { state: "reserved", message: "Restart reserved. Readings and recording will pause." };
         delivering = false;
@@ -58,9 +58,26 @@ export function createSettingsRestart(options: RestartOptions): SettingsRestart 
             console.warn("settings: could not release an expired restart", error)
           );
         }, options.stopTimeoutMs ?? 30_000);
+        if (operation) {
+          try {
+            await bounded(
+              () => operation(() => status.state === "reserved" && lease === reservedLease),
+              options.scheduleTimeoutMs ?? 5_000,
+              true
+            );
+          } finally {
+            if (status.state !== "stopping") {
+              clearTimeout(deadline);
+              status = { state: "idle", message: "" };
+              await release();
+            }
+          }
+        }
         return true;
       } catch (error) {
-        await release();
+        if (status.state !== "stopping") {
+          await release();
+        }
         throw error;
       } finally {
         reserving = false;
@@ -99,6 +116,10 @@ export function createSettingsRestart(options: RestartOptions): SettingsRestart 
   };
 }
 
+export class RestartMotionError extends Error {
+  name = "RestartMotionError";
+}
+
 export interface RestartOptions {
   store: SettingsStore;
   motionBlockers: () => string[];
@@ -112,11 +133,12 @@ export interface RestartOptions {
 export interface SettingsRestart {
   generation: string;
   status: () => SettingsReply["restart"];
-  reserve: (expectedGeneration: string, revision: number | null) => Promise<boolean>;
+  reserve: (expectedGeneration: string, revision: number | null, operation?: RestartOperation) => Promise<boolean>;
   deliverAndSchedule: (waitForDelivery: () => Promise<void>, beforeSchedule?: () => Promise<void>) => Promise<void>;
   consume: () => void;
   close: () => Promise<void>;
 }
+export type RestartOperation = (stillReserved: () => boolean) => Promise<void>;
 async function scheduleRestart(): Promise<void> {
   await promisify(execFile)("systemctl", ["--no-block", "restart", "cool-eva"], { timeout: 5_000 });
 }

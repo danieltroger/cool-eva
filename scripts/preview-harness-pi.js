@@ -168,6 +168,17 @@ window.fetch = function previewFetch(input, init) {
   if (path === "/status") {
     return json(STATUS);
   }
+  if (path === "/update-status") {
+    if (new URLSearchParams(location.search).get("update") === "trial") {
+      return json({ sequence: 1, running: true, ok: true, message: "Trying the new release for 60 seconds…" });
+    }
+    return json({
+      sequence: 1,
+      running: false,
+      ok: false,
+      message: "The new release failed its check. The previous release is running.",
+    });
+  }
   if (path === "/waypoint") {
     STATUS.waypoints += 1;
     // The three signals go out too, because that is what the bike does: record()
@@ -199,6 +210,17 @@ window.fetch = function previewFetch(input, init) {
     });
   }
   if (path === "/update") {
+    if (["bundle", "trial"].includes(new URLSearchParams(location.search).get("update"))) {
+      return json(
+        {
+          ok: true,
+          sequence: 1,
+          settings: SETTINGS,
+          message: "Checking for an update. The dashboard will reconnect after the release is checked.",
+        },
+        202
+      );
+    }
     // A FAILED pull, deliberately: it is the reply that exercises all three of the
     // note's claims at once — the newlines survive (white-space: pre-wrap), the long
     // URL wraps instead of widening the sheet (overflow-wrap: anywhere), and `ok:

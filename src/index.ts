@@ -21,6 +21,10 @@ import { handleWaypointEndpoint } from "./http/waypoint.ts";
 import { handleStatusEndpoint } from "./http/status.ts";
 import { handleCanRestartEndpoint } from "./http/can-restart.ts";
 import { handleUpdateEndpoint } from "./http/update.ts";
+import { handleReleaseHealth } from "./http/release-health.ts";
+import { handleUpdateStatus } from "./http/bundle-update.ts";
+import { handleBundleStop } from "./http/bundle-stop.ts";
+import { managedCodeRoot, readReleaseMetadata } from "./release/metadata.ts";
 import { handleDtcTableEndpoint } from "./http/dtc-table.ts";
 import { handleFaultInfokeysEndpoint } from "./http/fault-infokeys.ts";
 import { handleStoredDtcsEndpoint } from "./http/stored-dtcs.ts";
@@ -86,6 +90,8 @@ const ROOT = join(__dirname, "..");
 const PORT = 80;
 const CAN_IFACE = "can0";
 
+// Missing bundle metadata must fail startup so the retained shell helper can roll back.
+const bundleMetadata = await readReleaseMetadata(ROOT);
 const settingsRuntime = await startSettings({
   codeDirectory: ROOT,
   workingDirectory: process.cwd(),
@@ -459,8 +465,9 @@ const settingsRestart = createSettingsRestart({
 const settingsHttp = {
   runtime: settingsRuntime,
   restart: settingsRestart,
-  codeDirectory: ROOT,
+  codeDirectory: managedCodeRoot(ROOT, bundleMetadata),
   version: runningVersion.label,
+  readVersion: async () => (await readRunningVersion(UPDATE_DIR)).label,
   scanHubs: () => scanHubCandidates(() => settingsRuntime.readiness.hub === "Connecting"),
   drainBluetooth: async () => {
     await bleServer?.drain();
@@ -564,10 +571,21 @@ const server = createServer(async (req, res) => {
     await handleCanRestartEndpoint(req, res, CAN_IFACE);
     return;
   }
-  // `git pull` the checkout on the Pi — the menu's "Update" button — then restart the
-  // service so the new code takes effect.
+  // Bundle jobs survive this app's stop; both deployment modes reserve the same settings/bus state.
   if (url.pathname === "/update") {
     await handleUpdateEndpoint(req, res, UPDATE_DIR, settingsHttp);
+    return;
+  }
+  if (url.pathname === "/release-health") {
+    await handleReleaseHealth(res, ROOT);
+    return;
+  }
+  if (url.pathname === "/update/reserve-stop") {
+    await handleBundleStop(req, res, settingsHttp);
+    return;
+  }
+  if (url.pathname === "/update-status") {
+    await handleUpdateStatus(res);
     return;
   }
   // Duty and mode for the cooling fan. The Pi's own GPIO and PWM; it cannot reach the

@@ -1,4 +1,5 @@
 import { validateBuildIdentity, type BundleInputs } from "./inputs.ts";
+import { SETTINGS_SCHEMA_VERSION } from "../../src/settings/schema.ts";
 
 export function createReleaseMetadata(inputs: BundleInputs, identity: BuildIdentity): ReleaseMetadata {
   validateBuildIdentity(identity.commit, identity.channel, identity.branch, identity.epoch);
@@ -13,6 +14,8 @@ export function createReleaseMetadata(inputs: BundleInputs, identity: BuildIdent
     node: inputs.node.version,
     builder: inputs.builder,
     testedImage: inputs.testedImage,
+    settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
+    updaterProtocol: 1,
   };
 }
 
@@ -34,6 +37,8 @@ export interface ReleaseMetadata {
   node: string;
   builder: BundleInputs["builder"];
   testedImage: BundleInputs["testedImage"];
+  settingsSchemaVersion: number;
+  updaterProtocol: 1;
 }
 
 export function renderReleaseManifest(metadata: ReleaseMetadata, sha256: string, bytes: number): string {
