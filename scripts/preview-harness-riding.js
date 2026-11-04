@@ -1,5 +1,6 @@
 // These variants leave the shared Settings defaults and the Wi-Fi data path intact.
 const ridingFixture = new URLSearchParams(window.location.search);
+const fanChangedAt = Date.now() - 60_000;
 if (ridingFixture.get("fixture") === "all-installed") {
   for (const key of Object.keys(LIVE)) {
     delete LIVE[key];
@@ -50,10 +51,10 @@ if (ridingFixture.get("fixture") === "all-installed") {
     cell_highest_v_idx: [12, "", "cells"],
     allowed_discharge_a: [210, "A", "battery"],
     allowed_regen_a: [55, "A", "battery"],
-    fan_target_pct: [68, "%", "fan"],
-    fan_duty_pct: [68, "%", "fan"],
-    fan_driver_enabled: [1, "", "fan"],
-    fan_auto_mode: [1, "", "fan"],
+    fan_target_pct: [68, "%", "fan", fanChangedAt],
+    fan_duty_pct: [68, "%", "fan", fanChangedAt],
+    fan_driver_enabled: [1, "", "fan", fanChangedAt],
+    fan_auto_mode: [1, "", "fan", fanChangedAt],
     high_beam: [0, "", "buttons"],
     btn_cruise_set: [0, "", "buttons"],
   });
@@ -82,6 +83,12 @@ if (ridingFixture.get("header-link") === "ble-connect") {
 const originalInstantiateForRiding = instantiate;
 instantiate = function instantiateRidingPreview() {
   const imports = originalInstantiateForRiding();
+  if (ridingFixture.get("fixture") === "all-installed") {
+    // The template seeds fanReadings() after the harness; restore the real last-change timestamps before mount.
+    for (const key of ["fan_auto_mode", "fan_driver_enabled", "fan_duty_pct", "fan_target_pct"]) {
+      LIVE[key][3] = fanChangedAt;
+    }
+  }
   window.ridingPreview = imports;
   return imports;
 };

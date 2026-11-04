@@ -1,6 +1,6 @@
 // @ts-check
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, faultState, isStale, signalState, valueOf } from "../lib/store.js";
+import { chartTick, connection, faultState, isStale, signalState, valueOf } from "../lib/store.js";
 import { STALE_MS } from "../lib/tiles.js";
 import { SubTabs } from "../lib/sub-tabs.js";
 import { settings } from "../lib/settings.js";
@@ -40,7 +40,7 @@ function FanStatus() {
     if (signals.some(key => faultState(key).val)) {
       return span({ style: `color:${colors.BAD}` }, "Fan status fault");
     }
-    if (signals.some(key => isStale(key, STALE_MS))) {
+    if (signals.some(readingUnavailable)) {
       return "Fan status unavailable";
     }
     const mode = valueOf("fan_auto_mode");
@@ -86,7 +86,7 @@ function Reading(key, decimals, temperature) {
     {
       "data-signal": key,
       style: () =>
-        `color:${faultState(key).val ? colors.BAD : isStale(key, STALE_MS) ? colors.MUTED : temperature ? colors.temperature(valueOf(key)) : colors.CALM}`,
+        `color:${faultState(key).val ? colors.BAD : readingUnavailable(key) ? colors.MUTED : temperature ? colors.temperature(valueOf(key)) : colors.CALM}`,
     },
     () => {
       chartTick.val;
@@ -99,8 +99,17 @@ function Reading(key, decimals, temperature) {
       if (faultState(key).val) return "fault";
       const reading = signalState(key).val;
       if (!reading) return "—";
-      if (isStale(key, STALE_MS)) return "stale";
+      if (readingUnavailable(key)) return "stale";
       return (temperature ? units.temp(reading.value) : reading.value).toFixed(decimals);
     }
   );
+}
+
+/** @param {string} key */
+function readingUnavailable(key) {
+  // Fan commands retain their last-change timestamp across live snapshots (registry.ts onDemand).
+  if (key.startsWith("fan_")) {
+    return signalState(key).val === null || connection.val !== "live";
+  }
+  return isStale(key, STALE_MS);
 }

@@ -15,7 +15,7 @@ export async function checkCoolingFan(
       [1, "Automatic"],
       [2, "Fun"],
     ] as const) {
-      await evaluateOnPage(page, `pushPatch({fan_auto_mode:[${code},'','fan']})`);
+      await evaluateOnPage(page, `pushPatch({fan_auto_mode:[${code},'','fan',Date.now()-60_000]})`);
       await evaluateOnPage(page, FRAME);
       assert.equal(
         await evaluateOnPage(page, "document.querySelector('[data-fan-status]').textContent"),
@@ -34,7 +34,7 @@ export async function checkCoolingFan(
     ]) {
       await evaluateOnPage(
         page,
-        `pushPatch({fan_auto_mode:[1,'','fan'],fan_duty_pct:[${state.duty},'%','fan'],fan_target_pct:[${state.target},'%','fan'],fan_driver_enabled:[${state.enabled},'','fan']})`
+        `(() => { const changedAt=Date.now()-60_000; pushPatch({fan_auto_mode:[1,'','fan',changedAt],fan_duty_pct:[${state.duty},'%','fan',changedAt],fan_target_pct:[${state.target},'%','fan',changedAt],fan_driver_enabled:[${state.enabled},'','fan',changedAt]}); })()`
       );
       await evaluateOnPage(page, FRAME);
       assert.equal(
@@ -51,5 +51,67 @@ export async function checkCoolingFan(
       }
       await assertLayout(page);
     }
+    for (const link of ["offline", "connecting"]) {
+      await evaluateOnPage(page, `ridingPreview('lib/store.js').connection.val=${JSON.stringify(link)}`);
+      await evaluateOnPage(page, FRAME);
+      assert.equal(
+        await evaluateOnPage(page, "document.querySelector('[data-fan-status]').textContent"),
+        "Fan status unavailable",
+        "Retained fan commands are unavailable when the link is not live."
+      );
+      assert.equal(
+        await evaluateOnPage(page, "document.querySelector('[data-signal=fan_target_pct]').textContent"),
+        "stale"
+      );
+      await assertLayout(page);
+    }
+    await evaluateOnPage(page, "ridingPreview('lib/store.js').connection.val='live'");
+    await evaluateOnPage(page, FRAME);
+    assert.equal(
+      await evaluateOnPage(page, "document.querySelector('[data-signal=fan_target_pct]').textContent"),
+      "68"
+    );
+    assert.equal(
+      await evaluateOnPage(page, "document.querySelector('[data-fan-status]').textContent"),
+      "Automatic · driving"
+    );
   }
+  for (const key of ["fan_auto_mode", "fan_driver_enabled", "fan_duty_pct", "fan_target_pct"]) {
+    const original = await evaluateOnPage(
+      page,
+      `ridingPreview('lib/store.js').signalState(${JSON.stringify(key)}).val`
+    );
+    assert.ok(original);
+    await evaluateOnPage(page, `ridingPreview('lib/store.js').signalState(${JSON.stringify(key)}).val=null`);
+    await evaluateOnPage(page, FRAME);
+    assert.equal(
+      await evaluateOnPage(page, "document.querySelector('[data-fan-status]').textContent"),
+      "Fan status unavailable"
+    );
+    await evaluateOnPage(
+      page,
+      `ridingPreview('lib/store.js').signalState(${JSON.stringify(key)}).val=${JSON.stringify(original)}`
+    );
+  }
+  await evaluateOnPage(page, "pushPatch({fan_target_pct:[150,'%','fan',Date.now()-60_000]})");
+  await evaluateOnPage(page, FRAME);
+  assert.equal(
+    await evaluateOnPage(page, "document.querySelector('[data-signal=fan_target_pct]').textContent"),
+    "fault"
+  );
+  assert.equal(
+    await evaluateOnPage(page, "document.querySelector('[data-fan-status]').textContent"),
+    "Fan status fault"
+  );
+  await assertLayout(page);
+  await openPreview(page, file, "#ride/cooling", "sensor-age-gate");
+  await evaluateOnPage(page, "pushPatch({coolant_in:[36.5,'°C','coolant',Date.now()-60_000]})");
+  await evaluateOnPage(page, FRAME);
+  assert.equal(
+    await evaluateOnPage(page, "document.querySelector('[data-signal=coolant_in]').textContent"),
+    "stale",
+    "Real sensors must keep their age gate."
+  );
+  assert.equal(await evaluateOnPage(page, "document.querySelector('[data-signal=fan_target_pct]').textContent"), "68");
+  await assertLayout(page);
 }

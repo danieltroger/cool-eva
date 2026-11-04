@@ -35,6 +35,7 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
   const fixedViews = Object.entries(COVERAGE)
     .filter(([, policy]) => policy === "fixed")
     .map(([name]) => name);
+  assert.deepEqual(fixedViews, ["cooling"], "Fixed-view coverage must match the converted screens.");
   for (const geometry of [
     { height: 844, top: 47 },
     { height: 797, top: 0 },
@@ -132,6 +133,17 @@ async function assertPopulatedFixture(page: HeadlessPage) {
     { missing: [], cells: 81, installed: true },
     "The normal fixture must populate every required sensor and all 81 cells."
   );
+  assert.equal(
+    await evaluateOnPage(
+      page,
+      `["fan_auto_mode","fan_driver_enabled","fan_duty_pct","fan_target_pct"].every(key => {
+        const store=ridingPreview("lib/store.js"); const reading=store.signalState(key).val;
+        return reading && store.peekServerTime()-reading.ts>=60_000;
+      })`
+    ),
+    true,
+    "Steady-fan fixture timestamps must remain at least 60 seconds old after startup."
+  );
 }
 
 async function assertCoolingContent(page: HeadlessPage) {
@@ -169,7 +181,8 @@ async function assertCoolingContent(page: HeadlessPage) {
   );
   assert.equal(
     await evaluateOnPage(page, "document.querySelector('.cooling-view').innerText.includes('Automatic · driving')"),
-    true
+    true,
+    "Steady on-demand fan commands must stay available on a live link."
   );
 }
 
