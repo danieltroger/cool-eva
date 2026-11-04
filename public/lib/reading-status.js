@@ -25,6 +25,23 @@ export function readingStatus(key, sampled = false) {
   return readingIsStale(key, sampled) ? "stale" : "fresh";
 }
 
+/** @param {string[]} keys @param {boolean} [sampled] @param {(key:string,sampled?:boolean)=>ReadingStatus} [status] @returns {ReadingStatus} */
+export function worstStatus(keys, sampled = false, status = readingStatus) {
+  const states = keys.map(key => status(key, sampled));
+  return states.includes("fault")
+    ? "fault"
+    : states.includes("missing")
+      ? "missing"
+      : states.includes("stale")
+        ? "stale"
+        : "fresh";
+}
+
+/** @param {ReadingStatus} state @param {string} [missing] */
+export function statusWord(state, missing = "—") {
+  return state === "fresh" ? "—" : state === "missing" ? missing : state;
+}
+
 /** @param {string} key @param {boolean} [sampled] */
 export function readingHasFault(key, sampled = false) {
   const fault = sampled ? faultState(key).rawVal : faultState(key).val;

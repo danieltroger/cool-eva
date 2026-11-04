@@ -36,15 +36,19 @@ export async function assertRangeContent(page: HeadlessPage) {
   assert.deepEqual(content.labels, [
     "Weakest cell above cut-off",
     "Estimated cut-off timer",
-    "Drive current",
-    "Regen current",
+    "Drive allowed",
+    "Regen available",
     "Rolling consumption",
     "Energy left",
     "Cell spread",
   ]);
   assert.equal(content.margin, "120");
   assert.match(content.rest, /\d+ mV at rest · \d+ mV sag/);
-  assert.ok(content.cutoff.includes("3000 mV") && content.cutoff.includes("modelled R"));
+  assert.ok(
+    content.cutoff.includes("3000 mV") &&
+      content.cutoff.includes("modelled R") &&
+      content.cutoff.includes("BMS index 1")
+  );
   assert.equal(content.timer, "clear");
   assert.equal(content.drive, "210");
   assert.equal(content.regen, "55");
@@ -109,19 +113,19 @@ export async function checkRangeCases(
       name: "fault-cell-identity",
       patch: "cell_lowest_v_idx:[NaN,'','cells']",
       field: "cutoff",
-      text: "Cut-off 3000 mV · cell fault · modelled R",
+      text: "Cut-off 3000 mV · BMS index fault · modelled R",
     },
     {
       name: "stale-cell-identity",
       patch: "cell_lowest_v_idx:[1,'','cells',Date.now()-30_000]",
       field: "cutoff",
-      text: "Cut-off 3000 mV · cell stale · modelled R",
+      text: "Cut-off 3000 mV · BMS index stale · modelled R",
     },
     {
       name: "missing-cell-identity",
       clear: "cell_lowest_v_idx",
       field: "cutoff",
-      text: "Cut-off 3000 mV · cell — · modelled R",
+      text: "Cut-off 3000 mV · BMS index — · modelled R",
     },
     { name: "fault-minimum", patch: "cell_min_mv:[65535,'mV','battery']", field: "margin", text: "fault" },
     {

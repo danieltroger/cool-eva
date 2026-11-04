@@ -28,4 +28,6 @@ Pure, so the rule can be checked without a browser; the same split as headroomMv
 
 Rewriting only when it would CHANGE something is the part worth not undoing: Back through ten tabs must not spend ten replaceState calls out of Safari's bucket. Why rewrite at all, and why no caller pushes: docs/dashboard-decisions.md §Routing.
 
-Cells returns to its actual browser-history origin, including Battery & cooling after reload; direct entry falls back to Range. Its next gesture advances from the Range parent to Charge. Native browser history retains scroll positions; the real-preview sequence covers scrolling Cells, parent reset, Back, Forward and reload.
+Cells returns to its actual browser-history origin, including Battery & cooling after reload. Its in-view Back control exists only for an explicit menu origin; ordinary entries use the Range sub-tab. Its next gesture advances from the Range parent to Charge. Native browser history retains scroll positions; the real-preview sequence covers scrolling Cells, parent reset, Back, Forward and reload.
+
+Charge adds #charge/pack-cooling and #charge/controls. Both advance to All through either gesture. A current-parent tap or actual charge-start restores the Charge overview and disarms, including from an already-selected Charge parent. Charge exit from either detail returns to Ride; link loss is not charge exit. Controls keeps the original gated handlers and dwell.

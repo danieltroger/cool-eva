@@ -1046,6 +1046,16 @@ const CHECKS: SelfCheck[] = [
       "Ride's fixed horizontal power axis, sign, voltage-derived limits, genuine zero, partial unknown/fault/stale limits and charging presentation",
   },
   {
+    script: "scripts/check-charge-display.ts",
+    covers:
+      "fresh signed Charge direction, small incoming/outgoing power, neutral zero, invalid/unavailable readings and held onDemand values",
+  },
+  {
+    script: "scripts/check-charge-curve.ts",
+    covers:
+      "exact observed charge-current interpolation/cap, both reported extremes, adaptive/fallback framing, truthful command replies and shared status priority",
+  },
+  {
     script: "scripts/check-range-cells.ts",
     covers:
       "Range zero/fault reading guards and all 81 physical cell slots, module order, missing/stale/fault masking, true extrema and a balanced pack",

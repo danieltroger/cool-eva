@@ -1,4 +1,5 @@
 // @ts-check
+import { worstStatus, statusWord } from "./reading-status.js";
 import { POWER_SCALE_KW, limitKw } from "./power-limits.js";
 
 /** @typedef {import("./reading-status.js").ReadingStatus} ReadingStatus */
@@ -26,9 +27,9 @@ export function ridePowerState(read, status, charging) {
         ? value !== null && value < 0
           ? "Power out · riding limits off"
           : "Charging · riding limits off"
-        : `Charging · power ${reason(powerStatus)} · riding limits off`
+        : `Charging · power ${statusWord(powerStatus, "unavailable")} · riding limits off`
       : powerStatus !== "fresh"
-        ? `Power ${reason(powerStatus)}`
+        ? `Power ${statusWord(powerStatus, "unavailable")}`
         : excess
           ? `Over ${value !== null && value < 0 ? "drive" : "regen"} limit`
           : unknown,
@@ -42,14 +43,7 @@ export function powerPosition(kilowatts) {
 
 /** @param {string} key @param {(key:string)=>number|null} read @param {(key:string)=>ReadingStatus} status @returns {PowerLimit} */
 function limitState(key, read, status) {
-  const states = [status(key), status("pack_v")];
-  const state = states.includes("fault")
-    ? "fault"
-    : states.includes("missing")
-      ? "missing"
-      : states.includes("stale")
-        ? "stale"
-        : "fresh";
+  const state = worstStatus([key, "pack_v"], false, status);
   const amps = read(key);
   const volts = read("pack_v");
   if (state !== "fresh") return { state, kilowatts: null };
@@ -60,10 +54,5 @@ function limitState(key, read, status) {
 
 /** @param {string} side @param {PowerLimit} limit */
 function limitReason(side, limit) {
-  return limit.state === "fresh" ? "" : `${side} limit ${reason(limit.state)}`;
-}
-
-/** @param {ReadingStatus} state */
-function reason(state) {
-  return state === "missing" ? "unavailable" : state;
+  return limit.state === "fresh" ? "" : `${side} limit ${statusWord(limit.state, "unavailable")}`;
 }

@@ -146,6 +146,7 @@ export const ON_DEMAND_KEYS = [
   "fan_temp_input",
   "fan_fun_available",
   "fan_fun_gate",
+  "charge_soc_limit_pct",
   "charge_cmd_a",
   "charge_cmd_ack",
   "charge_cmd_ack_ms",

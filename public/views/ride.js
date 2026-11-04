@@ -4,7 +4,7 @@
 import van from "../vendor/van-1.6.1.js";
 import { SubTabs } from "../lib/sub-tabs.js";
 import { chartTick, isStale, valueOf } from "../lib/store.js";
-import { readingStatus } from "../lib/reading-status.js";
+import { readingStatus, worstStatus, statusWord } from "../lib/reading-status.js";
 import { chargeMode } from "../lib/charge-mode.js";
 import { powerEdge } from "../lib/power-edge.js";
 import { ridePowerState } from "../lib/ride-power-state.js";
@@ -75,7 +75,8 @@ function PowerPanel() {
       ),
       span(
         { class: "ride-soc", "data-signal": "soc", style: () => `color:${colors.stateOfCharge(fresh("soc"))}` },
-        () => (fresh("soc") === null ? `SOC ${word(readingStatus("soc"))}` : `${Math.round(valueOf("soc") ?? 0)}%`)
+        () =>
+          fresh("soc") === null ? `SOC ${statusWord(readingStatus("soc"))}` : `${Math.round(valueOf("soc") ?? 0)}%`
       )
     ),
     () => powerEdge(currentPower(), powerDisplay())
@@ -93,7 +94,7 @@ function powerDisplay() {
 
 function speedNote() {
   const speed = fresh("gps_speed_kmh");
-  if (speed === null) return `GPS speed ${word(readingStatus("gps_speed_kmh"))}`;
+  if (speed === null) return `GPS speed ${statusWord(readingStatus("gps_speed_kmh"))}`;
   const wheel = fresh("speed_can_kmh") ?? fresh("speed_kmh");
   if (wheel === null) return "GPS · no wheel speed";
   const difference = units.speed(wheel) - units.speed(speed);
@@ -110,7 +111,7 @@ function DeltaCard() {
         style: () => `color:${delta() === null ? colors.MUTED : colors.GOOD}`,
         "data-reading": "coolant-delta",
       },
-      () => (delta() === null ? word(thermalStatus()) : units.tempDelta(delta() ?? 0).toFixed(2)),
+      () => (delta() === null ? statusWord(thermalStatus()) : units.tempDelta(delta() ?? 0).toFixed(2)),
       span({ class: "unit" }, () => (delta() === null ? "" : units.tempUnit()))
     ),
     () => {
@@ -124,7 +125,7 @@ function DeltaCard() {
         { class: "ride-trace", "data-trace": available ? "available" : "unavailable" },
         available
           ? sparkline({ values, color: colors.GOOD, minSpan: 0.5, baseline: 0, height: 40 })
-          : div({ class: "sub" }, `ΔT ${word(thermalStatus(true))}`)
+          : div({ class: "sub" }, `ΔT ${statusWord(thermalStatus(true))}`)
       );
     },
     div({ class: "sub" }, "out − in · last 10 min")
@@ -138,12 +139,12 @@ function HeatCard() {
     div(
       { class: "value" },
       span({ "data-reading": "resistance-heat" }, () =>
-        heat() === null ? word(readingStatus("pack_a")) : ((heat() ?? 0) / 1000).toFixed(2)
+        heat() === null ? statusWord(readingStatus("pack_a")) : ((heat() ?? 0) / 1000).toFixed(2)
       ),
       () => (heat() !== null && delta() === null ? span({ class: "unit" }, "kW") : ""),
       " / ",
       span({ "data-reading": "loop-removal" }, () =>
-        delta() === null ? word(thermalStatus()) : (((delta() ?? 0) * COOLANT_WATTS_PER_KELVIN) / 1000).toFixed(2)
+        delta() === null ? statusWord(thermalStatus()) : (((delta() ?? 0) * COOLANT_WATTS_PER_KELVIN) / 1000).toFixed(2)
       ),
       span({ class: "unit" }, () => (delta() === null ? "" : "kW"))
     ),
@@ -202,14 +203,7 @@ function fresh(key) {
 
 /** @param {boolean} [sampled] @returns {import("../lib/reading-status.js").ReadingStatus} */
 function thermalStatus(sampled = false) {
-  const states = [readingStatus("coolant_in", sampled), readingStatus("coolant_out", sampled)];
-  return states.includes("fault")
-    ? "fault"
-    : states.includes("missing")
-      ? "missing"
-      : states.includes("stale")
-        ? "stale"
-        : "fresh";
+  return worstStatus(["coolant_in", "coolant_out"], sampled);
 }
 
 function delta() {
@@ -219,9 +213,4 @@ function delta() {
 function heat() {
   const amps = fresh("pack_a");
   return amps === null ? null : (amps * amps * packResistance.val.milliohms) / 1000;
-}
-
-/** @param {import("../lib/reading-status.js").ReadingStatus} state */
-function word(state) {
-  return state === "missing" ? "—" : state === "fresh" ? "—" : state;
 }

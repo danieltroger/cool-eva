@@ -3,6 +3,9 @@
 import van from "../vendor/van-1.6.1.js";
 import { GOOD, MUTED, WARN, WATCH } from "../lib/colors.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
+import { chargeValue } from "../lib/charge-display.js";
+import { chargeReply } from "../lib/charge-command-display.js";
+import { chargeCeiling } from "../lib/charge-curve.js";
 import { valueOf } from "../lib/store.js";
 import {
   applyWriteStatus,
@@ -17,24 +20,48 @@ import {
 } from "../lib/charge-write.js";
 import { request } from "../lib/transport.js";
 
-const { button, div, input } = van.tags;
+/**
+ * The control, or an empty node when it must not be offered.
+ *
+ * ⚠️ Hidden — not merely disabled — for a phone that never enabled writes: `enabled === true`
+ * gates that, and an undefined status is not enabled. Once shown for a live charge it STAYS shown
+ * across a current pause, rather than vanishing (which a phone reads as "it broke"). Visibility is
+ * `sessionLive && enabled`, both plain states, no serverTime. ⚠️ The stationary service gate is
+ * deliberately NOT a condition here — see the file header and write-runner.ts.
+ */
+export function ChargeCurrentControl() {
+  return div(() => {
+    if (!sessionLive.val || !writesEnabled()) return div();
+    return div(
+      { class: "tile charge-current-control" },
+      div({ class: "label" }, "Current · this charge"),
+      div(
+        { class: "charge-request-reply" },
+        div(
+          div({ class: "sub" }, "Last request"),
+          div({ class: "value", "data-last-charge-request": "" }, () => {
+            const value = chargeAck.val === null ? null : chargeValue("charge_cmd_a");
+            return value === null ? "—" : `${value} A`;
+          })
+        ),
+        div(
+          div({ class: "sub" }, "Bike replied"),
+          div({ class: "value", "data-charge-reply": "" }, () => {
+            const reply = chargeReply(chargeAck.val?.verdict ?? null);
+            return typeof reply === "number" ? `${reply} A` : reply;
+          })
+        )
+      ),
+      div({ class: "compact-action-row" }, InputRow(), span("A"), SetButton()),
+      Situation(),
+      Outcome()
+    );
+  });
+}
 
-// Command the charge current live, from the charge tab. The one control on the dashboard
-// that changes the bike outside the service-mode sheet — so it carries most of the sheet's
-// safety model with it: it POSTs through the gated /vcu-write endpoint (SERVICE_WRITE_ENABLED,
-// the audit journal), it needs two taps separated by the shared dwell, and it renders NOTHING
-// unless the Pi says writing is on AND a charge is live. A phone that has not been told writes
-// are enabled sees an ordinary read-only charge screen.
-//
-// ⚠️ It does NOT use the stationary service gate (moving / energized / in-drive). A charging
-// bike is energized and tethered by definition, so that gate misfits a charging operation and
-// would flap with the trickle; the appropriate precondition is "a charge is live", which is what
-// gates this. The Pi exempts charge-current from that gate for the same reason (write-runner.ts).
-//
-// ⚠️ Nothing here decides the opcode or the ceiling — the Pi reads charge_manager_state live and
-// echoes the dash's own ceiling (docs/can-0x121-charge-command.md). The AC/DC label and the
-// ceiling shown here are read off the SAME live signals so the button says what the Pi will
-// do, but where they and the server disagree the server wins and its reason is shown.
+const { button, div, input, span } = van.tags;
+
+// Constraints and retained findings: docs/charge-controls.md.
 
 /** @typedef {import("../../src/http/vcu-write.ts").VcuWriteResponse} VcuWriteResponse */
 
@@ -90,31 +117,6 @@ van.derive(() => {
 });
 
 /**
- * The control, or an empty node when it must not be offered.
- *
- * ⚠️ Hidden — not merely disabled — for a phone that never enabled writes: `enabled === true`
- * gates that, and an undefined status is not enabled. Once shown for a live charge it STAYS shown
- * across a current pause, rather than vanishing (which a phone reads as "it broke"). Visibility is
- * `sessionLive && enabled`, both plain states, no serverTime. ⚠️ The stationary service gate is
- * deliberately NOT a condition here — see the file header and write-runner.ts.
- */
-export function ChargeCurrentControl() {
-  return div(() => {
-    if (!sessionLive.val || !writesEnabled()) {
-      return div();
-    }
-    return div(
-      { class: "tile span2" },
-      div({ class: "label" }, "Set charge current"),
-      Situation(),
-      InputRow(),
-      SetButton(),
-      Outcome()
-    );
-  });
-}
-
-/**
  * What can be commanded right now: the source, the ceiling, or why neither is available.
  *
  * The two "not yet" states are the Pi's own refusals said BEFORE the button is pressed, so
@@ -123,34 +125,12 @@ export function ChargeCurrentControl() {
  * is normal and gets a remedy, not an error.
  */
 function Situation() {
-  return div({ class: "action-note" }, () => {
+  return div({ class: "sub" }, () => {
     const type = chargeType.val;
-    if (type === null) {
-      // charge_manager_state briefly out of a settled AC/DC value (a pause or handshake step) —
-      // the tile stays; the button waits for it. A real unplug clears sessionLive and hides this.
-      return div({ style: `color:${MUTED}` }, "Charge state changing — hold on.");
-    }
-    const ceiling = liveCeiling(type);
-    if (ceiling === null) {
-      // Only DC reaches here now — AC falls back to a default ceiling (see liveCeiling).
-      return div(
-        { style: `color:${WARN}` },
-        "⚠️ DC ceiling (fast_dc_limit_max_a) has not arrived — this means CAN is not being received."
-      );
-    }
-    if (ceilingIsFallback(type)) {
-      return div(
-        { style: `color:${WATCH}` },
-        `Live AC charge · using the default ceiling ${ceiling} A (the dial has not been nudged this session, so the dash has broadcast no ceiling). Whole amps, 1…${ceiling}. `,
-        "If this charger's rating differs from " +
-          `${ceiling} A the bike may ignore the command and settle near 10 A — check charge_limit_a on the dash after sending.`
-      );
-    }
-    return div(
-      { style: `color:${MUTED}` },
-      `Live ${type.toUpperCase()} charge · ceiling ${ceiling} A. Whole amps, 1…${ceiling}. `,
-      "The Pi picks AC/DC and the ceiling from the live bus — this echoes them."
-    );
+    if (type === null) return "Charge state changing";
+    const cap = liveCeiling(type);
+    const temperature = chargeCeiling(chargeValue("batt_temp_lo_vcu"), chargeValue("batt_temp_hi_vcu"));
+    return `${type.toUpperCase()} bike cap ${cap === null ? "unknown" : `${cap} A`}${ceilingIsFallback(type) ? " (default)" : ""} · temperature ceiling ${temperature === null ? "unknown" : `${temperature.toFixed(temperature % 1 === 0 ? 0 : 1)} A`}`;
   });
 }
 
@@ -195,6 +175,7 @@ function SetButton() {
         // the bike and can be taken straight back (transient, the rider overrides on the
         // bike's screen), so it is on-screen and amber, not behind the red fold.
         class: "action writes",
+        "data-charge-action": "current",
         // One held Enter must not arm and then fire. See ../lib/arming.js.
         onkeydown: refuseKeyRepeat,
         disabled: () => busy.val || !commandable() || parsedAmps() === null,
@@ -218,23 +199,18 @@ function SetButton() {
           return "⏳  Sending…";
         }
         if (busy.val) {
-          return "⏳  Checking the bike is still safe to command…";
+          return "Checking…";
         }
         const value = parsedAmps();
         if (value === null) {
           const type = chargeType.val;
           const ceiling = type === null ? null : liveCeiling(type);
-          return ceiling === null ? "✏️  Waiting for a live charge" : `✏️  Type the current to set (1…${ceiling})`;
+          return ceiling === null ? "Waiting for charge" : `Set current (1…${ceiling})`;
         }
         const type = chargeType.val;
         const label = type === null ? "" : ` ${type.toUpperCase()} ${value} A`;
-        return armed.val === ARMED_KEY ? `⚠️  Tap again to command${label}` : `✏️  Set${label}`;
+        return armed.val === ARMED_KEY ? `Confirm${label}` : `Set${label}`;
       }
-    ),
-    div({ class: "action-note", style: `color:${MUTED}` }, () =>
-      commandable()
-        ? "Event frame with no reply — the Pi watches the bike's own charge request and says below whether it took. A full battery caps what actually flows."
-        : ""
     )
   );
 }

@@ -1,9 +1,10 @@
+import { worstStatus } from "../public/lib/reading-status.js";
 import assert from "node:assert/strict";
 import { cellVoltageLayout, CELL_COUNT } from "../public/lib/cells.js";
 import { cellSnapshot } from "../public/lib/cell-snapshot.js";
 import type { ReadingStatus } from "../public/lib/reading-status.js";
 import { apply, connection } from "../public/lib/store.js";
-import { rangeInputStatus, rangeValue } from "../public/lib/range-readings.js";
+import { rangeValue } from "../public/lib/range-readings.js";
 
 const slots = cellVoltageLayout();
 assert.equal(CELL_COUNT, 81);
@@ -63,13 +64,13 @@ apply({
   signals: { allowed_discharge_a: { value: 0, unit: "A", group: "battery", ts: 1_000_000 } },
 });
 assert.equal(rangeValue("allowed_discharge_a"), 0, "A zero allowance remains a real reading.");
-assert.equal(rangeInputStatus(["allowed_discharge_a"]), "fresh");
+assert.equal(worstStatus(["allowed_discharge_a"]), "fresh");
 apply({
   type: "patch",
   ts: 1_000_001,
   signals: { allowed_discharge_a: { value: 65535, unit: "A", group: "battery", ts: 1_000_001 } },
 });
-assert.equal(rangeInputStatus(["allowed_discharge_a"]), "fault");
+assert.equal(worstStatus(["allowed_discharge_a"]), "fault");
 assert.equal(rangeValue("allowed_discharge_a"), null, "A rejected allowance cannot display the last plausible zero.");
 console.log(
   "✓ All 81 physical slots, pack/module ordering, true extrema, complete/missing/stale/fault and balanced cells"

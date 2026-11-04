@@ -208,6 +208,16 @@ check(
     canonicalHash("#hypermile/cells").tab === "hypermile" &&
     canonicalHash("#hypermile/cells").rewriteTo === null
 );
+for (const [name, hash] of [
+  ["charge-pack", "#charge/pack-cooling"],
+  ["charge-controls", "#charge/controls"],
+] as const) {
+  check(
+    `${hash} is a pinned Charge subview`,
+    canonicalHash(hash).view === name && canonicalHash(hash).tab === "charge" && canonicalHash(hash).rewriteTo === null
+  );
+  check(`${name} advances to All`, nextViewAfter(name) === "all");
+}
 check(
   "Cells advances to Charge, outside the six-stop cycle",
   nextViewAfter("cells") === "charge" && RIDING_CYCLE.length === 6

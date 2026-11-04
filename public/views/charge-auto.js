@@ -4,8 +4,66 @@ import { openDestination } from "../lib/destination.js";
 import van from "../vendor/van-1.6.1.js";
 import { GOOD, MUTED, WARN } from "../lib/colors.js";
 import { chargeType, onChargeSessionEnd, writesEnabled } from "../lib/charge-write.js";
+import { chargeValue } from "../lib/charge-display.js";
+import { chargeAck } from "../lib/charge-write.js";
 import { valueOf } from "../lib/store.js";
 import { request } from "../lib/transport.js";
+
+/** Fetched on the documented wake-ups and after every toggle — never polled. docs/charge-auto.md. */
+/** @param {{compact?:boolean}} [options] */
+export function ChargeAutoControl({ compact = false } = {}) {
+  return div(() => {
+    // ⚠️ Gated on writesEnabled() like the two sibling controls: the controller transmits through
+    // /vcu-write, so on a phone that never enabled writes it is inert and offering a switch for it
+    // would be offering a switch that does nothing. Hidden, not disabled, for the same reason.
+    if (chargeType.val !== "dc" || !writesEnabled()) {
+      return div();
+    }
+    if (!loaded.val) {
+      void refresh();
+      return div(
+        { class: compact ? "charge-auto-secondary" : "tile span2" },
+        div({ class: "label" }, "Automatic charge current")
+      );
+    }
+    if (compact) {
+      return div(
+        { class: "charge-auto-secondary" },
+        div({ class: "label" }, "Automatic reduction"),
+        div({ class: "sub" }, () =>
+          mode.val === "off"
+            ? "Off for this charge"
+            : reasonCode.val === REASON_RIDER
+              ? "Paused for this charge"
+              : reasonSentence.val
+        ),
+        div({ class: "sub" }, () => `Only lowers · minimum ${floorAmps.val} A`),
+        div({ class: "compact-auto-toggle" }, ToggleButton(true)),
+        div({ class: "action-note" }, () => failure.val)
+      );
+    }
+    // ⚠️ The tile itself is built ONCE per visibility change; everything that moves is a thunk
+    // inside it, so a refresh updates text in place instead of replacing the button under a thumb.
+    return div(
+      { class: compact ? "charge-auto-secondary" : "tile span2" },
+      div({ class: "label" }, "Automatic charge current"),
+      div({ class: "action-note" }, () =>
+        div({ style: `color:${mode.val === "automatic" ? GOOD : MUTED}` }, controllerSentence())
+      ),
+      ToggleButton(compact),
+      ...(compact
+        ? []
+        : [
+            div(
+              { class: "settings-row" },
+              div({ class: "settings-note" }, "Permission on this Pi"),
+              button({ class: "settings-button", onclick: () => openDestination("settings", "charging") }, "Settings →")
+            ),
+          ]),
+      div({ class: "action-note", style: `color:${WARN}` }, () => failure.val)
+    );
+  });
+}
 
 const { button, div } = van.tags;
 
@@ -35,22 +93,7 @@ const busy = van.state(false);
 const failure = van.state("");
 const loaded = van.state(false);
 
-// ONE invariant: the pair below is the answer currently ON SCREEN, and whenever this cannot act it
-// forgets it. So the Pi's phrasing is re-read when the reason moves, when the commanded current
-// moves, and when the gate reopens over a pair we deliberately forgot. The controller records
-// `charge_auto_reason` every tick and `charge_auto_target_a` on every command that lands.
-//
-// ⚠️ GUARDED on the VALUES, not on the states changing. ws.ts heartbeats a FULL SNAPSHOT every 5 s
-// and store.js assigns a freshly parsed object, so these signals' identity changes every heartbeat
-// whether or not the numbers moved — an unguarded derive is then a 0.2 Hz poll of an HTTP endpoint,
-// exactly what the comment here used to claim it was not. charge-write.js guards the same way.
-//
-// ⚠️ Both signals are read BEFORE the gate returns, and the pair is never CONSUMED on a run that
-// did not refresh — forgotten instead. Both traps, and the bug each one produces:
-// docs/dashboard-decisions.md § "A guarded derive, and the three ways to lose the change". (The
-// gate's own `||` short-circuits, so a run with no DC session never reads `writesEnabled()`. That
-// is trap #1's letter, and it is harmless only because the half that short-circuits also hides the
-// tile: either way there is nothing to refresh for.)
+// Constraints and retained findings: docs/charge-controls.md.
 let lastReason = /** @type {number | null} */ (null);
 let lastTargetAmps = /** @type {number | null} */ (null);
 van.derive(() => {
@@ -84,71 +127,43 @@ onChargeSessionEnd(() => {
   loaded.val = false;
 });
 
-/** Fetched on the three wake-ups above and after every toggle — never polled. docs/charge-auto.md. */
-export function ChargeAutoControl() {
-  return div(() => {
-    // ⚠️ Gated on writesEnabled() like the two sibling controls: the controller transmits through
-    // /vcu-write, so on a phone that never enabled writes it is inert and offering a switch for it
-    // would be offering a switch that does nothing. Hidden, not disabled, for the same reason.
-    if (chargeType.val !== "dc" || !writesEnabled()) {
-      return div();
-    }
-    if (!loaded.val) {
-      void refresh();
-      return div({ class: "tile span2" }, div({ class: "label" }, "Automatic charge current"));
-    }
-    // ⚠️ The tile itself is built ONCE per visibility change; everything that moves is a thunk
-    // inside it, so a refresh updates text in place instead of replacing the button under a thumb.
-    return div(
-      { class: "tile span2" },
-      div({ class: "label" }, "Automatic charge current"),
-      div({ class: "action-note" }, () =>
-        div({ style: `color:${mode.val === "automatic" ? GOOD : MUTED}` }, controllerSentence())
-      ),
-      ToggleButton(),
-      div(
-        { class: "settings-row" },
-        div({ class: "settings-note" }, "Permission on this Pi"),
-        button({ class: "settings-button", onclick: () => openDestination("settings", "charging") }, "Settings →")
-      ),
-      div({ class: "action-note", style: `color:${WARN}` }, () => failure.val)
-    );
-  });
-}
-
-function ToggleButton() {
+/** @param {boolean} [compact] */
+function ToggleButton(compact = false) {
   return div(
     button(
       {
         class: "action",
+        "data-charge-action": "automatic",
         disabled: () => busy.val,
         // Read at click time, not captured: the state moves under the button between renders.
         onclick: () => void toggle(toggleAction(mode.val, reasonCode.val, floorAmps.val).mode),
       },
-      () => (busy.val ? "⏳  …" : toggleAction(mode.val, reasonCode.val, floorAmps.val).label)
+      () =>
+        busy.val
+          ? "Waiting…"
+          : compact
+            ? mode.val === "off"
+              ? "Enable"
+              : reasonCode.val === REASON_RIDER
+                ? "Resume"
+                : "Pause"
+            : toggleAction(mode.val, reasonCode.val, floorAmps.val).label
     ),
-    div(
-      { class: "action-note", style: `color:${MUTED}` },
-      () => toggleAction(mode.val, reasonCode.val, floorAmps.val).note
-    )
+    ...(compact
+      ? []
+      : [
+          div(
+            { class: "action-note", style: `color:${MUTED}` },
+            () => toggleAction(mode.val, reasonCode.val, floorAmps.val).note
+          ),
+        ])
   );
 }
 
 /** `CHARGE_AUTO_REASON.RIDER` — stood down because the rider set a current. Mirrors auto-curve.ts. */
 export const REASON_RIDER = 4;
 
-/**
- * What the one button says, what it POSTs, and the sentence under it.
- *
- * ⚠️ THREE states, not two, and the third is the reason this exists. While stood down the effective
- * mode is still `automatic`, so a plain on/off toggle read "Switch off for this charge" — the
- * opposite of what the rider wanted — and taking the controller back meant tapping OFF and then ON,
- * two taps through a label that says the wrong thing. `mode=automatic` already clears the stand-down
- * in src/charge/auto.ts, so this is one tap; only the wording was missing.
- *
- * Pure — the floor arrives as an argument rather than being read off the module state, so the label
- * binding gains no dependency it does not need and the check asserts the sentence a rider actually
- * sees. Exported so scripts/check-charge-auto.ts can drive all three states without a browser.
+/** Constraints and retained findings: docs/charge-controls.md.
  * @param {"automatic" | "off"} currentMode
  * @param {number | null} reason
  * @param {number} floor_a
@@ -290,4 +305,22 @@ async function toggle(wanted) {
   } finally {
     busy.val = false;
   }
+}
+
+export function ChargeAutoSummary() {
+  return div(
+    div({ class: "label" }, () => {
+      const request = chargeAck.val === null ? null : chargeValue("charge_cmd_a");
+      return request === null ? "Request not established" : `Last request · ${request} A`;
+    }),
+    div({ class: "sub" }, () => {
+      if (chargeType.val === "ac") return "Automatic reduction · DC only";
+      if (!loaded.val) return "Automatic reduction not established";
+      return mode.val === "off"
+        ? "Automatic reduction off"
+        : reasonCode.val === REASON_RIDER
+          ? "Automatic reduction paused"
+          : "Automatic reduction active";
+    })
+  );
 }

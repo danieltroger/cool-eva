@@ -106,6 +106,9 @@ instantiate = function instantiateRidingPreview() {
       const at = now - 600_000 + sample * 59_000;
       imports("lib/ring.js").ringFor("coolant_in").push(at, 36.5);
       imports("lib/ring.js")
+        .ringFor("cell_spread_mv")
+        .push(at, 48 - sample);
+      imports("lib/ring.js")
         .ringFor("coolant_out")
         .push(at, 40 + sample * 0.12);
     }
@@ -113,7 +116,16 @@ instantiate = function instantiateRidingPreview() {
       const rings = imports("lib/ring.js");
       for (let sample = 0; sample <= 60; sample++) {
         const at = now - 122_000 + sample * 2_000;
-        rings.ringFor("pack_kw").push(at, ridingFixture.get("range-history") === "regen" ? 12.168 : -12.168);
+        rings
+          .ringFor("pack_kw")
+          .push(
+            at,
+            ridingFixture.has("charge-scene")
+              ? LIVE.pack_kw[0]
+              : ridingFixture.get("range-history") === "regen"
+                ? 12.168
+                : -12.168
+          );
         rings.ringFor("odometer_can_km").push(at, 40010 + sample * 0.04);
         rings.ringFor("kwh_per_100km").push(at, 16.9);
       }
