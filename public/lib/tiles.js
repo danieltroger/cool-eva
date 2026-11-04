@@ -1,7 +1,8 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, faultState, isStale, peekServerTime, signalState } from "./store.js";
+import { chartTick, faultState, isStale, signalState } from "./store.js";
+import * as readingPolicy from "./reading-status.js";
 import { ringFor } from "./ring.js";
 import { monotonicNow } from "./clock.js";
 import { sparkline } from "./svg.js";
@@ -15,11 +16,8 @@ const { div, span } = van.tags;
 // to exactly the signals it reads. That is what keeps a 20 Hz `pack_a` frame from
 // touching anything except the two text nodes that show pack_a.
 
-/** A value not refreshed within this long is shown greyed rather than as truth. */
-export const STALE_MS = 8000;
-
-/** A fault older than this stops being shouted about — the sensor recovered. */
-const FAULT_MEMORY_MS = 60_000;
+// The preview bundler supports declarations rather than re-exports; the policy owns the value.
+export const STALE_MS = readingPolicy.STALE_MS;
 
 /**
  * A tile for a signal that has never arrived takes up as much room as one showing a
@@ -113,19 +111,10 @@ export function SignalTile({
       unit ? span({ class: "unit" }, unit) : null
     ),
     () => {
-      // Paced at 2 Hz so the fault notice can time itself out; see FAULT_MEMORY_MS.
+      // The shared fault memory samples server time on the slow pulse, not every patch.
       chartTick.val;
       const active = fault.val;
-      // Server time, not Date.now(): active.ts is stamped by the Pi, and comparing
-      // it against this device's clock measures the gap between two machines rather
-      // than the age of the fault. Both sides here are server wall time, which is
-      // the only pairing that means anything.
-      //
-      // Peeked, not read through `.val`: apply() sets serverTime on every message
-      // including 20 Hz patches, so subscribing would rebuild this div at frame rate
-      // — the same leak the chart binding above avoids. The tick above is what makes
-      // the notice expire on its own instead of hanging around until the next fault.
-      if (active && peekServerTime() - active.ts < FAULT_MEMORY_MS) {
+      if (active && readingPolicy.readingHasFault(key)) {
         return div({ class: "sub fault" }, `sensor fault (${active.value.toFixed(0)})`);
       }
       return sub ? div({ class: "sub" }, sub()) : div({ class: "sub" }, "");
@@ -231,8 +220,8 @@ export function PairTile({
       // hard-coded "low"/"high" named the Motor tile's OBD sensor "high", which it is not.
       const ends = caption.split("/").map(part => part.trim());
       const faulted = keys
-        .map((key, index) => ({ fault: faultState(key).val, end: ends[index] || `key ${index + 1}` }))
-        .filter(entry => entry.fault && peekServerTime() - entry.fault.ts < FAULT_MEMORY_MS);
+        .map((key, index) => ({ key, fault: faultState(key).val, end: ends[index] || `key ${index + 1}` }))
+        .filter(entry => readingPolicy.readingHasFault(entry.key));
       if (faulted.length > 0) {
         const detail = faulted.map(entry => `${entry.end} ${entry.fault?.value.toFixed(0)}`).join(", ");
         return div({ class: "sub fault" }, `sensor fault (${detail})`);

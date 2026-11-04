@@ -4,7 +4,7 @@ import van from "../vendor/van-1.6.1.js";
 import { CALM, MUTED, TRACK } from "./colors.js";
 
 // Inline-SVG drawing primitives: sparkline, meter, ring, bar strip, heatmap.
-// The power meter is not here — it is lib/power-bar.js, which has opinions these do not.
+// Ride's power instrument is lib/power-edge.js; its constraints are in docs/ride-power.md.
 //
 // Hand-rolled rather than pulled from a chart library, for two reasons. The whole
 // dashboard is ~30 kB and loads over a phone hotspot in a garage — uPlot alone is

@@ -1,7 +1,7 @@
 // @ts-check
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, connection, faultState, isStale, signalState, valueOf } from "../lib/store.js";
-import { STALE_MS } from "../lib/tiles.js";
+import { chartTick, valueOf } from "../lib/store.js";
+import { readingStatus } from "../lib/reading-status.js";
 import { SubTabs } from "../lib/sub-tabs.js";
 import { settings } from "../lib/settings.js";
 import { FAN_MODE_CODE, fanDriveState } from "../lib/fan-display.js";
@@ -26,7 +26,7 @@ export function CoolingView() {
     div(
       { class: "tile cooling-short" },
       div({ class: "label" }, "Cooling fan · commanded"),
-      div({ class: "value" }, Reading("fan_target_pct", 0, false), span({ class: "unit" }, "%")),
+      div({ class: "value" }, Reading("fan_target_pct", 0, false), Unit("fan_target_pct", "%")),
       FanStatus()
     )
   );
@@ -37,10 +37,10 @@ function FanStatus() {
     chartTick.val;
     if (settings.val?.active.radiatorFanEnabled === false) return "Not installed";
     const signals = ["fan_auto_mode", "fan_driver_enabled", "fan_duty_pct", "fan_target_pct"];
-    if (signals.some(key => faultState(key).val)) {
+    if (signals.some(key => readingStatus(key) === "fault")) {
       return span({ style: `color:${colors.BAD}` }, "Fan status fault");
     }
-    if (signals.some(readingUnavailable)) {
+    if (signals.some(key => readingStatus(key) !== "fresh")) {
       return "Fan status unavailable";
     }
     const mode = valueOf("fan_auto_mode");
@@ -73,8 +73,11 @@ function TemperatureCard(label, keys, caption, decimals = 0, extraClass = "") {
     div({ class: "label" }, label),
     div(
       { class: "value cooling-values" },
-      ...keys.flatMap((key, index) => [index ? span(" / ") : span(), Reading(key, decimals, true)]),
-      span({ class: "unit" }, units.tempUnit)
+      ...keys.flatMap((key, index) => [
+        index ? span(" / ") : span(),
+        Reading(key, decimals, true),
+        Unit(key, units.tempUnit, keys.slice(index + 1)),
+      ])
     ),
     div({ class: "sub" }, caption)
   );
@@ -86,7 +89,7 @@ function Reading(key, decimals, temperature) {
     {
       "data-signal": key,
       style: () =>
-        `color:${faultState(key).val ? colors.BAD : readingUnavailable(key) ? colors.MUTED : temperature ? colors.temperature(valueOf(key)) : colors.CALM}`,
+        `color:${readingStatus(key) === "fault" ? colors.BAD : readingStatus(key) !== "fresh" ? colors.MUTED : temperature ? colors.temperature(valueOf(key)) : colors.CALM}`,
     },
     () => {
       chartTick.val;
@@ -96,20 +99,21 @@ function Reading(key, decimals, temperature) {
       ) {
         return "—";
       }
-      if (faultState(key).val) return "fault";
-      const reading = signalState(key).val;
-      if (!reading) return "—";
-      if (readingUnavailable(key)) return "stale";
-      return (temperature ? units.temp(reading.value) : reading.value).toFixed(decimals);
+      const status = readingStatus(key);
+      if (status !== "fresh") return status === "missing" ? "—" : status;
+      const reading = valueOf(key) ?? 0;
+      return (temperature ? units.temp(reading) : reading).toFixed(decimals);
     }
   );
 }
 
-/** @param {string} key */
-function readingUnavailable(key) {
-  // Fan commands retain their last-change timestamp across live snapshots (registry.ts onDemand).
-  if (key.startsWith("fan_")) {
-    return signalState(key).val === null || connection.val !== "live";
-  }
-  return isStale(key, STALE_MS);
+/** @param {string} key @param {string | (() => string)} unit @param {string[]} [following] */
+function Unit(key, unit, following = []) {
+  // An empty text anchor lets the unit appear when the initial snapshot or a recovery arrives.
+  return () => {
+    if (readingStatus(key) !== "fresh" || following.some(next => readingStatus(next) === "fresh")) return "";
+    if (key.startsWith("coolant_") && settings.val?.active.coolantProbesEnabled === false) return "";
+    if (key.startsWith("fan_") && settings.val?.active.radiatorFanEnabled === false) return "";
+    return span({ class: "unit" }, typeof unit === "function" ? unit() : unit);
+  };
 }

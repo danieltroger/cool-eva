@@ -537,6 +537,8 @@ For each sample of `primary`, the function takes the newest `reference` sample a
 
 ### The power meter — `lib/power-limits.js`, `lib/power-bar.js`
 
+Superseded by [Ride's horizontal Edge instrument](ride-power.md) in #183. The vertical geometry and retired checks below are historical; the measurements and refuted hypotheses remain evidence for the fixed scale.
+
 A thin vertical strip down the left edge of the speed hero: **drive grows up from the origin, regen grows down**, on a fixed scale that never re-ranges — 130 kW at the top and 36 kW at the bottom (`POWER_SCALE_KW` in `views/ride.js`). What the BMS has taken away is drawn as the same grey **dashed**, so the strip answers "how much is left" without the rider measuring anything.
 
 It is vertical because that is what the owner's own bike does — the Model 3/Y meter is a strip at the left edge beside the speed — and because vertical costs no row. The horizontal bar it replaces spent one row on itself and another on a `REGEN / DRIVE` legend naming its ends; the strip runs beside a numeral that is already that tall and needs no legend, because up-and-blue against down-and-green is the whole of it.

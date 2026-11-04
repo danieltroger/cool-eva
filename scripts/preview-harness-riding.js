@@ -58,6 +58,14 @@ if (ridingFixture.get("fixture") === "all-installed") {
     high_beam: [0, "", "buttons"],
     btn_cruise_set: [0, "", "buttons"],
   });
+  if (ridingFixture.get("ride-state") === "charging") {
+    Object.assign(LIVE, {
+      pack_kw: [15, "kW", "battery"],
+      pack_a: [15000 / 340, "A", "battery"],
+      fast_dc_contactor: [1, "", "charge"],
+      charge_manager_state: [35, "", "charge"],
+    });
+  }
   for (let module = 1; module <= 11; module += 1) {
     for (let cell = 1; cell <= (module <= 4 ? 8 : 7); cell += 1) {
       LIVE[`lmu${module}_cell${cell}_mv`] = [3120 + ((module * 7 + cell * 3) % 39), "mV", "battery"];
@@ -84,6 +92,14 @@ const originalInstantiateForRiding = instantiate;
 instantiate = function instantiateRidingPreview() {
   const imports = originalInstantiateForRiding();
   if (ridingFixture.get("fixture") === "all-installed") {
+    const now = imports("lib/clock.js").monotonicNow();
+    for (let sample = 0; sample <= 10; sample += 1) {
+      const at = now - 600_000 + sample * 59_000;
+      imports("lib/ring.js").ringFor("coolant_in").push(at, 36.5);
+      imports("lib/ring.js")
+        .ringFor("coolant_out")
+        .push(at, 40 + sample * 0.12);
+    }
     // The template seeds fanReadings() after the harness; restore the real last-change timestamps before mount.
     for (const key of ["fan_auto_mode", "fan_driver_enabled", "fan_duty_pct", "fan_target_pct"]) {
       LIVE[key][3] = fanChangedAt;
