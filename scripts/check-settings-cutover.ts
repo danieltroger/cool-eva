@@ -36,9 +36,11 @@ async function checkLegacySurfaces(): Promise<void> {
   assert.equal(installer.includes("EnvironmentFile="), false);
   assert.ok(installer.indexOf("await migrateBeforeReplacingUnit()") < installer.indexOf("await writeFile(servicePath"));
   const index = await readFile("src/index.ts", "utf-8");
+  assert.equal(index.includes("process.umask("), false, "Archive access must not change the service-wide umask.");
+  assert.ok(installer.includes("UMask=0022"));
   assert.ok(index.indexOf("await startSettings(") < index.indexOf("await initEncryptedLog("));
   assert.ok(index.includes("handleUpdateEndpoint(req, res, UPDATE_DIR, settingsHttp)"));
-  assert.ok(index.includes('req.headers["x-cool-eva"]'));
+  assert.ok(index.includes("handleMutationGuard(req, res, url.pathname)"));
   const waypoint = await readFile("public/lib/waypoint.js", "utf-8");
   assert.ok(waypoint.includes('method: "POST"') && waypoint.includes('"X-Cool-Eva": "waypoint"'));
   const client = await readFile("src/ble/client.ts", "utf-8");

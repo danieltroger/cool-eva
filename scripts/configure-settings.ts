@@ -1,3 +1,4 @@
+import { requireFreshInstallation } from "../src/settings/fresh-setup.ts";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { installCapturePruner, verifyCapturePruner } from "../src/storage/capture-pruner.ts";
@@ -43,6 +44,7 @@ async function configureSettings(): Promise<void> {
     }
     const changes = Object.keys(submitted).length ? await validateSettingsPatch(submitted, paths, codeDirectory) : {};
     if (current.kind === "missing") {
+      await requireFreshInstallation(codeDirectory, process.env);
       const ownership = await stat(codeDirectory);
       const { stdout } = await promisify(execFile)("getent", ["group", String(ownership.gid)], { timeout: 5_000 });
       await installCapturePruner(stdout.split(":")[0]);

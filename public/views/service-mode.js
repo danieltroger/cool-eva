@@ -1,6 +1,7 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
+import { OwnerActionRow } from "./owner-action.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 import { LifetimeReadButton, refreshLifetimeRead } from "./lifetime-read.js";
 import { FreezeFrameReadButton, refreshFreezeFrameRead } from "./freeze-frame-read.js";
@@ -68,9 +69,12 @@ let polling = false;
 export function ServiceMode(includeBatteryRead = true) {
   return div(
     GateNote(),
-    ReadButton(),
-    () => (message.val ? div({ class: "action-note" }, message.val) : div()),
-    ProgressNote(),
+    div(
+      { class: "settings-card" },
+      ReadButton(),
+      () => (message.val ? div({ class: "action-note" }, message.val) : div()),
+      ProgressNote()
+    ),
     ExportButton(),
     includeBatteryRead ? LifetimeReadButton(() => state.val) : div(),
     FreezeFrameReadButton(() => state.val),
@@ -129,50 +133,54 @@ function GateNote() {
  * it, and a dead "Read" button next to a live "Stop" is a worse thing to hit.
  */
 function ReadButton() {
-  return button(
-    {
-      class: "action",
-      // Disabled only for STARTING — a sweep already running must stay stoppable
-      // whether the flag was set or the bike started moving, which is why this
-      // reads `isRunning()` first. Both reasons to be disabled are the server's,
-      // read off the last response; the page decides nothing here.
-      disabled: () => !isRunning() && state.val !== null && (!state.val.enabled || !state.val.gate.safe),
-      // One held Enter must not arm and then fire. See ../lib/arming.js.
-      onkeydown: refuseKeyRepeat,
-      onclick: () => {
-        if (isRunning()) {
-          void sendVcuRead("DELETE");
-          return;
-        }
-        if (armed.val !== SWEEP_KEY) {
-          arm(SWEEP_KEY);
-          return;
-        }
-        if (!armDwellElapsed()) {
-          return;
-        }
-        armed.val = "";
-        void performSweep();
+  return OwnerActionRow(
+    "VCU parameters",
+    button(
+      {
+        class: "action",
+        // Disabled only for STARTING — a sweep already running must stay stoppable
+        // whether the flag was set or the bike started moving, which is why this
+        // reads `isRunning()` first. Both reasons to be disabled are the server's,
+        // read off the last response; the page decides nothing here.
+        disabled: () => !isRunning() && state.val !== null && (!state.val.enabled || !state.val.gate.safe),
+        // One held Enter must not arm and then fire. See ../lib/arming.js.
+        onkeydown: refuseKeyRepeat,
+        onclick: () => {
+          if (isRunning()) {
+            void sendVcuRead("DELETE");
+            return;
+          }
+          if (armed.val !== SWEEP_KEY) {
+            arm(SWEEP_KEY);
+            return;
+          }
+          if (!armDwellElapsed()) {
+            return;
+          }
+          armed.val = "";
+          void performSweep();
+        },
       },
-    },
-    () => {
-      if (isRunning()) {
-        return "⏹  Stop the parameter read";
+      () => {
+        if (isRunning()) {
+          return "⏹  Stop the parameter read";
+        }
+        const refusal = serviceRefusal(state.val);
+        if (refusal !== null) {
+          return refusal;
+        }
+        if (armed.val === SWEEP_KEY) {
+          return "⚠  Tap again — ~300 requests on the bus, and live telemetry blinks 25 times";
+        }
+        // 🔎, not 🔧. The wrench was on this button AND on "say a service was
+        // performed NOW", i.e. on the safest control in the sheet and on one of the
+        // three that cannot be undone — the one glyph collision that actively
+        // mislead. 🔎 now means "this reads the bike" everywhere in the sheet, and
+        // 🔧 is left to mean the service point and nothing else.
+        return "🔎  Read VCU parameters from the bike";
       }
-      const refusal = serviceRefusal(state.val);
-      if (refusal !== null) {
-        return refusal;
-      }
-      if (armed.val === SWEEP_KEY) {
-        return "⚠  Tap again — ~300 requests on the bus, and live telemetry blinks 25 times";
-      }
-      // 🔎, not 🔧. The wrench was on this button AND on "say a service was
-      // performed NOW", i.e. on the safest control in the sheet and on one of the
-      // three that cannot be undone — the one glyph collision that actively
-      // mislead. 🔎 now means "this reads the bike" everywhere in the sheet, and
-      // 🔧 is left to mean the service point and nothing else.
-      return "🔎  Read VCU parameters from the bike";
-    }
+    ),
+    () => (isRunning() ? "Stop" : armed.val === SWEEP_KEY ? "Confirm read" : "Read")
   );
 }
 
@@ -244,26 +252,31 @@ function FailureBreakdown(tally) {
 /** Downloads the snapshot in energica_tool.py's own backup format. */
 function ExportButton() {
   return div(
-    button(
-      {
-        class: "action action-quiet",
-        disabled: () => (state.val?.export.rows ?? 0) === 0,
-        onclick: () => {
-          // ./lib/transport.js download(): a navigation on wifi, so the browser's own
-          // download UI puts the file somewhere the phone can share it from — the entire
-          // point of exporting it — and a tunnelled blob over BLE, where there is no URL.
-          download("/vcu-backup.csv", "vcu_backup.csv").catch(error => {
-            console.warn("service-mode: export download failed", error);
-          });
+    { class: "settings-card" },
+    OwnerActionRow(
+      "Parameter backup",
+      button(
+        {
+          class: "action action-quiet",
+          disabled: () => (state.val?.export.rows ?? 0) === 0,
+          onclick: () => {
+            // ./lib/transport.js download(): a navigation on wifi, so the browser's own
+            // download UI puts the file somewhere the phone can share it from — the entire
+            // point of exporting it — and a tunnelled blob over BLE, where there is no URL.
+            download("/vcu-backup.csv", "vcu_backup.csv").catch(error => {
+              console.warn("service-mode: export download failed", error);
+            });
+          },
         },
-      },
-      () => {
-        const rows = state.val?.export.rows ?? 0;
-        if (rows === 0) {
-          return "⬇  Export — nothing read on this Pi yet";
+        () => {
+          const rows = state.val?.export.rows ?? 0;
+          if (rows === 0) {
+            return "⬇  Export — nothing read on this Pi yet";
+          }
+          return `⬇  Export ${rows} parameters as vcu_backup.csv`;
         }
-        return `⬇  Export ${rows} parameters as vcu_backup.csv`;
-      }
+      ),
+      () => "Export"
     ),
     () => {
       const summary = state.val?.export;

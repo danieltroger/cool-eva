@@ -1,3 +1,4 @@
+import { ReloadPageNotice } from "./views/reload-page.js";
 // @ts-check
 
 import van from "./vendor/van-1.6.1.js";
@@ -30,7 +31,7 @@ import {
 } from "./lib/destination.js";
 import { DestinationPage, destinationTitle } from "./views/destination-page.js";
 import { settings, watchSettings } from "./lib/settings.js";
-import { MigrationSummary } from "./views/settings-page.js";
+import { MigrationSummary } from "./views/settings-summary.js";
 
 const { button, div, span } = van.tags;
 
@@ -84,6 +85,7 @@ function App() {
   // hit-transparent, so its position in the tree costs nothing else.
   return div(
     Header(),
+    ReloadPageNotice(),
     () => {
       const fault = systemStatus.val?.settingsFault ?? settings.val?.fault;
       if (!fault || (destination.val === "settings" && fault === settings.val?.fault)) return div();
@@ -96,12 +98,7 @@ function App() {
         )
       );
     },
-    () =>
-      destination.val
-        ? div()
-        : settings.val?.source === "legacy"
-          ? div({ class: "settings-page" }, MigrationSummary(true))
-          : div(),
+    MigrationSummary(true, true),
     () => (destination.val ? DestinationPage() : VIEWS[currentTab()]()),
     () => (destination.val ? div() : TabBar()),
     Sheet(),

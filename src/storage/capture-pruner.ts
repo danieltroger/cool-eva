@@ -4,23 +4,29 @@ import { dirname, join } from "path";
 import { promisify } from "util";
 import { replaceFileDurably } from "./durable.ts";
 
-export async function installCapturePruner(archiveGroupName: string): Promise<void> {
-  if (process.getuid?.() !== 0) {
+export async function installCapturePruner(
+  archiveGroupName: string,
+  options: PrunerInstallOptions = {}
+): Promise<void> {
+  const paths = options.paths ?? capturePrunerPaths();
+  const inspect = options.inspect ?? inspectDirectory;
+  const replace = options.replace ?? replaceFileDurably;
+  if ((options.userId?.() ?? process.getuid?.()) !== 0) {
     throw new Error("Installing the capture pruner requires root.");
   }
-  const rule = capturePruneSudoers(archiveGroupName);
-  await mkdir(dirname(CAPTURE_PRUNE_HELPER), { recursive: true, mode: 0o755 });
-  await assertRootOwnedAncestors(dirname(CAPTURE_PRUNE_HELPER));
-  await assertRootOwnedAncestors(SUDOERS_DIRECTORY);
+  const rule = capturePruneSudoers(archiveGroupName, paths.helper);
+  await mkdir(dirname(paths.helper), { recursive: true, mode: 0o755 });
+  await assertRootOwnedAncestors(dirname(paths.helper), inspect);
+  await assertRootOwnedAncestors(paths.sudoersDirectory, inspect);
   const script = await readFile(new URL("./capture-pruner.sh", import.meta.url), "utf-8");
-  await replaceFileDurably(CAPTURE_PRUNE_HELPER, script, { mode: 0o755, userId: 0, groupId: 0 });
-  const directory = await mkdtemp(join(SUDOERS_DIRECTORY, ".cool-eva-prune-"));
+  await replace(paths.helper, script, { mode: 0o755, userId: 0, groupId: 0 });
+  const directory = await mkdtemp(join(paths.sudoersDirectory, ".cool-eva-prune-"));
   try {
     const candidate = join(directory, "rule");
     await writeFile(candidate, rule, { mode: 0o440 });
     await chmod(candidate, 0o440);
-    await execFileAsync("visudo", ["-cf", candidate]);
-    await replaceFileDurably(join(SUDOERS_DIRECTORY, "cool-eva-prune-captures"), rule, {
+    await (options.run ?? runPrunerCommand)("visudo", ["-cf", candidate]);
+    await replace(join(paths.sudoersDirectory, "cool-eva-prune-captures"), rule, {
       mode: 0o440,
       userId: 0,
       groupId: 0,
@@ -31,21 +37,23 @@ export async function installCapturePruner(archiveGroupName: string): Promise<vo
 }
 
 export const CAPTURE_PRUNE_HELPER = "/usr/local/libexec/cool-eva-prune-captures";
-const SUDOERS_DIRECTORY = "/etc/sudoers.d";
 const execFileAsync = promisify(execFile);
 
-export function capturePruneSudoers(archiveGroupName: string): string {
+export function capturePruneSudoers(archiveGroupName: string, helper = CAPTURE_PRUNE_HELPER): string {
   if (!/^[a-z_][a-z0-9_-]*[$]?$/i.test(archiveGroupName)) {
     throw new Error("The archive group needs a valid system group name.");
   }
-  return `%${archiveGroupName} ALL=(root) NOPASSWD: ${CAPTURE_PRUNE_HELPER} ""\n`;
+  return `%${archiveGroupName} ALL=(root) NOPASSWD: ${helper} ""\n`;
 }
 
-async function assertRootOwnedAncestors(directory: string): Promise<void> {
+async function assertRootOwnedAncestors(
+  directory: string,
+  inspect: (path: string) => Promise<DirectoryAccess>
+): Promise<void> {
   let current = directory;
   for (;;) {
-    const metadata = await lstat(current);
-    if (!metadata.isDirectory() || metadata.isSymbolicLink() || metadata.uid !== 0 || (metadata.mode & 0o022) !== 0) {
+    const metadata = await inspect(current);
+    if (!metadata.directory || metadata.symlink || metadata.userId !== 0 || (metadata.mode & 0o022) !== 0) {
       throw new Error(
         `Capture-pruner parent ${current} must be root-owned and not group/world-writable. Repair it before retrying migration.`
       );
@@ -56,18 +64,30 @@ async function assertRootOwnedAncestors(directory: string): Promise<void> {
   }
 }
 
-export async function verifyCapturePruner(ownerUid: number): Promise<void> {
+export async function verifyCapturePruner(ownerUid: number, options: PrunerProbeOptions = {}): Promise<void> {
   if (!Number.isSafeInteger(ownerUid) || ownerUid < 0) {
     throw new Error("Invalid checkout owner uid.");
   }
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(
-      "/usr/bin/sudo",
-      ["-n", "-u", `#${ownerUid}`, "--", "/usr/bin/sudo", "-n", CAPTURE_PRUNE_HELPER],
-      {
-        stdio: ["pipe", "pipe", "pipe"],
-      }
+  const helper = (options.paths ?? capturePrunerPaths()).helper;
+  const result = await (options.probe ?? runPrunerProbe)(
+    "/usr/bin/sudo",
+    ["-n", "-u", `#${ownerUid}`, "--", "/usr/bin/sudo", "-n", helper],
+    "COOL_EVA_STDIN_PROBE\n"
+  );
+  if (result.code !== 0 || !result.stdout.split(/\r?\n/).includes("COOL_EVA_PRUNE_STDIN_OK")) {
+    throw new Error(
+      "Capture-pruner sudo stdin preflight failed; repair the owner's non-interactive sudo access before migration. No data was moved."
     );
+  }
+}
+
+async function runPrunerProbe(
+  command: string,
+  arguments_: string[],
+  input: string
+): Promise<{ code: number | null; stdout: string }> {
+  return new Promise<{ code: number | null; stdout: string }>((resolve, reject) => {
+    const child = spawn(command, arguments_, { stdio: ["pipe", "pipe", "pipe"] });
     let output = "";
     const timer = setTimeout(() => {
       child.kill("SIGTERM");
@@ -86,19 +106,52 @@ export async function verifyCapturePruner(ownerUid: number): Promise<void> {
     });
     child.once("close", code => {
       clearTimeout(timer);
-      if (code === 0 && output.split(/\r?\n/).includes("COOL_EVA_PRUNE_STDIN_OK")) {
-        resolve();
-      } else {
-        reject(
-          new Error(
-            "Capture-pruner sudo stdin preflight failed; repair the owner's non-interactive sudo access before migration. No data was moved."
-          )
-        );
-      }
+      resolve({ code, stdout: output });
     });
     child.stdin.on("error", error => {
       console.warn("capture-pruner preflight stdin failed:", error.message);
     });
-    child.stdin.end("COOL_EVA_STDIN_PROBE\n");
+    child.stdin.end(input);
   });
+}
+
+export interface PrunerPaths {
+  helper: string;
+  sudoersDirectory: string;
+}
+export interface DirectoryAccess {
+  directory: boolean;
+  symlink: boolean;
+  userId: number;
+  mode: number;
+}
+export interface PrunerInstallOptions {
+  paths?: PrunerPaths;
+  inspect?: (path: string) => Promise<DirectoryAccess>;
+  replace?: typeof replaceFileDurably;
+  run?: (command: string, arguments_: string[]) => Promise<{ stdout: string }>;
+  userId?: () => number;
+}
+export interface PrunerProbeOptions {
+  paths?: PrunerPaths;
+  probe?: (command: string, arguments_: string[], input: string) => Promise<{ code: number | null; stdout: string }>;
+}
+export function capturePrunerPaths(root = "/"): PrunerPaths {
+  return {
+    helper: join(root, "usr/local/libexec/cool-eva-prune-captures"),
+    sudoersDirectory: join(root, "etc/sudoers.d"),
+  };
+}
+async function inspectDirectory(path: string): Promise<DirectoryAccess> {
+  const metadata = await lstat(path);
+  return {
+    directory: metadata.isDirectory(),
+    symlink: metadata.isSymbolicLink(),
+    userId: metadata.uid,
+    mode: metadata.mode,
+  };
+}
+async function runPrunerCommand(command: string, arguments_: string[]): Promise<{ stdout: string }> {
+  const result = await execFileAsync(command, arguments_, { timeout: 5_000 });
+  return { stdout: result.stdout };
 }

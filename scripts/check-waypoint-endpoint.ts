@@ -14,8 +14,8 @@ import { LATITUDE_RANGE, LONGITUDE_RANGE } from "../src/gps/fix-plausibility.ts"
 
 // The /waypoint wire, with no Pi and no phone.
 //
-//   node --experimental-strip-types scripts/check-waypoint-endpoint.ts
-//
+// Run with node --experimental-strip-types scripts/check-waypoint-endpoint.ts
+
 // ⚠️ NOTHING COVERED THIS ENDPOINT UNTIL NOW, which is how it came to save a position
 // 7 000 km from the bike (issue #157). Five refusal branches and five sentences reach a
 // rider through Siri or a red banner, and every one of them was unasserted. Three of the

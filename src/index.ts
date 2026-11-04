@@ -1,4 +1,7 @@
+import { handleMutationGuard } from "./http/mutation-guard.ts";
 import { isPlausible } from "../public/lib/bounds.js";
+import { configureArchiveAccess } from "./storage/archive-access.ts";
+import { validBleSecret } from "../public/lib/ble-secret.js";
 import { startSettings } from "./settings/startup.ts";
 import { createSettingsRestart } from "./settings/restart.ts";
 import { handleRecordingFlushEndpoint } from "./http/recording-flush.ts";
@@ -83,12 +86,12 @@ const ROOT = join(__dirname, "..");
 const PORT = 80;
 const CAN_IFACE = "can0";
 
-process.umask(0o027);
 const settingsRuntime = await startSettings({
   codeDirectory: ROOT,
   workingDirectory: process.cwd(),
   environment: process.env,
 });
+configureArchiveAccess(settingsRuntime.paths);
 const startup = settingsRuntime.active;
 const UPDATE_DIR = ROOT;
 const RIDE_LOG_DIR = startup.rideLogDirectory;
@@ -477,14 +480,18 @@ const settingsHttp = {
     settingsRuntime.readiness.fan = startup.radiatorFanEnabled
       ? (fanController.fault ?? "Driver ready — rotation is not measured")
       : "Off";
-    settingsRuntime.readiness.recording = rideLogEnabled
-      ? "Recording"
-      : "Unavailable — choose a public key or repair the settings fault";
+    settingsRuntime.readiness.recording = !settingsRuntime.dataWritable
+      ? "Paused — repair data locations before retrying settings"
+      : rideLogEnabled
+        ? "Recording"
+        : "Unavailable — choose a public key or repair the settings fault";
     settingsRuntime.readiness.bluetooth = !BLE_SECRET
       ? "Off"
-      : bleServer?.ready()
-        ? "Bluetooth ready"
-        : "Unavailable — Bluetooth registration has not completed";
+      : !validBleSecret(BLE_SECRET)
+        ? "Unavailable — this key needs regenerating in Settings → Connections"
+        : bleServer?.ready()
+          ? "Bluetooth ready"
+          : "Unavailable — Bluetooth registration has not completed";
     settingsRuntime.readiness.can = systemStatus().can.message;
     return settingsRuntime.readiness;
   },
@@ -533,19 +540,7 @@ const server = createServer(async (req, res) => {
     await handleSettingsEndpoint(req, res, url.pathname, settingsHttp);
     return;
   }
-  if (
-    (!["GET", "HEAD"].includes(req.method ?? "GET") || url.pathname === "/waypoint") &&
-    (!req.headers["x-cool-eva"] || !String(req.headers["content-type"] ?? "").startsWith("application/json"))
-  ) {
-    res.writeHead(403);
-    res.end("Use the dashboard to request this action.");
-    return;
-  }
-  if (url.pathname === "/waypoint" && (req.method !== "POST" || req.headers["x-cool-eva"] !== "waypoint")) {
-    res.writeHead(405);
-    res.end("Save waypoints with POST from the dashboard.");
-    return;
-  }
+  if (handleMutationGuard(req, res, url.pathname)) return;
 
   if (url.pathname === "/recording/flush") {
     await handleRecordingFlushEndpoint(req, res);

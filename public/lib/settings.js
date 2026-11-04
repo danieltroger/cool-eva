@@ -23,6 +23,7 @@ let refreshing = false;
 let editingRevision = null;
 /** @type {Map<string, { value: import("../vendor/van-1.6.1.js").State<string>, dirty: boolean, revision: number | null }>} */
 const drafts = new Map();
+const draftChanges = van.state(0);
 
 export async function refreshSettings() {
   if (refreshing) return;
@@ -109,6 +110,8 @@ export function editSetting(key, value) {
   }
   draft.dirty = true;
   draft.value.val = value;
+  draftChanges.val += 1;
+  settingsMessages.val = { ...settingsMessages.rawVal, [key]: "" };
   armed.val = "";
 }
 
@@ -124,6 +127,7 @@ export async function saveSetting(key, changes) {
   if (draft) {
     draft.dirty = false;
     draft.revision = settings.rawVal?.revision ?? null;
+    draftChanges.val += 1;
   }
 }
 
@@ -230,6 +234,7 @@ function invalidateConnection() {
 
 /** @param {string} key */
 export function settingIsDirty(key) {
+  draftChanges.val;
   const draft = drafts.get(`${settings.val?.instanceId ?? "unconfirmed"}:${key}`);
   if (!draft) return false;
   draft.value.val;
@@ -246,6 +251,7 @@ export function discardSetting(key) {
     ? current.saved[/** @type {keyof SettingsReply["saved"]} */ (key)]
     : "";
   draft.value.val = String(saved);
+  draftChanges.val += 1;
   armed.val = "";
   settingsMessages.val = { ...settingsMessages.rawVal, [key]: "Unsaved edit discarded." };
 }

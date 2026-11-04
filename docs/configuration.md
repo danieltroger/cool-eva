@@ -34,3 +34,13 @@ sudo "$(command -v node)" --experimental-strip-types scripts/setup-service.ts
 An empty object permits setup later over reachable Wi-Fi: optional probes, fan, Bluetooth and motorcycle hub are off/unselected; automatic DC current reduction is allowed. Choose your motorcycle explicitly under Connections before it enrols the Pi. Recording needs a public key supplied in Settings. The offline writer also accepts the named settings fields as JSON on stdin for the installer; credentials never belong in command arguments or environment variables. It takes the service's writer lock and refuses while that service is running.
 
 Retain a working home-LAN or phone-hotspot profile. Client-isolated hotspots may require home Wi-Fi for the initial dashboard connection. There is no recovery AP. Once Dashboard Bluetooth is configured, a supported client can still reach the dashboard over its BLE tunnel when Wi-Fi is wrong. Otherwise use a reachable existing network, the manual installation/repair route, or card reconfiguration/re-image after complete first-boot loss.
+
+## Repair settings
+
+A corrupt or newer settings document is retained. Shared saves are disabled, live readings stay available, and automatic current reduction is off. A corrupt `state/installed.json` ownership marker also gives a visible fault instead of a crash loop. Do not delete that marker or `state/data-move.json` to force another environment import: they protect moved archives from being mistaken for a fresh installation.
+
+Use a reachable Wi-Fi connection, configured supported Bluetooth client or the manual installation/repair route. Back up the private `state/` directory and archives before repair. Restore a known-good settings document and ownership marker, or return to software that supports the retained schema. Keep private state root-owned and `0600`; keep its directory `0700`. If the fault names an archive or pruner prerequisite, repair that specific problem first. Preserve the sole move journal and its source/destination identities.
+
+Then use **Retry settings after repair** and its second confirmation. This restarts the service so it reads the repaired files; the transport **Retry** button only refreshes the existing process. Confirm the active choices and recording status after reconnecting. If no network or configured Bluetooth route is usable, use card repair/re-image with the backups; there is no recovery AP.
+
+An older cached dashboard may receive **Reload the page** after an action is refused by the request-header barrier. Reload before retrying. Existing Siri waypoint shortcuts must be updated to POST with the Cool Eva header; the old GET shortcut speaks instructions and saves nothing. See [Siri setup](waypoints.md#saving-a-waypoint-from-siri).

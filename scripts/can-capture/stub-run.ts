@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "fs/promises";
 import { execFile, spawn } from "child_process";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -22,6 +22,7 @@ const execFileAsync = promisify(execFile);
 const gunzipAsync = promisify(gunzip);
 
 export interface StubRunOptions {
+  managedArchive?: boolean;
   /** What the stub `df` prints in the Available column. A string, so garbage is testable. */
   availableKb?: string;
   /** Make the stub `df` fail outright, printing nothing on stdout. */
@@ -50,6 +51,7 @@ export interface StubRunResult {
   output: string;
   /** Basenames created in the capture directory. */
   captureFiles: string[];
+  captureFileModes: number[];
   /** The argv the stub `split` was called with, or null if it never ran. */
   splitArgv: string | null;
   /** The one capture file, decompressed, or null if none was written. */
@@ -69,6 +71,9 @@ export async function runCaptureScriptWithStubs(
       exitCode: run.exitCode,
       output: run.output,
       captureFiles,
+      captureFileModes: await Promise.all(
+        captureFiles.map(async name => (await stat(join(context.captureDirectory, name))).mode & 0o777)
+      ),
       splitArgv: await readIfPresent(context.splitLog),
       capturedText: await readCapture(context.captureDirectory, captureFiles),
     };
@@ -91,7 +96,7 @@ interface StubContext {
  * failing for the reason under test. Every assertion that reads an exit code would then
  * be "passing" on a run that never happened — so a stub PATH is only as good as this list.
  */
-const REAL_TOOLS = ["cut", "date", "awk", "mkdir", "gzip", "mktemp", "cat", "rm"];
+const REAL_TOOLS = ["grep", "cut", "date", "awk", "mkdir", "gzip", "mktemp", "cat", "rm"];
 
 async function buildStubEnvironment(root: string, scriptPath: string, options: StubRunOptions): Promise<StubContext> {
   const binDirectory = join(root, "bin");
@@ -130,13 +135,17 @@ async function buildStubEnvironment(root: string, scriptPath: string, options: S
     await symlink(resolved, join(binDirectory, tool));
   }
 
+  if (options.managedArchive) {
+    await mkdir(join(root, "managed-data/state"), { recursive: true });
+    await writeFile(join(root, "managed-data/state/settings.json"), '{"source": "fresh"}\n');
+  }
   const original = options.scriptText ?? (await readFile(scriptPath, "utf-8"));
   // ⚠️ replaceAll, not replace: a plain string `.replace()` substitutes the FIRST occurrence
   // only, so a second read of /proc/uptime — timing the floor wait, say — would leave the run
   // half-rewritten and pointed at the real /proc.
   const rewritten = original
     .replace(/^DIRECTORY=.*$/m, `DIRECTORY=${captureDirectory}`)
-    .replaceAll("/home/pi/ride-captures", captureDirectory)
+    .replaceAll("/home/pi/ride-captures", options.managedArchive ? join(root, "absent-legacy") : captureDirectory)
     .replaceAll("/var/lib/cool-eva", join(root, "managed-data"))
     .replaceAll("/proc/sys/kernel/random/boot_id", bootIdFile)
     .replaceAll("/proc/uptime", uptimeFile);

@@ -24,11 +24,18 @@ export async function openSettingsStore(
   archiveGroupId: number
 ): Promise<SettingsStore> {
   assertSettingsWriterLock(lock);
-  archiveGroupId = await storedArchiveGroup(paths, archiveGroupId);
-  await prepareSettingsDirectories(paths, archiveGroupId);
-  await sweepReplacementFiles(paths.privateDirectory);
-  await sweepArchiveReplacementFiles(paths, lock);
-  let loaded = await loadSettings(paths);
+  let markerFault: SettingsState | null = null;
+  try {
+    archiveGroupId = await storedArchiveGroup(paths, archiveGroupId);
+  } catch (error) {
+    markerFault = degradedState(paths, "invalid-install-marker", error);
+  }
+  if (!markerFault) {
+    await prepareSettingsDirectories(paths, archiveGroupId);
+    await sweepReplacementFiles(paths.privateDirectory);
+    await sweepArchiveReplacementFiles(paths, lock);
+  }
+  let loaded = markerFault ?? (await loadSettings(paths));
   if (loaded.kind === "ready") {
     if (
       typeof loaded.raw.instanceId !== "string" ||
@@ -238,9 +245,11 @@ async function loadSettings(paths: SettingsPaths): Promise<SettingsState> {
 function degradedState(paths: SettingsPaths, fault: SettingsFault, error?: unknown): SettingsState {
   const code = readErrorCode(error);
   const recovery =
-    fault === "missing-after-install"
-      ? "Restore the saved settings. Existing archives were left in place."
-      : "The original file is preserved; repair it or use compatible software.";
+    fault === "invalid-install-marker"
+      ? "The installed.json ownership marker is preserved; restore it from a known-good backup before retrying settings."
+      : fault === "missing-after-install"
+        ? "Restore the saved settings. Existing archives were left in place."
+        : "The original file is preserved; repair it or use compatible software.";
   const message = `Settings cannot be loaded (${fault}${code ? `, ${code}` : ""}). ${recovery}`;
   console.warn(`settings: ${message}`);
   return { kind: "degraded", fault, message, configuration: degradedSettings(paths) };

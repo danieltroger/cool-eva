@@ -1671,6 +1671,25 @@ body {
   opacity: 0.5;
   cursor: default;
 }
+.settings-button.writes {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.settings-button.irreversible {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+.settings-link:is(button) {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.owner-action-status {
+  margin: 4px 0 0;
+}
 .settings-page input:not([type="checkbox"]),
 .settings-page select,
 .settings-page textarea {
@@ -1693,6 +1712,23 @@ body {
   height: 20px;
   vertical-align: middle;
   margin-right: 5px;
+}
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 44px;
+  min-height: 44px;
+  cursor: pointer;
+}
+.settings-check input[type="checkbox"] {
+  flex: 0 0 20px;
+  margin: 0;
+}
+.settings-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 .settings-page textarea {
   margin-top: 8px;
@@ -1730,6 +1766,7 @@ body {
 }
 .header .menu {
   min-width: 44px;
+  min-height: 44px;
   width: auto;
   white-space: nowrap;
   font-size: 17px;

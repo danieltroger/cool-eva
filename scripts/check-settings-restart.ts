@@ -11,6 +11,7 @@ import { closeSettingsFixture, settingsFixture } from "./settings-check-fixtures
 await checkReservation();
 await checkExpiry();
 await checkExpiredDelivery();
+await checkSlowFlush();
 checkMotion();
 console.log("settings restart checks passed");
 
@@ -218,4 +219,36 @@ async function checkExpiredDelivery(): Promise<void> {
     await closeSettingsFixture(fixture);
   }
   console.log("  an expired BLE delivery cannot consume a later lease; a synchronous delivery failure still restarts");
+}
+
+async function checkSlowFlush(): Promise<void> {
+  const fixture = await settingsFixture();
+  let schedules = 0;
+  const restart = createSettingsRestart({
+    store: fixture.store,
+    motionBlockers: () => [],
+    beforeScheduleTimeoutMs: 10,
+    stopTimeoutMs: 1_000,
+    schedule: async () => {
+      schedules += 1;
+    },
+  });
+  try {
+    await fixture.store.initialise(freshSettings(fixture.paths));
+    assert.equal(await restart.reserve(restart.generation, 0), true);
+    await restart.deliverAndSchedule(
+      async () => {},
+      async () => {
+        await delay(35);
+      }
+    );
+    assert.equal(schedules, 1, "A post-pull flush that exceeds its bound still schedules exactly one restart.");
+    assert.equal(restart.status().state, "scheduled");
+    await delay(40);
+    assert.equal(schedules, 1);
+  } finally {
+    await restart.close();
+    await closeSettingsFixture(fixture);
+  }
+  console.log("  a slow checkout flush is a warning and never costs Update its restart");
 }

@@ -36,6 +36,7 @@ export interface SettingsReply {
   pending: (keyof StartupSettings)[];
   fault: string | null;
   notices: string[];
+  retiredChoices?: { name: string; behavior: string }[];
   readiness: SettingsReadiness;
   restart: { state: "idle" | "reserved" | "scheduled" | "stopping" | "failed"; message: string };
   locations: { root: string; wifi: string; captures: string };

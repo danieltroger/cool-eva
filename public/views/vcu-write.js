@@ -1,6 +1,7 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
+import { OwnerActionRow, OwnerActionCard } from "./owner-action.js";
 import { BAD, GOOD, MUTED, WARN, WATCH } from "../lib/colors.js";
 import { ageInWords, hexWord } from "../lib/format.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
@@ -686,95 +687,104 @@ function WantedControl() {
  * read one value would be two things to keep in step.
  */
 function ReadButton() {
-  return button(
-    {
-      class: "action",
-      disabled: () => busy.val || !canReach() || !selectedTarget(),
-      onclick: () => void readCurrent(),
-    },
-    () => {
-      if (busy.val) {
-        // ⚠️ Only when the READ is what is running. `busy` is global, so this said "Reading…"
-        // through a clear, a service stamp and a clock sync — claiming an operation that was not
-        // happening, which is the exact thing `working` was added for one screen away.
-        return working.val === "" ? "⏳  Reading…" : "⏳  Busy…";
+  return OwnerActionCard(
+    "Selected parameter",
+    button(
+      {
+        class: "action",
+        disabled: () => busy.val || !canReach() || !selectedTarget(),
+        onclick: () => void readCurrent(),
+      },
+      () => {
+        if (busy.val) {
+          // ⚠️ Only when the READ is what is running. `busy` is global, so this said "Reading…"
+          // through a clear, a service stamp and a clock sync — claiming an operation that was not
+          // happening, which is the exact thing `working` was added for one screen away.
+          return working.val === "" ? "⏳  Reading…" : "⏳  Busy…";
+        }
+        // Two captions, because the button is answering two different questions. With
+        // nothing read it is the way to get a value at all; with a sweep's value already
+        // on screen it is how you find out whether that value is still true, which is a
+        // thing you may want and no longer something you are made to do.
+        return onBike() === null ? "🔎  Read it off the bike now" : "🔎  Read it off the bike again";
       }
-      // Two captions, because the button is answering two different questions. With
-      // nothing read it is the way to get a value at all; with a sweep's value already
-      // on screen it is how you find out whether that value is still true, which is a
-      // thing you may want and no longer something you are made to do.
-      return onBike() === null ? "🔎  Read it off the bike now" : "🔎  Read it off the bike again";
-    }
+    ),
+    () => "Read"
   );
 }
 
 function WriteButton() {
   return div(
-    button(
-      {
-        // The middle tier, and the only control in it. A parameter write changes the
-        // bike and can be written back — which is why it is amber and on screen,
-        // rather than red and behind the fold with the three that cannot.
-        class: "action writes",
-        // One held Enter must not arm and then fire. See refuseKeyRepeat.
-        onkeydown: refuseKeyRepeat,
-        // Unavailable until a value has been read off this bike, until something has
-        // been chosen to write, and until the bike has named its parameter table. The
-        // server enforces all three — the compare-and-swap, the allowlist and the table
-        // gate — and the page simply does not offer a button whose request would be
-        // refused.
-        disabled: () => busy.val || !canWrite() || onBike() === null || wanted.val.trim().length === 0,
-        onclick: () => {
-          if (armed.val !== "write") {
-            void armWrite();
-            return;
-          }
-          // Same dwell, same reason as the irreversible three. This one is reversible,
-          // which is why it is amber — but a write nobody meant is still a write, and
-          // one rule for every second tap on this page is one rule to keep true.
-          if (!armDwellElapsed()) {
-            return;
-          }
-          armed.val = "";
-          void performWrite();
+    { class: "settings-card" },
+    OwnerActionRow(
+      "Write selected parameter",
+      button(
+        {
+          // The middle tier, and the only control in it. A parameter write changes the
+          // bike and can be written back — which is why it is amber and on screen,
+          // rather than red and behind the fold with the three that cannot.
+          class: "action writes",
+          // One held Enter must not arm and then fire. See refuseKeyRepeat.
+          onkeydown: refuseKeyRepeat,
+          // Unavailable until a value has been read off this bike, until something has
+          // been chosen to write, and until the bike has named its parameter table. The
+          // server enforces all three — the compare-and-swap, the allowlist and the table
+          // gate — and the page simply does not offer a button whose request would be
+          // refused.
+          disabled: () => busy.val || !canWrite() || onBike() === null || wanted.val.trim().length === 0,
+          onclick: () => {
+            if (armed.val !== "write") {
+              void armWrite();
+              return;
+            }
+            // Same dwell, same reason as the irreversible three. This one is reversible,
+            // which is why it is amber — but a write nobody meant is still a write, and
+            // one rule for every second tap on this page is one rule to keep true.
+            if (!armDwellElapsed()) {
+              return;
+            }
+            armed.val = "";
+            void performWrite();
+          },
         },
-      },
-      () => {
-        if (writing.val) {
-          return "⏳  Writing…";
+        () => {
+          if (writing.val) {
+            return "⏳  Writing…";
+          }
+          if (busy.val) {
+            // The first tap's refresh, or a read running in the section above. Neither is
+            // a write, and neither may be captioned as one.
+            return "⏳  Checking what the bike holds…";
+          }
+          const table = state.val?.status.tableGate;
+          if (table && !table.writesAllowed) {
+            // Ahead of the "read it first" caption: reading the value would not help
+            // here, and a button that asks for a reading it will then refuse to act on is
+            // worse than one that says what is actually wrong. The full sentence and the
+            // remedy are in TableTypeNote() above; this is the short form on the control.
+            return table.noReadWillHelp
+              ? "🚨  Blocked — this bike's parameter table is not one this software can write against"
+              : // Deliberately "sweep", not "read": the probe shows the answer and stores
+                // nothing, so a caption saying "read 277" sends people round a loop that
+                // never ends. The full sentence is in TableTypeNote() above.
+                "⚠️  Blocked until a sweep has recorded the A8's TABLE_TYPE (277) — see above";
+          }
+          if (onBike() === null) {
+            return "✏️  Read it off the bike first — a write is compared against what is there now";
+          }
+          // Each disabled state says which of the two things is missing rather than
+          // sharing one caption: "nothing has read it" and "you have not said what to
+          // write" are fixed by different taps in different places.
+          if (wanted.val.trim().length === 0) {
+            return selectedTarget()?.control.kind === "bits"
+              ? "✏️  Pick what to set the bit to"
+              : "✏️  Type the value to write";
+          }
+          const change = describeChange();
+          return armed.val === "write" ? `⚠️  Tap again to write  ${change}` : `✏️  Write  ${change}`;
         }
-        if (busy.val) {
-          // The first tap's refresh, or a read running in the section above. Neither is
-          // a write, and neither may be captioned as one.
-          return "⏳  Checking what the bike holds…";
-        }
-        const table = state.val?.status.tableGate;
-        if (table && !table.writesAllowed) {
-          // Ahead of the "read it first" caption: reading the value would not help
-          // here, and a button that asks for a reading it will then refuse to act on is
-          // worse than one that says what is actually wrong. The full sentence and the
-          // remedy are in TableTypeNote() above; this is the short form on the control.
-          return table.noReadWillHelp
-            ? "🚨  Blocked — this bike's parameter table is not one this software can write against"
-            : // Deliberately "sweep", not "read": the probe shows the answer and stores
-              // nothing, so a caption saying "read 277" sends people round a loop that
-              // never ends. The full sentence is in TableTypeNote() above.
-              "⚠️  Blocked until a sweep has recorded the A8's TABLE_TYPE (277) — see above";
-        }
-        if (onBike() === null) {
-          return "✏️  Read it off the bike first — a write is compared against what is there now";
-        }
-        // Each disabled state says which of the two things is missing rather than
-        // sharing one caption: "nothing has read it" and "you have not said what to
-        // write" are fixed by different taps in different places.
-        if (wanted.val.trim().length === 0) {
-          return selectedTarget()?.control.kind === "bits"
-            ? "✏️  Pick what to set the bit to"
-            : "✏️  Type the value to write";
-        }
-        const change = describeChange();
-        return armed.val === "write" ? `⚠️  Tap again to write  ${change}` : `✏️  Write  ${change}`;
-      }
+      ),
+      () => (armed.val === "write" ? "Confirm write" : "Write")
     ),
     div({ class: "action-note", style: `color:${MUTED}` }, () =>
       onBike() === null
@@ -862,7 +872,7 @@ function HeadlightSection() {
           "write — read off the bike first, then read back — and reversible."
       ),
       div(
-        { class: "action-block" },
+        { class: "action-block settings-card" },
         // ⚠️ Above the button, on the way to the thumb: this is the one thing about it a
         // person will not expect. It is NOT a live switch — the light stays on until the
         // bike is keyed off and on again.
@@ -874,7 +884,7 @@ function HeadlightSection() {
         HeadlightButton(true)
       ),
       div(
-        { class: "action-block" },
+        { class: "action-block settings-card" },
         div(
           { class: "action-note" },
           `Puts ${BEAM_MAX_PARAM} back to the factory ${BEAM_MAX_FACTORY_MA} mA. The beam returns at the next ` +
@@ -926,45 +936,49 @@ function ResetVcuSection() {
  */
 function HeadlightButton(off) {
   const key = off ? "headlight-off" : "headlight-restore";
-  return button(
-    {
-      class: off ? "action writes" : "action",
-      // One held Enter must not arm and then fire. See refuseKeyRepeat.
-      onkeydown: refuseKeyRepeat,
-      // Same gate as the parameter write — it IS a parameter write by index, so the
-      // table gate applies. The server enforces all of it regardless.
-      disabled: () => busy.val || !canWrite() || !beamTarget(),
-      onclick: () => {
-        if (armed.val !== key) {
-          void armHeadlight(key);
-          return;
-        }
-        if (!armDwellElapsed()) {
-          return;
-        }
-        armed.val = "";
-        void performHeadlight(off);
+  return OwnerActionRow(
+    "Headlight fault threshold",
+    button(
+      {
+        class: off ? "action writes" : "action",
+        // One held Enter must not arm and then fire. See refuseKeyRepeat.
+        onkeydown: refuseKeyRepeat,
+        // Same gate as the parameter write — it IS a parameter write by index, so the
+        // table gate applies. The server enforces all of it regardless.
+        disabled: () => busy.val || !canWrite() || !beamTarget(),
+        onclick: () => {
+          if (armed.val !== key) {
+            void armHeadlight(key);
+            return;
+          }
+          if (!armDwellElapsed()) {
+            return;
+          }
+          armed.val = "";
+          void performHeadlight(off);
+        },
       },
-    },
-    () => {
-      if (writing.val) {
-        return "⏳  Writing…";
+      () => {
+        if (writing.val) {
+          return "⏳  Writing…";
+        }
+        if (busy.val) {
+          return "⏳  Reading the beam threshold…";
+        }
+        const table = state.val?.status.tableGate;
+        if (table && !table.writesAllowed) {
+          // The short form; the full sentence and remedy are in TableTypeNote() above.
+          return table.noReadWillHelp
+            ? "🚨  Blocked — this bike's parameter table is not one this software can write against"
+            : "⚠️  Blocked until a sweep has recorded the A8's TABLE_TYPE (277) — see above";
+        }
+        if (off) {
+          return armed.val === key ? "⚠️  Tap again to disable the headlight" : "🌑  Disable the headlight";
+        }
+        return armed.val === key ? "⚠️  Tap again to restore the headlight" : "💡  Restore the headlight";
       }
-      if (busy.val) {
-        return "⏳  Reading the beam threshold…";
-      }
-      const table = state.val?.status.tableGate;
-      if (table && !table.writesAllowed) {
-        // The short form; the full sentence and remedy are in TableTypeNote() above.
-        return table.noReadWillHelp
-          ? "🚨  Blocked — this bike's parameter table is not one this software can write against"
-          : "⚠️  Blocked until a sweep has recorded the A8's TABLE_TYPE (277) — see above";
-      }
-      if (off) {
-        return armed.val === key ? "⚠️  Tap again to disable the headlight" : "🌑  Disable the headlight";
-      }
-      return armed.val === key ? "⚠️  Tap again to restore the headlight" : "💡  Restore the headlight";
-    }
+    ),
+    () => (armed.val === key ? "Confirm" : off ? "Disable" : "Restore")
   );
 }
 
@@ -997,7 +1011,7 @@ function AllLightsSection() {
           "dash. Reversible: disabling first saves each circuit's healthy value, and restore writes those back."
       ),
       div(
-        { class: "action-block" },
+        { class: "action-block settings-card" },
         // Both cautions ABOVE the button, on the way to the thumb — the same placement the
         // headlight's "not immediate" line uses. The road-legal one leads: it is the whole
         // reason not to press this, and it is reversible, so it is caution (amber) and NOT
@@ -1015,7 +1029,7 @@ function AllLightsSection() {
         AllLightsButton(true)
       ),
       div(
-        { class: "action-block" },
+        { class: "action-block settings-card" },
         div(
           { class: "action-note" },
           "Writes each circuit's MAX threshold back to the value saved when it was disabled — or the factory " +
@@ -1041,45 +1055,49 @@ function AllLightsSection() {
  */
 function AllLightsButton(off) {
   const key = off ? "all-lights-off" : "all-lights-restore";
-  return button(
-    {
-      class: off ? "action writes" : "action",
-      // One held Enter must not arm and then fire. See refuseKeyRepeat.
-      onkeydown: refuseKeyRepeat,
-      // `writing` as well as `busy`: the batch's send() drops `busy` on its way out while the
-      // run is still finishing, and a second tap must not start a second run into the first.
-      disabled: () => busy.val || writing.val || !canWrite() || !beamTarget(),
-      onclick: () => {
-        if (armed.val !== key) {
-          arm(key);
-          return;
-        }
-        if (!armDwellElapsed()) {
-          return;
-        }
-        armed.val = "";
-        void performAllLights(off);
+  return OwnerActionRow(
+    "Light fault thresholds",
+    button(
+      {
+        class: off ? "action writes" : "action",
+        // One held Enter must not arm and then fire. See refuseKeyRepeat.
+        onkeydown: refuseKeyRepeat,
+        // `writing` as well as `busy`: the batch's send() drops `busy` on its way out while the
+        // run is still finishing, and a second tap must not start a second run into the first.
+        disabled: () => busy.val || writing.val || !canWrite() || !beamTarget(),
+        onclick: () => {
+          if (armed.val !== key) {
+            arm(key);
+            return;
+          }
+          if (!armDwellElapsed()) {
+            return;
+          }
+          armed.val = "";
+          void performAllLights(off);
+        },
       },
-    },
-    () => {
-      if (writing.val) {
-        return "⏳  Writing…";
+      () => {
+        if (writing.val) {
+          return "⏳  Writing…";
+        }
+        if (busy.val) {
+          return "⏳  Checking what the bike holds…";
+        }
+        const table = state.val?.status.tableGate;
+        if (table && !table.writesAllowed) {
+          // The short form; the full sentence and remedy are in TableTypeNote() above.
+          return table.noReadWillHelp
+            ? "🚨  Blocked — this bike's parameter table is not one this software can write against"
+            : "⚠️  Blocked until a sweep has recorded the A8's TABLE_TYPE (277) — see above";
+        }
+        if (off) {
+          return armed.val === key ? "⚠️  Tap again to turn OFF every light" : "🌑  Turn off ALL lights";
+        }
+        return armed.val === key ? "⚠️  Tap again to restore every light" : "💡  Restore ALL lights";
       }
-      if (busy.val) {
-        return "⏳  Checking what the bike holds…";
-      }
-      const table = state.val?.status.tableGate;
-      if (table && !table.writesAllowed) {
-        // The short form; the full sentence and remedy are in TableTypeNote() above.
-        return table.noReadWillHelp
-          ? "🚨  Blocked — this bike's parameter table is not one this software can write against"
-          : "⚠️  Blocked until a sweep has recorded the A8's TABLE_TYPE (277) — see above";
-      }
-      if (off) {
-        return armed.val === key ? "⚠️  Tap again to turn OFF every light" : "🌑  Turn off ALL lights";
-      }
-      return armed.val === key ? "⚠️  Tap again to restore every light" : "💡  Restore ALL lights";
-    }
+    ),
+    () => (armed.val === key ? "Confirm" : off ? "Disable" : "Restore")
   );
 }
 
@@ -1577,55 +1595,59 @@ const CLOCK_NO_UNDO = "The bike's clock cannot be read back, so nothing can conf
  */
 function ClockAction() {
   return div(
-    { class: "action-block" },
+    { class: "action-block settings-card" },
     // Above the button, for the reason ActionButton sets out: on a phone the thumb
     // arrives before the eye does. Shown only when the button can actually do
     // something, and through NoUndoLine rather than hand-rolled, so this card is not
     // the only one whose red line lacks the IRREVERSIBLE badge.
     () => (state.val?.status.clock.trustworthy === true ? NoUndoLine({ noUndo: CLOCK_NO_UNDO, does: "" }) : div()),
-    button(
-      {
-        class: "action irreversible",
-        disabled: () => busy.val || !canReach() || state.val?.status.clock.trustworthy !== true,
-        // One held Enter must not arm and then fire. See refuseKeyRepeat.
-        onkeydown: refuseKeyRepeat,
-        onclick: () => {
-          if (armed.val !== "action:sync-clock") {
-            // ⚠️ The FIRST tap refreshes before it arms, so the time the caption then
-            // shows is the Pi's time now rather than the Pi's time when the sheet was
-            // opened. Without this the owner could be asked "Is it 09:15 UTC?" at
-            // 10:20 and truthfully answer no useful question at all.
-            void armClockSync();
-            return;
-          }
-          // The same dwell as every other second tap. This control happened to survive
-          // a double-tap already, because armClockSync() awaits a refresh that disables
-          // the button in between — but that was the refresh's side effect, not a
-          // guard, and it would go the moment the refresh did. See ARM_DWELL_MS.
-          if (!armDwellElapsed()) {
-            return;
-          }
-          armed.val = "";
-          // ⚠️ The minute CONFIRMED is derived from the one that was DISPLAYED, never
-          // from the phone's own clock. They are two different clocks: sending
-          // `new Date()` would mean the Pi checked the phone's freshness while the
-          // owner had agreed to a statement about the Pi — so a stale caption would
-          // sail through, and a phone a minute out of step could never sync at all.
-          void performAction("sync-clock", confirmedMinute());
+    OwnerActionRow(
+      "Motorcycle clock",
+      button(
+        {
+          class: "action irreversible",
+          disabled: () => busy.val || !canReach() || state.val?.status.clock.trustworthy !== true,
+          // One held Enter must not arm and then fire. See refuseKeyRepeat.
+          onkeydown: refuseKeyRepeat,
+          onclick: () => {
+            if (armed.val !== "action:sync-clock") {
+              // ⚠️ The FIRST tap refreshes before it arms, so the time the caption then
+              // shows is the Pi's time now rather than the Pi's time when the sheet was
+              // opened. Without this the owner could be asked "Is it 09:15 UTC?" at
+              // 10:20 and truthfully answer no useful question at all.
+              void armClockSync();
+              return;
+            }
+            // The same dwell as every other second tap. This control happened to survive
+            // a double-tap already, because armClockSync() awaits a refresh that disables
+            // the button in between — but that was the refresh's side effect, not a
+            // guard, and it would go the moment the refresh did. See ARM_DWELL_MS.
+            if (!armDwellElapsed()) {
+              return;
+            }
+            armed.val = "";
+            // ⚠️ The minute CONFIRMED is derived from the one that was DISPLAYED, never
+            // from the phone's own clock. They are two different clocks: sending
+            // `new Date()` would mean the Pi checked the phone's freshness while the
+            // owner had agreed to a statement about the Pi — so a stale caption would
+            // sail through, and a phone a minute out of step could never sync at all.
+            void performAction("sync-clock", confirmedMinute());
+          },
         },
-      },
-      () => {
-        const clock = state.val?.status.clock;
-        if (!clock) {
-          return "🕒  …";
+        () => {
+          const clock = state.val?.status.clock;
+          if (!clock) {
+            return "🕒  …";
+          }
+          if (!clock.trustworthy) {
+            return "🕒  This Pi's clock cannot be copied to the bike";
+          }
+          return armed.val === "action:sync-clock"
+            ? `⚠️  Is it ${clock.iso.slice(0, 19).replace("T", " ")} UTC?  Tap again to send`
+            : "🕒  Set the bike's clock from this Pi";
         }
-        if (!clock.trustworthy) {
-          return "🕒  This Pi's clock cannot be copied to the bike";
-        }
-        return armed.val === "action:sync-clock"
-          ? `⚠️  Is it ${clock.iso.slice(0, 19).replace("T", " ")} UTC?  Tap again to send`
-          : "🕒  Set the bike's clock from this Pi";
-      }
+      ),
+      () => (armed.val === "action:sync-clock" ? "Confirm time" : "Set clock")
     ),
     () => {
       const clock = state.val?.status.clock;
@@ -1703,7 +1725,7 @@ function ActionButton(action, caption, notes) {
     // notes — otherwise "read the stamp above first" sits as close to the next button
     // as to the one it is about, which on this list is a sentence attached to the
     // wrong irreversible action.
-    { class: "action-block" },
+    { class: "action-block settings-card" },
     // ⚠️ ABOVE the button, not under it. On a phone, reading order IS tap order: with
     // the consequence underneath, the thumb reaches a 55 px target before the eye
     // reaches the sentence saying the target cannot be undone. The one line that could
@@ -1711,47 +1733,65 @@ function ActionButton(action, caption, notes) {
     // Everything that is not a consequence — what it does, what to check first — stays
     // below, where it is read once you have decided to look properly.
     NoUndoLine(notes),
-    button(
+    OwnerActionRow(
       {
-        class: `action${irreversible ? " irreversible" : ""}`,
-        disabled: () => busy.val || !canReach(),
-        // One held Enter must not arm and then fire. See refuseKeyRepeat.
-        onkeydown: refuseKeyRepeat,
-        onclick: () => {
-          if (armed.val !== key) {
-            arm(key);
-            return;
-          }
-          // ⚠️ This is the line that stops a double-tap running `31 FC`, and it is the
-          // only thing between these two taps — everything else on this control is
-          // synchronous. Before it existed, two clicks 0 ms apart POSTed
-          // `action=set-service-point&confirm=set-service-point` for real. Ignored, not
-          // disarmed: the caption still says "Tap again" and still means it.
-          if (!armDwellElapsed()) {
-            return;
-          }
-          armed.val = "";
-          void performAction(action, confirmationFor(action));
+        "read-service-stamp": "Last-service stamp",
+        "set-service-point": "Record service performed",
+        "clear-dtcs": "Stored faults",
+        "reset-vcu": "Reset VCU",
+      }[action],
+      button(
+        {
+          class: `action${irreversible ? " irreversible" : ""}`,
+          disabled: () => busy.val || !canReach(),
+          // One held Enter must not arm and then fire. See refuseKeyRepeat.
+          onkeydown: refuseKeyRepeat,
+          onclick: () => {
+            if (armed.val !== key) {
+              arm(key);
+              return;
+            }
+            // ⚠️ This is the line that stops a double-tap running `31 FC`, and it is the
+            // only thing between these two taps — everything else on this control is
+            // synchronous. Before it existed, two clicks 0 ms apart POSTed
+            // `action=set-service-point&confirm=set-service-point` for real. Ignored, not
+            // disarmed: the caption still says "Tap again" and still means it.
+            if (!armDwellElapsed()) {
+              return;
+            }
+            armed.val = "";
+            void performAction(action, confirmationFor(action));
+          },
         },
-      },
-      // ⚠️ The confirmation NAMES WHAT IS PRIMED, and that is not decoration. It used
-      // to be one shared sentence — "Tap again — this cannot be undone" — on all
-      // three, so an armed button said only that something irreversible was armed,
-      // never which. The parameter write has named its target in this exact spot
-      // since #81 for the same reason (see describeChange): the caption is the one
-      // place a person commits, and a thumb that landed on the wrong control is
-      // exactly the case it exists to catch.
-      // ⚠️ Three captions, not two. A clear now parks the OBD poller and reads the bike back on
-      // both sides of the frame, so its POST takes up to ~11 s where it used to take 0.6 — and a
-      // 55 px control that looks identical for eleven seconds in a garage gets pressed again.
-      // `disabled` already refuses the second press; this is what says why. Deliberately generic:
-      // all four ActionButtons share it and two of them read nothing back.
-      () => {
-        if (busy.val && working.val === key) {
-          return "⏳  Working…";
+        // ⚠️ The confirmation NAMES WHAT IS PRIMED, and that is not decoration. It used
+        // to be one shared sentence — "Tap again — this cannot be undone" — on all
+        // three, so an armed button said only that something irreversible was armed,
+        // never which. The parameter write has named its target in this exact spot
+        // since #81 for the same reason (see describeChange): the caption is the one
+        // place a person commits, and a thumb that landed on the wrong control is
+        // exactly the case it exists to catch.
+        // ⚠️ Three captions, not two. A clear now parks the OBD poller and reads the bike back on
+        // both sides of the frame, so its POST takes up to ~11 s where it used to take 0.6 — and a
+        // 55 px control that looks identical for eleven seconds in a garage gets pressed again.
+        // `disabled` already refuses the second press; this is what says why. Deliberately generic:
+        // all four ActionButtons share it and two of them read nothing back.
+        () => {
+          if (busy.val && working.val === key) {
+            return "⏳  Working…";
+          }
+          return armed.val === key ? `⚠️  Tap again — ${notes.confirm}` : caption();
         }
-        return armed.val === key ? `⚠️  Tap again — ${notes.confirm}` : caption();
-      }
+      ),
+      () =>
+        armed.val === key
+          ? "Confirm"
+          : action === "reset-vcu"
+            ? "Reset VCU"
+            : action === "read-service-stamp"
+              ? "Read"
+              : action === "clear-dtcs"
+                ? "Clear faults"
+                : "Record service"
     ),
     // ⚠️ ABOVE the prose. The prose is static and says what the button is FOR; this is what
     // it just did. docs/dashboard-decisions.md §"Where an ANSWER goes".

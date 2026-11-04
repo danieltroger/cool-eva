@@ -1,60 +1,85 @@
 // @ts-check
 import van from "../vendor/van-1.6.1.js";
 import { request } from "../lib/transport.js";
-import { settings, settingsAction, settingsMessages, settingsBusy, settingsError } from "../lib/settings.js";
+import {
+  settings,
+  settingsAction,
+  settingsMessages,
+  settingsBusy,
+  settingsError,
+  settingsConfirmed,
+} from "../lib/settings.js";
+import { settingChoice } from "../lib/settings-state.js";
+import { armed } from "../lib/arming.js";
 import { SettingsCard, CompactButton, PendingLabel, SaveResult } from "./settings-fields.js";
 const { button, div, select, option } = van.tags;
 const candidates = van.state(/** @type {import("../../src/settings/view.ts").HubCandidate[]} */ ([]));
 const selected = van.state("");
+const selectionRevision = van.state(/** @type {number | null} */ (null));
+const scannedFor = van.state("");
 const scanMessage = van.state("");
 
 export function MotorcycleConnection() {
   return div(
     SettingsCard(
       "Motorcycle connection",
-      "Cool Eva ↔ motorcycle hub. Choose carefully when other Energicas are nearby: connecting may occupy the hub’s one enrolment slot. Saving or forgetting takes effect after restart.",
-      () =>
-        div(
-          { class: "settings-note" },
-          `Active: ${settings.val?.active.hubAddress ?? "None"} · ${settings.val?.readiness.hub ?? "Unconfirmed"}`
-        ),
-      () =>
-        div(
-          { class: "settings-note" },
-          `Saved: ${settings.val?.saved.hubAddress ?? (settings.val?.saved.discoverHubOnce ? "Discover once, then remember" : "None")}`
-        ),
+      "Cool Eva ↔ motorcycle hub. Connecting Cool Eva may replace this motorcycle’s existing Bluetooth pairing. Saving or forgetting takes effect after restart.",
+      () => div({ class: "settings-note" }, `Connection: ${settings.val?.readiness.hub ?? "Unconfirmed"}`),
       div(
         { class: "settings-row" },
         div(
           () =>
-            candidates.val.length
+            candidates.val.length && scannedFor.val === settings.val?.instanceId
               ? select(
                   {
                     "aria-label": "Choose your motorcycle",
+                    value: () => selected.val,
                     onchange: event => {
+                      if (!selected.rawVal) {
+                        selectionRevision.val = settings.rawVal?.revision ?? null;
+                      }
                       selected.val = /** @type {HTMLSelectElement} */ (event.target).value;
+                      armed.val = "";
+                      settingsMessages.val = { ...settingsMessages.rawVal, hub: "" };
                     },
                   },
-                  option({ value: "" }, "Choose motorcycle…"),
+                  option({ value: "", selected: () => !selected.val }, "Choose motorcycle…"),
                   ...candidates.val.map(candidate =>
-                    option({ value: candidate.address }, `${candidate.name} · ${candidate.address}`)
+                    option(
+                      { value: candidate.address, selected: () => selected.val === candidate.address },
+                      `${candidate.name} · ${candidate.address}`
+                    )
                   )
                 )
               : div("Wake the motorcycle before scanning."),
-          PendingLabel("hubAddress")
+          () =>
+            selected.val && scannedFor.val === settings.val?.instanceId
+              ? div(
+                  { class: "settings-note" },
+                  `Draft motorcycle: ${selected.val}. A name and address do not prove it is your bike; check nearby motorcycles before saving.`
+                )
+              : div(),
+          PendingLabel("hubAddress", () => !!selected.val && scannedFor.val === settings.val?.instanceId)
         ),
         CompactButton("Scan", () => {
           void scan();
         }),
+        () =>
+          selected.val && scannedFor.val === settings.val?.instanceId
+            ? button({ class: "settings-button", onclick: cancelSelection }, "Cancel")
+            : div(),
         button(
           {
             class: "settings-button",
-            disabled: () => !selected.val || !settings.val?.ok || !!settingsError.val || !!settingsBusy.val,
+            disabled: () =>
+              !selected.val ||
+              scannedFor.val !== settings.val?.instanceId ||
+              !settings.val?.ok ||
+              !settingsConfirmed.val ||
+              !!settingsError.val ||
+              !!settingsBusy.val,
             onclick: () => {
-              void settingsAction("hub", "/settings/hub", "POST", {
-                revision: settings.rawVal?.revision,
-                address: selected.rawVal,
-              });
+              void saveSelection();
             },
           },
           "Save"
@@ -65,7 +90,7 @@ export function MotorcycleConnection() {
     ),
     SettingsCard(
       "Forget saved motorcycle",
-      "Keeps this ride connected until you explicitly restart. The next start will not discover or connect to a hub.",
+      "Removes the selection from Cool Eva; it does not clear the motorcycle’s own Bluetooth pairing slot. Keeps this ride connected until you explicitly restart. The next start will not discover or connect to a hub.",
       div(
         { class: "settings-row" },
         div("Remove the saved connection"),
@@ -78,8 +103,13 @@ export function MotorcycleConnection() {
 }
 
 async function scan() {
+  if (!settingsConfirmed.rawVal || settingsError.rawVal || settingsBusy.rawVal) return;
+  const instance = settings.rawVal?.instanceId;
   settingsBusy.val = "hub-scan";
   scanMessage.val = "Scanning…";
+  settingsMessages.val = { ...settingsMessages.rawVal, hub: "" };
+  candidates.val = [];
+  selected.val = "";
   try {
     const response = await request("/settings/hub-candidates", {
       method: "POST",
@@ -87,13 +117,38 @@ async function scan() {
       body: "{}",
     });
     const reply = /** @type {import("../../src/settings/view.ts").HubCandidatesReply} */ (await response.json());
-    candidates.val = reply.candidates ?? [];
-    selected.val = "";
+    if (settings.rawVal?.instanceId !== instance) {
+      scanMessage.val = "The connected Pi changed. Scan again on this Pi.";
+      return;
+    }
+    scannedFor.val = instance ?? "";
+    candidates.val = response.ok && reply.ok ? reply.candidates : [];
     scanMessage.val = reply.message;
   } catch (error) {
     console.warn("settings: motorcycle scan unavailable", error);
-    settingsMessages.val = { ...settingsMessages.rawVal, hub: "Scan unavailable. Reconnect and try again." };
+    scanMessage.val = "Scan unavailable. Reconnect and try Scan again.";
   } finally {
     settingsBusy.val = "";
+  }
+}
+
+function cancelSelection() {
+  armed.val = "";
+  settingsMessages.val = { ...settingsMessages.rawVal, hub: "" };
+  selected.val = "";
+  candidates.val = [];
+  scanMessage.val = `Selection cancelled. Keeping saved motorcycle: ${settings.rawVal ? settingChoice(settings.rawVal.saved, "hubAddress") : "Unconfirmed"}.`;
+}
+
+async function saveSelection() {
+  scanMessage.val = "";
+  if (
+    await settingsAction("hub", "/settings/hub", "POST", {
+      revision: selectionRevision.rawVal,
+      address: selected.rawVal,
+    })
+  ) {
+    selected.val = "";
+    candidates.val = [];
   }
 }

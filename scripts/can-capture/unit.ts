@@ -26,7 +26,7 @@ ExecStart=/bin/sh ${projectDir}/scripts/can-capture/capture.sh
 Restart=on-failure
 RestartSec=5
 User=root
-UMask=0027
+UMask=0022
 
 [Install]
 WantedBy=multi-user.target

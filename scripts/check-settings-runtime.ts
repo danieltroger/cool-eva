@@ -144,27 +144,6 @@ async function checkInterruptedStartup(): Promise<void> {
 }
 
 async function checkStartupFaults(): Promise<void> {
-  for (const environment of [{ BLE_MAC: "invalid" }, { RIDE_LOG_DIR: "" }]) {
-    const fixture = await settingsFixture();
-    try {
-      const runtime = await startSettings({
-        codeDirectory: fixture.directory,
-        workingDirectory: fixture.directory,
-        environment,
-        paths: fixture.paths,
-        lock: fixture.lock,
-        isLegacyInstallation: async () => true,
-        beforeDataMove: async () => {
-          throw new Error("must not move");
-        },
-      });
-      assert.match(runtime.fault ?? "", /migration needs repair/);
-      assert.equal(runtime.active.automaticDcChargingEnabled, false);
-      await assert.rejects(readFile(fixture.paths.moveJournal), { code: "ENOENT" });
-    } finally {
-      await closeSettingsFixture(fixture);
-    }
-  }
   const fixture = await settingsFixture();
   try {
     const move = await moveFixture(fixture);
@@ -221,7 +200,7 @@ async function checkStartupFaults(): Promise<void> {
     await closeSettingsFixture(fixture);
   }
   console.log(
-    "  invalid legacy paths/address, incomplete flush and newer-branch settings produce visible faults without a boot retry loop or overwriting the original"
+    "  incomplete flush and newer-branch settings produce visible faults without a boot retry loop or overwriting the original"
   );
 }
 

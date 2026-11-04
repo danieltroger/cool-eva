@@ -6,6 +6,7 @@ import { pendingSettings, record } from "../settings/schema.ts";
 import { validateSettingsPatch } from "../settings/validation.ts";
 import { publicSettings, type SettingsReply, type HubCandidate } from "../settings/view.ts";
 import type { SettingsRestart } from "../settings/restart.ts";
+import { retiredLegacyChoices } from "../settings/legacy.ts";
 
 export async function handleSettingsEndpoint(
   req: IncomingMessage,
@@ -27,7 +28,7 @@ export async function handleSettingsEndpoint(
       req.headers["x-cool-eva"] !== "settings" ||
       !/^application\/json(?:;|$)/i.test(String(req.headers["content-type"] ?? ""))
     ) {
-      respond(res, 403, { ok: false, message: "Use the dashboard to change settings." });
+      respond(res, 403, { ok: false, message: "Reload the page before changing settings." });
       return;
     }
     const body = record(await readSettingsBody(req), "request");
@@ -136,23 +137,27 @@ export function settingsReply(context: SettingsHttpContext): SettingsReply {
   const document = state.kind === "ready" ? state.document : null;
   const saved = document?.values ?? runtime.active;
   const learned = document?.learned.hubAddress ?? null;
+  const activeChoices = runtime.recordingKeyBeforePause
+    ? { ...runtime.active, rideLogPublicKeyPem: runtime.recordingKeyBeforePause }
+    : runtime.active;
   return {
     ok: state.kind === "ready",
     source: document?.migration.source ?? "unavailable",
     version: context.version ?? "Unknown",
-    recordingFingerprint: runtime.active.rideLogPublicKeyPem
+    recordingFingerprint: activeChoices.rideLogPublicKeyPem
       ? createHash("sha256")
-          .update(createPublicKey(runtime.active.rideLogPublicKeyPem).export({ type: "spki", format: "der" }))
+          .update(createPublicKey(activeChoices.rideLogPublicKeyPem).export({ type: "spki", format: "der" }))
           .digest("hex")
       : null,
     instanceId: state.kind === "ready" && typeof state.raw.instanceId === "string" ? state.raw.instanceId : null,
     processGeneration: restart.generation,
     revision: document?.revision ?? null,
     saved: publicSettings(saved, state.kind === "ready" ? bluetoothCodeId(state.raw) : null, learned),
-    active: publicSettings(runtime.active, runtime.activeCodeId, context.activeHubAddress?.() ?? learned),
-    pending: document ? pendingSettings(saved, runtime.active) : [],
+    active: publicSettings(activeChoices, runtime.activeCodeId, context.activeHubAddress?.() ?? learned),
+    pending: document ? pendingSettings(saved, activeChoices) : [],
     fault: state.kind === "degraded" ? state.message : runtime.fault,
     notices: document?.migration.notices ?? [],
+    retiredChoices: retiredLegacyChoices(document?.migration.notices ?? []),
     readiness: { ...(context.readiness?.() ?? runtime.readiness) },
     restart: restart.status(),
     locations: {

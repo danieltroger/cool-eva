@@ -1,6 +1,7 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
+import { OwnerActionRow } from "./owner-action.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 import { MUTED } from "../lib/colors.js";
 import { serviceRefusal, serviceRefused } from "../lib/service-gate-caption.js";
@@ -41,39 +42,44 @@ const message = van.state("");
  */
 export function LifetimeReadButton(readState) {
   return div(
-    button(
-      {
-        class: "action",
-        // One held Enter must not arm and then fire. See ../lib/arming.js.
-        onkeydown: refuseKeyRepeat,
-        disabled: () => busy.val || serviceRefused(readState()),
-        onclick: () => {
-          if (armed.val !== ARMED_KEY) {
-            arm(ARMED_KEY);
-            return;
-          }
-          // Ignored inside the dwell, not disarmed — the rule every other second tap
-          // on this dashboard follows.
-          if (!armDwellElapsed()) {
-            return;
-          }
-          armed.val = "";
-          void performLifetimeRead();
+    { class: "settings-card" },
+    OwnerActionRow(
+      "Lifetime battery statistics",
+      button(
+        {
+          class: "action",
+          // One held Enter must not arm and then fire. See ../lib/arming.js.
+          onkeydown: refuseKeyRepeat,
+          disabled: () => busy.val || serviceRefused(readState()),
+          onclick: () => {
+            if (armed.val !== ARMED_KEY) {
+              arm(ARMED_KEY);
+              return;
+            }
+            // Ignored inside the dwell, not disarmed — the rule every other second tap
+            // on this dashboard follows.
+            if (!armDwellElapsed()) {
+              return;
+            }
+            armed.val = "";
+            void performLifetimeRead();
+          },
         },
-      },
-      () => {
-        if (busy.val) {
-          return "⏳  Reading components 51 and 52…";
+        () => {
+          if (busy.val) {
+            return "⏳  Reading components 51 and 52…";
+          }
+          const refusal = serviceRefusal(readState());
+          if (refusal !== null) {
+            return refusal;
+          }
+          if (armed.val === ARMED_KEY) {
+            return "⚠  Tap again — this parks the OBD poller while it reads";
+          }
+          return "🔎  Read the lifetime battery statistics";
         }
-        const refusal = serviceRefusal(readState());
-        if (refusal !== null) {
-          return refusal;
-        }
-        if (armed.val === ARMED_KEY) {
-          return "⚠  Tap again — this parks the OBD poller while it reads";
-        }
-        return "🔎  Read the lifetime battery statistics";
-      }
+      ),
+      () => (armed.val === ARMED_KEY ? "Confirm read" : "Read")
     ),
     () => (message.val ? div({ class: "action-note" }, message.val) : div()),
     div(

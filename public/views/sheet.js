@@ -1,6 +1,7 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
+import { OwnerActionRow } from "./owner-action.js";
 import { knownKeys, valueOf } from "../lib/store.js";
 import { bytes } from "../lib/format.js";
 import * as units from "../lib/units.js";
@@ -106,31 +107,36 @@ export function Sheet() {
  */
 function WaypointButton() {
   return div(
-    button(
-      {
-        class: "action",
-        disabled: saving,
-        onclick: async () => {
-          saving.val = true;
-          waypointMessage.val = "saving…";
-          try {
-            const reply = await saveWaypoint();
-            waypointMessage.val = reply.message;
-            if (reply.saved) {
-              // The Waypoints tile above this button asks /status whether any waypoint
-              // belongs to THIS boot, and nothing else refreshes that after a save — so
-              // without this the note here says "Waypoint 1 saved." while the tile two
-              // rows up still reads "none since restart" until the sheet is reopened.
-              void refreshStatus();
+    { class: "settings-card" },
+    OwnerActionRow(
+      "Waypoint",
+      button(
+        {
+          class: "action",
+          disabled: saving,
+          onclick: async () => {
+            saving.val = true;
+            waypointMessage.val = "saving…";
+            try {
+              const reply = await saveWaypoint();
+              waypointMessage.val = reply.message;
+              if (reply.saved) {
+                // The Waypoints tile above this button asks /status whether any waypoint
+                // belongs to THIS boot, and nothing else refreshes that after a save — so
+                // without this the note here says "Waypoint 1 saved." while the tile two
+                // rows up still reads "none since restart" until the sheet is reopened.
+                void refreshStatus();
+              }
+            } finally {
+              // saveWaypoint() reports its own failures and never throws, so this is
+              // only here to guarantee the button re-enables.
+              saving.val = false;
             }
-          } finally {
-            // saveWaypoint() reports its own failures and never throws, so this is
-            // only here to guarantee the button re-enables.
-            saving.val = false;
-          }
+          },
         },
-      },
-      "📍  Save waypoint here"
+        "📍  Save waypoint here"
+      ),
+      () => (saving.val ? "Saving…" : "Save")
     ),
     () => (waypointMessage.val ? div({ class: "action-note" }, waypointMessage.val) : div())
   );
@@ -142,40 +148,45 @@ const downloadProgress = van.state("");
 /** Downloads the sealed ride log, with its size known before you commit to it. */
 function DownloadButton() {
   return div(
-    button(
-      {
-        class: "action",
-        onclick: () => {
-          if (status.rawVal && !status.rawVal.log.enabled) {
-            sheetOpen.val = false;
-            openDestination("settings", "recording", openSheet);
-            return;
-          }
-          downloadProgress.val = "";
-          downloadCurrentRide((receivedBytes, totalBytes) => {
-            downloadProgress.val =
-              totalBytes === null ? bytes(receivedBytes) : `${bytes(receivedBytes)} of ${bytes(totalBytes)}`;
-          }).then(
-            () => {
-              downloadProgress.val = "";
-            },
-            error => {
-              console.warn("sheet: ride log download failed", error);
-              downloadProgress.val = `failed: ${/** @type {Error} */ (error).message}`;
+    { class: "settings-card" },
+    OwnerActionRow(
+      "Ride recording",
+      button(
+        {
+          class: "action",
+          onclick: () => {
+            if (status.rawVal && !status.rawVal.log.enabled) {
+              sheetOpen.val = false;
+              openDestination("settings", "recording", openSheet);
+              return;
             }
-          );
+            downloadProgress.val = "";
+            downloadCurrentRide((receivedBytes, totalBytes) => {
+              downloadProgress.val =
+                totalBytes === null ? bytes(receivedBytes) : `${bytes(receivedBytes)} of ${bytes(totalBytes)}`;
+            }).then(
+              () => {
+                downloadProgress.val = "";
+              },
+              error => {
+                console.warn("sheet: ride log download failed", error);
+                downloadProgress.val = `failed: ${/** @type {Error} */ (error).message}`;
+              }
+            );
+          },
         },
-      },
-      () => {
-        const current = status.val;
-        if (!current) {
-          return "⬇  Download ride log";
+        () => {
+          const current = status.val;
+          if (!current) {
+            return "⬇  Download ride log";
+          }
+          if (!current.log.enabled) {
+            return "Ride recording unavailable — Settings";
+          }
+          return `⬇  Download ride log (${bytes(current.log.bytes)})`;
         }
-        if (!current.log.enabled) {
-          return "Ride recording unavailable — Settings";
-        }
-        return `⬇  Download ride log (${bytes(current.log.bytes)})`;
-      }
+      ),
+      () => (status.val && !status.val.log.enabled ? "Settings" : "Download")
     ),
     () => (downloadProgress.val ? div({ class: "action-note" }, downloadProgress.val) : div())
     // No caption under the button. The file count that used to sit here is still

@@ -84,7 +84,9 @@ async function checkLegacyLiterals(): Promise<void> {
   assert.equal(unusual.document.values.radiatorFanEnabled, false);
   assert.equal(unusual.document.values.customBmsConfigurationFlashed, false);
   assert.equal(unusual.document.values.automaticDcChargingEnabled, true);
-  assert.throws(() => importLegacyEnvironment({ RIDE_LOG_DIR: "" }, context));
+  const emptyDirectory = importLegacyEnvironment({ RIDE_LOG_DIR: "" }, context);
+  assert.equal(emptyDirectory.document.values.rideLogDirectory, join(context.codeDirectory, "ride-logs"));
+  assert.ok(emptyDirectory.document.migration.notices.includes("ride-log-directory-empty"));
   console.log(
     "  literal migration expectations: effective unit/drop-in values, explicit strings, coolant OFF and old paths"
   );

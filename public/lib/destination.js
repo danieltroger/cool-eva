@@ -1,7 +1,7 @@
 // @ts-check
 import van from "../vendor/van-1.6.1.js";
 import { hashForTab, peekTab, TABS } from "./router.js";
-import { SETTINGS_MAP } from "./settings-map.js";
+import { SETTINGS_PAGE_TITLES } from "./settings-map.js";
 import { armed } from "./arming.js";
 
 /** @typedef {"" | "settings" | "session" | "bike-information" | "advanced-service"} Destination */
@@ -87,7 +87,7 @@ export function openRidingTab(tab) {
 
 /** @param {Destination} [name] @param {string} [section] */
 export function destinationName(name = destination.val, section = destinationSection.val) {
-  if (name === "settings") return SETTINGS_MAP.find(item => item.key === section)?.title ?? "Settings";
+  if (name === "settings") return SETTINGS_PAGE_TITLES[section] ?? "Settings";
   return (
     /** @type {Record<string, string>} */ ({
       session: "Session",

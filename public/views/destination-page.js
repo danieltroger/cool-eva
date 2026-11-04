@@ -1,6 +1,7 @@
 // @ts-check
 import van from "../vendor/van-1.6.1.js";
 import { destination, destinationSection, openRidingTab, destinationName } from "../lib/destination.js";
+import { AccessLink } from "./settings-access.js";
 import { SettingsPage } from "./settings-page.js";
 import { TripStats } from "./trip-stats.js";
 import { WaypointList } from "./waypoints.js";
@@ -45,7 +46,7 @@ export function DestinationPage() {
       );
     case "advanced-service":
       refreshServiceMode(() => destination.val === "advanced-service");
-      return div({ class: "settings-page" }, h2("Advanced service"), ServiceMode(false));
+      return div({ class: "settings-page" }, h2("Advanced service"), AccessLink(), ServiceMode(false));
     default:
       return div();
   }

@@ -9,3 +9,9 @@ export const SETTINGS_MAP = [
   { key: "software", title: "Cool Eva", detail: "Version · Update" },
   { key: "advanced", title: "Advanced", detail: "Data location · Recording and service directories" },
 ];
+
+/** @type {Record<string, string>} */
+export const SETTINGS_PAGE_TITLES = {
+  ...Object.fromEntries(SETTINGS_MAP.map(item => [item.key, item.title])),
+  access: "Who can control my bike?",
+};

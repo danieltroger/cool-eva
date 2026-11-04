@@ -1034,6 +1034,15 @@ const CHECKS: SelfCheck[] = [
       "additive-field preservation, concurrent atomic replacements and selective orphan cleanup",
   },
   {
+    script: "scripts/check-settings-first-boot.ts",
+    covers:
+      "injected Pi first-boot privileges/probe/order, partial recording pause, refusal archive modes, field-level migration and marker recovery",
+  },
+  {
+    script: "scripts/check-mutation-guard.ts",
+    covers: "the real HTTP CSRF guard, cached-dashboard reload instruction and non-mutating spoken Siri compatibility",
+  },
+  {
     script: "scripts/check-settings-cutover.ts",
     covers: "legacy instruction removal, unit cutover ordering, CSRF waypoint client and GPS command seams",
   },

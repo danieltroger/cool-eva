@@ -2,7 +2,15 @@
 import van from "../vendor/van-1.6.1.js";
 import { readPhoneValue, writePhoneValue } from "../lib/phone-storage.js";
 import { generateBleSecret } from "../lib/ble-secret.js";
-import { settings, settingsBusy, settingsError, saveSetting, settingsMessages } from "../lib/settings.js";
+import { armed } from "../lib/arming.js";
+import {
+  settings,
+  settingsBusy,
+  settingsError,
+  settingsConfirmed,
+  saveSetting,
+  settingsMessages,
+} from "../lib/settings.js";
 import {
   BLE_MODE,
   nativeShell,
@@ -19,6 +27,8 @@ const { button, div, input, label } = van.tags;
 const generatedCode = van.state("");
 const copied = van.state(false);
 const preparedFor = van.state("");
+const manualCopyNeeded = van.state(false);
+const showCode = van.state(false);
 
 export function DashboardBluetooth() {
   return div(
@@ -27,7 +37,11 @@ export function DashboardBluetooth() {
     SettingsCard(
       "Dashboard Bluetooth",
       "This phone ↔ Cool Eva. Creating or replacing the shared key disconnects other phones after restart. Give them the new key from your saved copy. Anyone with this key can control the bike.",
-      () => div({ class: "settings-note" }, settings.val?.readiness.bluetooth ?? "Unconfirmed"),
+      () =>
+        div(
+          { class: "settings-note" },
+          `${settingsConfirmed.val && !settingsError.val ? "Active" : "Unconfirmed — last contact"}: ${settings.val?.readiness.bluetooth ?? "Not read"}`
+        ),
       div(
         { class: "settings-row" },
         div(
@@ -35,24 +49,34 @@ export function DashboardBluetooth() {
             generatedCode.val && preparedFor.val === settings.val?.instanceId
               ? input({
                   "aria-label": "New Bluetooth key",
-                  type: "password",
+                  type: showCode.val ? "text" : "password",
                   readonly: true,
                   value: generatedCode.val,
                   autocomplete: "new-password",
                 })
-              : div(settings.rawVal?.saved.bluetoothCodeId ? "A shared key is already saved." : "No key saved."),
+              : div(
+                  !settingsConfirmed.val || settingsError.val
+                    ? "Pi unconfirmed. Read the saved key state before changing it."
+                    : settings.val?.saved.bluetoothCodeId
+                      ? "A shared key is already saved."
+                      : "No key saved."
+                ),
           label(
-            { class: "settings-note" },
+            { class: "settings-note settings-check" },
             input({
               type: "checkbox",
-              checked: copied,
+              checked: () => copied.val && preparedFor.val === settings.val?.instanceId,
+              disabled: () => !generatedCode.val || preparedFor.val !== settings.val?.instanceId || !settings.val?.ok,
               onchange: event => {
                 copied.val = /** @type {HTMLInputElement} */ (event.target).checked;
               },
             }),
             " I saved a recoverable copy of the new key."
           ),
-          PendingLabel("dashboardBluetoothSecret")
+          PendingLabel(
+            "dashboardBluetoothSecret",
+            () => !!generatedCode.val && preparedFor.val === settings.val?.instanceId
+          )
         ),
         () =>
           generatedCode.val && preparedFor.val === settings.val?.instanceId
@@ -64,6 +88,18 @@ export function DashboardBluetooth() {
                   },
                 },
                 "Copy"
+              )
+            : div(),
+        () =>
+          manualCopyNeeded.val && generatedCode.val && preparedFor.val === settings.val?.instanceId
+            ? button(
+                {
+                  class: "settings-button",
+                  onclick: () => {
+                    showCode.val = !showCode.rawVal;
+                  },
+                },
+                showCode.val ? "Hide key" : "Show key"
               )
             : div(),
         button(
@@ -89,7 +125,9 @@ export function DashboardBluetooth() {
       div(
         { class: "settings-row" },
         () =>
-          div(`Saved choice: ${settings.val ? (settings.val.saved.bluetoothCodeId ? "On" : "Off") : "Unconfirmed"}`),
+          div(
+            `Saved choice: ${settingsConfirmed.val && !settingsError.val && settings.val ? (settings.val.saved.bluetoothCodeId ? "On" : "Off") : "Unconfirmed"}`
+          ),
         CompactButton("Save off", () => {
           void saveSetting("dashboardBluetoothSecret", { dashboardBluetoothSecret: "" });
         })
@@ -125,6 +163,13 @@ async function copyCode() {
         );
       } catch (failure) {
         console.warn("settings: key export unavailable", failure instanceof Error ? failure.name : "unknown error");
+        copied.val = false;
+        manualCopyNeeded.val = true;
+        settingsMessages.val = {
+          ...settingsMessages.rawVal,
+          dashboardBluetoothSecret:
+            "The key file could not be saved. No backup is confirmed. Retry Copy, or Show key and keep a recoverable copy yourself before confirming it.",
+        };
       }
     } else {
       const link = document.createElement("a");
@@ -143,9 +188,16 @@ async function createOrSaveCode() {
   const current = settings.rawVal;
   if (!current) return;
   if (!generatedCode.rawVal || preparedFor.rawVal !== current.instanceId) {
+    armed.val = "";
     generatedCode.val = generateBleSecret();
     preparedFor.val = current.instanceId ?? "";
     copied.val = false;
+    showCode.val = false;
+    manualCopyNeeded.val = false;
+    settingsMessages.val = {
+      ...settingsMessages.rawVal,
+      dashboardBluetoothSecret: "Draft key — not saved. Keep a recoverable copy before saving it on this Pi.",
+    };
     return;
   }
   await saveSetting("dashboardBluetoothSecret", { dashboardBluetoothSecret: generatedCode.rawVal });

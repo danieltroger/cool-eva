@@ -1,6 +1,7 @@
+import { ensureArchiveDirectory } from "./archive-access.ts";
 import { createCipheriv, diffieHellman, generateKeyPair, hkdf, randomBytes } from "crypto";
 import type { KeyObject } from "crypto";
-import { mkdir, readFile } from "fs/promises";
+import { readFile } from "fs/promises";
 import { join } from "path";
 import { promisify } from "util";
 import { gzip } from "zlib";
@@ -150,7 +151,7 @@ export async function initEncryptedLog(options: EncryptedLogOptions): Promise<bo
   // The raw 32 bytes sit at the end of the SPKI DER for X25519; binding both
   // public keys into the HKDF salt is standard ECIES practice.
   const publicRaw = publicKey.export({ type: "spki", format: "der" }).subarray(-EPHEMERAL_KEY_BYTES);
-  await mkdir(options.directory, { recursive: true });
+  await ensureArchiveDirectory(options.directory);
 
   recipientPublicKey = publicKey;
   recipientPublicRaw = publicRaw;

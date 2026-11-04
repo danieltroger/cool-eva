@@ -12,6 +12,9 @@ import {
 } from "../public/lib/settings.js";
 import { armed, arm } from "../public/lib/arming.js";
 import type { SettingsReply, SettingsActionReply } from "../src/settings/view.ts";
+import { settingsStateLines, pendingChoiceDescriptions } from "../public/lib/settings-state.js";
+import { retiredLegacyChoices } from "../src/settings/legacy.ts";
+import { requireCurrentPage, pageReloadRequired } from "../public/lib/page-reload.js";
 
 const first: SettingsReply = {
   ok: true,
@@ -62,8 +65,37 @@ const first: SettingsReply = {
   locations: { root: "/synthetic", wifi: "/synthetic/wifi-diag", captures: "/synthetic/captures" },
 };
 acceptSettings(structuredClone(first));
+const pendingChoice = structuredClone(first);
+pendingChoice.active.automaticDcChargingEnabled = false;
+pendingChoice.pending = ["automaticDcChargingEnabled"];
+assert.deepEqual(settingsStateLines(pendingChoice, true, "automaticDcChargingEnabled", true), [
+  "Draft — not saved.",
+  "Saved for next start: On.",
+  "Active now: Off.",
+]);
+assert.deepEqual(pendingChoiceDescriptions(pendingChoice), ["Automatic current reduction: On"]);
+assert.match(
+  settingsStateLines(pendingChoice, false, "automaticDcChargingEnabled", true).join(" "),
+  /Pi unconfirmed.*Last confirmed saved: On.*Active at last contact: Off/
+);
+assert.equal(settingsStateLines(null, false, "automaticDcChargingEnabled", false).join(" ").includes("Off"), false);
+const unreadable = structuredClone(first);
+unreadable.ok = false;
+assert.deepEqual(settingsStateLines(unreadable, true, "coolantProbesEnabled", false), [
+  "Saved choice unreadable. The original document is retained.",
+  "Active safe default: Off.",
+]);
+assert.deepEqual(retiredLegacyChoices(["retired:WIFI_IFACE", "retired:OBD_ENABLED", "retired:WIFI_IFACE"]), [
+  { name: "WIFI_IFACE", behavior: "Wi-Fi monitoring and recovery now use wlan0." },
+  { name: "OBD_ENABLED", behavior: "OBD polling is now always enabled." },
+]);
+assert.throws(() => requireCurrentPage({ status: 403 }), /Reload the page/);
+assert.equal(pageReloadRequired.rawVal, true);
+pageReloadRequired.val = false;
 const coolant = settingDraft("coolantProbesEnabled", "false");
+settingsMessages.val = { coolantProbesEnabled: "Saved. Applies after restart." };
 editSetting("coolantProbesEnabled", "true");
+assert.equal(settingsMessages.rawVal.coolantProbesEnabled, "", "Editing again clears the old save-success claim.");
 const otherPhone = structuredClone(first);
 otherPhone.revision = 1;
 otherPhone.saved.automaticDcChargingEnabled = false;

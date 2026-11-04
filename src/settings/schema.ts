@@ -86,7 +86,12 @@ export interface ParsedSettings {
   document: SettingsDocument;
 }
 
-export type SettingsFault = "unsupported-version" | "invalid-document" | "unreadable" | "missing-after-install";
+export type SettingsFault =
+  | "unsupported-version"
+  | "invalid-document"
+  | "unreadable"
+  | "missing-after-install"
+  | "invalid-install-marker";
 
 export class SettingsFormatError extends Error {
   readonly kind: SettingsFault;

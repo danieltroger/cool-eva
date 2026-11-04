@@ -73,7 +73,7 @@ export function createSettingsRestart(options: RestartOptions): SettingsRestart 
       try {
         await bounded(waitForDelivery, options.deliveryTimeoutMs ?? 5_000, false);
         if (beforeSchedule) {
-          await bounded(beforeSchedule, 8_000, true);
+          await bounded(beforeSchedule, options.beforeScheduleTimeoutMs ?? 8_000, false);
         }
         if (status.state !== "reserved" || lease !== reservedLease) return;
         await bounded(options.schedule ?? scheduleRestart, options.scheduleTimeoutMs ?? 5_000, true);
@@ -106,6 +106,7 @@ export interface RestartOptions {
   acquireBus?: typeof acquireBus;
   deliveryTimeoutMs?: number;
   scheduleTimeoutMs?: number;
+  beforeScheduleTimeoutMs?: number;
   stopTimeoutMs?: number;
 }
 export interface SettingsRestart {
@@ -132,10 +133,14 @@ async function bounded(work: () => Promise<void>, milliseconds: number, rejectTi
           console.warn("settings: restart reply delivery failed; proceeding", error);
         }),
       new Promise<void>((resolve, reject) => {
-        timer = setTimeout(
-          () => (rejectTimeout ? reject(new Error("The restart step timed out.")) : resolve()),
-          milliseconds
-        );
+        timer = setTimeout(() => {
+          if (rejectTimeout) {
+            reject(new Error("The restart step timed out."));
+          } else {
+            console.warn("settings: restart step timed out; proceeding to restart");
+            resolve();
+          }
+        }, milliseconds);
       }),
     ]);
   } finally {

@@ -1,3 +1,4 @@
+import { requireCurrentPage } from "./page-reload.js";
 // @ts-check
 
 import { BLE_MODE, nativeShell, tunnelRequest } from "./ble-link.js";
@@ -39,9 +40,12 @@ export async function request(path, init = {}) {
   }
   if (!BLE_MODE) {
     const { onProgress: _unused, ...fetchInit } = init;
-    return fetch(path, fetchInit);
+    const response = await fetch(path, fetchInit);
+    requireCurrentPage(response);
+    return response;
   }
   const answer = await tunnelRequest(path, init);
+  requireCurrentPage(answer);
   const contentType = answer.headers["content-type"] ?? "";
   return {
     ok: answer.status >= 200 && answer.status < 300,

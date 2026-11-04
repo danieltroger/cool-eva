@@ -105,6 +105,9 @@ window.fetch = function previewFetch(input, init) {
   const path = url.pathname;
 
   if (path === "/settings") {
+    if (method === "GET" && new URL(window.location.href).searchParams.get("settings") === "unconfirmed") {
+      return json({ ok: false, message: "Synthetic unavailable settings" }, 503);
+    }
     if (method === "PATCH") {
       const body = JSON.parse(init.body);
       if (body.revision !== SETTINGS.revision)
@@ -146,10 +149,14 @@ window.fetch = function previewFetch(input, init) {
     return json({
       ok: true,
       message: "Choose your own motorcycle.",
-      candidates: [{ name: "Synthetic Energica", address: "02:00:00:00:00:01" }],
+      candidates: [{ name: "Synthetic Energica", address: "02:00:00:00:00:02" }],
     });
   if (path === "/settings/hub") {
-    SETTINGS.saved.hubAddress = JSON.parse(init.body).address;
+    const body = JSON.parse(init.body);
+    if (body.revision !== SETTINGS.revision) {
+      return json({ ok: false, message: "Settings changed. Reload before saving." }, 409);
+    }
+    SETTINGS.saved.hubAddress = body.address;
     SETTINGS.saved.discoverHubOnce = false;
     SETTINGS.revision += 1;
     SETTINGS.pending = ["hubAddress"];

@@ -71,6 +71,9 @@ const __previewLocation = {
   set href(target) {
     toast(`Preview — this would download ${target} from the Pi.`);
   },
+  reload() {
+    toast("Preview — this would reload the dashboard.");
+  },
 };
 window.__previewLocation = __previewLocation;
 

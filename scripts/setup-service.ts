@@ -77,7 +77,7 @@ Wants=bluetooth.service
 [Service]
 Type=simple
 WorkingDirectory=${projectDir}
-UMask=0027
+UMask=0022
 ExecStart=${nodePath} --experimental-strip-types ${projectDir}/src/index.ts
 Restart=on-failure
 RestartSec=5

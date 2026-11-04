@@ -1,5 +1,7 @@
 import assert from "assert/strict";
 import { createServer } from "http";
+import { setTimeout as delay } from "timers/promises";
+import { busHeldBy } from "../src/vcu/bus-lease.ts";
 import { once } from "events";
 import { generateKeyPair } from "crypto";
 import { readFile } from "fs/promises";
@@ -21,6 +23,13 @@ const runtime = await startSettings({
 });
 let scheduled = 0;
 let scans = 0;
+let drains = 0;
+let finishDrain: () => void = () => {
+  throw new Error("Drain not started");
+};
+const drainDone = new Promise<void>(resolve => {
+  finishDrain = resolve;
+});
 const restart = createSettingsRestart({
   store: runtime.store,
   motionBlockers: () => [],
@@ -37,7 +46,10 @@ const context = {
     scans += 1;
     return [{ name: "Synthetic Energica", address: "02:00:00:00:00:01" }];
   },
-  drainBluetooth: async () => {},
+  drainBluetooth: async () => {
+    drains += 1;
+    await drainDone;
+  },
 };
 const server = createServer((req, res) => {
   void handleSettingsEndpoint(req, res, new URL(req.url!, "http://localhost").pathname, context);
@@ -135,21 +147,33 @@ try {
   assert.equal(scheduled, 0);
   assert.equal(
     (
-      await send("/settings/apply", "POST", {
-        expectedGeneration: restart.generation,
-        revision: 1,
-        bluetoothCodeId: view.saved.bluetoothCodeId,
+      await fetch(base + "/settings/apply", {
+        method: "POST",
+        headers: tunnelHeaders,
+        body: JSON.stringify({
+          expectedGeneration: restart.generation,
+          revision: 1,
+          bluetoothCodeId: view.saved.bluetoothCodeId,
+        }),
       })
     ).status,
     200
   );
-  await new Promise<void>(resolve => setTimeout(resolve, 10));
+  for (let attempt = 0; attempt < 30 && drains === 0; attempt += 1) {
+    await delay(5);
+  }
+  assert.equal(drains, 1, "A BLE restart actually waits for its output drain.");
+  assert.equal(scheduled, 0);
+  assert.ok(busHeldBy());
+  finishDrain();
+  await delay(10);
   assert.equal(scheduled, 1);
   assert.equal((await send("/settings", "PATCH", { revision: 1, changes: { radiatorFanEnabled: true } })).status, 409);
   console.log(
     "  header/method/content-type guards, private-key rejection, canonical public-key save, redacted GET, stale revision, Bluetooth handover and process-generation idempotence"
   );
 } finally {
+  finishDrain();
   server.closeAllConnections();
   await new Promise<void>((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
   await restart.close();

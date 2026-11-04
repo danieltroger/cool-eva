@@ -57,7 +57,10 @@ export async function startSettings(options: StartupOptions): Promise<SettingsRu
         checkpoint: options.checkpoint,
         environment: options.environment,
         beforeDataMove: async () => {
-          await (options.beforeDataMove ?? (() => prepareCaptureMove(store.archiveGroupId, ownership.uid)))();
+          await (
+            options.beforeDataMove ??
+            (() => prepareCaptureMove(store.archiveGroupId, ownership.uid, options.captureMove))
+          )();
           prepared = true;
         },
       });
@@ -118,6 +121,7 @@ export async function startSettings(options: StartupOptions): Promise<SettingsRu
           "Earlier settings could not be imported. Restore a supported settings document and restart.");
   }
   if (!runtime.dataWritable) {
+    runtime.recordingKeyBeforePause = runtime.active.rideLogPublicKeyPem;
     runtime.active.rideLogPublicKeyPem = null;
   }
   return runtime;
@@ -136,6 +140,7 @@ export interface StartupOptions {
   legacyCaptureDirectory?: string;
   flushPermissions?: DataMoveOptions["flushPermissions"];
   checkpoint?: DataMoveOptions["checkpoint"];
+  captureMove?: CaptureMoveDependencies;
 }
 
 export interface SettingsRuntime {
@@ -148,6 +153,7 @@ export interface SettingsRuntime {
   dataWritable: boolean;
   wifiDiagnosticDirectory: string;
   readiness: SettingsReadiness;
+  recordingKeyBeforePause?: string | null;
 }
 
 export function bluetoothCodeId(raw: Record<string, unknown>): string | null {
@@ -173,15 +179,20 @@ async function isLegacyInstallation(options: StartupOptions): Promise<boolean> {
   }
 }
 
-async function prepareCaptureMove(groupId: number, ownerUid: number): Promise<void> {
-  const { stdout } = await runCommand("getent", ["group", String(groupId)], { timeout: 5_000 });
+export async function prepareCaptureMove(
+  groupId: number,
+  ownerUid: number,
+  dependencies: CaptureMoveDependencies = {}
+): Promise<void> {
+  const run = dependencies.run ?? runSystemCommand;
+  const { stdout } = await run("getent", ["group", String(groupId)], { timeout: 5_000 });
   const name = stdout.split(":")[0];
-  await installCapturePruner(name);
-  await verifyCapturePruner(ownerUid);
+  await (dependencies.installPruner ?? installCapturePruner)(name);
+  await (dependencies.verifyPruner ?? verifyCapturePruner)(ownerUid);
   try {
-    await runCommand("systemctl", ["stop", "can-capture"], { timeout: 20_000 });
+    await run("systemctl", ["stop", "can-capture"], { timeout: 20_000 });
   } catch (error) {
-    const status = await runCommand("systemctl", ["show", "can-capture", "--property=LoadState", "--value"], {
+    const status = await run("systemctl", ["show", "can-capture", "--property=LoadState", "--value"], {
       timeout: 5_000,
     });
     if (status.stdout.trim() !== "not-found") {
@@ -227,3 +238,17 @@ export function runningServiceOwnsMigration(output: string, processId: number): 
   return false;
 }
 class ServiceOriginError extends Error {}
+
+export interface CaptureMoveDependencies {
+  run?: (command: string, arguments_: string[], options: { timeout: number }) => Promise<{ stdout: string }>;
+  installPruner?: (archiveGroupName: string) => Promise<void>;
+  verifyPruner?: (ownerUid: number) => Promise<void>;
+}
+async function runSystemCommand(
+  command: string,
+  arguments_: string[],
+  options: { timeout: number }
+): Promise<{ stdout: string }> {
+  const { stdout } = await runCommand(command, arguments_, options);
+  return { stdout };
+}

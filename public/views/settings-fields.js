@@ -1,5 +1,6 @@
 // @ts-check
 import van from "../vendor/van-1.6.1.js";
+import { settingsStateLines } from "../lib/settings-state.js";
 import {
   editSetting,
   saveSetting,
@@ -40,7 +41,7 @@ export function CompactButton(text, action) {
 
 /** @param {"coolantProbesEnabled" | "radiatorFanEnabled" | "customBmsConfigurationFlashed" | "automaticDcChargingEnabled"} key @param {string} title @param {string} help */
 export function BooleanSetting(key, title, help) {
-  const draft = settingDraft(key, String(settings.rawVal?.saved[key] ?? false));
+  const draft = settingDraft(key, settings.rawVal ? String(settings.rawVal.saved[key]) : "");
   return SettingsCard(
     title,
     help,
@@ -50,9 +51,11 @@ export function BooleanSetting(key, title, help) {
         select(
           {
             "aria-label": title,
+            disabled: () => !settings.val?.ok,
             value: () => draft.val,
             onchange: event => editSetting(key, /** @type {HTMLSelectElement} */ (event.target).value),
           },
+          option({ value: "", disabled: true, selected: () => draft.val === "" }, "Unconfirmed"),
           option(
             { value: "false", selected: () => draft.val === "false" },
             key === "customBmsConfigurationFlashed" ? "No" : "Off"
@@ -84,6 +87,7 @@ export function TextSetting(key, title, help) {
       div(
         input({
           "aria-label": title,
+          disabled: () => !settings.val?.ok,
           value: () => draft.val,
           spellcheck: false,
           oninput: event => editSetting(key, /** @type {HTMLInputElement} */ (event.target).value),
@@ -111,6 +115,7 @@ export function RecordingKeySetting() {
       div(
         input({
           type: "file",
+          disabled: () => !settings.val?.ok,
           accept: ".pem,.pub",
           "aria-label": "Choose public key",
           onchange: async event => {
@@ -122,14 +127,16 @@ export function RecordingKeySetting() {
         }),
         textarea({
           "aria-label": "X25519 public key",
+          disabled: () => !settings.val?.ok,
           rows: 3,
           value: () => draft.val,
           oninput: event => editSetting(key, /** @type {HTMLTextAreaElement} */ (event.target).value),
         }),
         label(
-          { class: "settings-note" },
+          { class: "settings-note settings-check" },
           input({
             type: "checkbox",
+            disabled: () => !settings.val?.ok,
             checked: () => backedUp.val === "true",
             onchange: event =>
               editSetting("recording-backup", String(/** @type {HTMLInputElement} */ (event.target).checked)),
@@ -161,14 +168,17 @@ export function RecordingKeySetting() {
   );
 }
 
-/** @param {keyof StartupSettings} key */
-export function PendingLabel(key) {
+/** @param {keyof StartupSettings} key @param {() => boolean} [candidateIsDirty] */
+export function PendingLabel(key, candidateIsDirty) {
   return () =>
     div(
-      { class: "settings-note" },
-      settings.val?.pending.includes(key) || (key === "hubAddress" && settings.val?.pending.includes("discoverHubOnce"))
-        ? "Saved, not active"
-        : "Active at this start"
+      { class: "settings-note settings-state" },
+      ...settingsStateLines(
+        settings.val,
+        settingsConfirmed.val && !settingsError.val,
+        key,
+        settingIsDirty(key) || !!candidateIsDirty?.()
+      ).map(line => div(line))
     );
 }
 

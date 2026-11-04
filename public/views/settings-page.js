@@ -1,11 +1,19 @@
 // @ts-check
 import van from "../vendor/van-1.6.1.js";
-import { readPhoneValue, writePhoneValue } from "../lib/phone-storage.js";
-import { settings, settingsReady, settingsInstance, settingsError, refreshSettings } from "../lib/settings.js";
+import {
+  settings,
+  settingsReady,
+  settingsInstance,
+  settingsError,
+  settingsConfirmed,
+  refreshSettings,
+} from "../lib/settings.js";
 import { destinationSection, openDestination } from "../lib/destination.js";
-import { BLE_MODE } from "../lib/ble-link.js";
 import { ThemeToggle, UnitsToggle } from "./sheet.js";
 import { SettingsCard, BooleanSetting, TextSetting, RecordingKeySetting } from "./settings-fields.js";
+import { MigrationSummary } from "./settings-summary.js";
+import { AccessExplanation } from "./settings-access.js";
+import { SettingsRecovery } from "./settings-recovery.js";
 import { SettingsRestart } from "./settings-restart.js";
 import { DashboardBluetooth } from "./settings-bluetooth.js";
 import { MotorcycleConnection } from "./settings-hub.js";
@@ -13,7 +21,6 @@ import { CanRestartButton, UpdateButton } from "./pi-actions.js";
 
 const { a, button, div, h2 } = van.tags;
 import { SETTINGS_MAP } from "../lib/settings-map.js";
-const dismissed = van.state("");
 
 export function SettingsPage() {
   return div(
@@ -38,13 +45,13 @@ export function SettingsPage() {
             )
           )
         : div(),
-    () => (settings.val?.fault ? SettingsCard("Settings need attention", settings.val.fault) : div()),
+    SettingsRecovery(),
     () => {
       settingsReady.val;
       settingsInstance.val;
       return SettingsContent(destinationSection.val);
     },
-    () => (destinationSection.val ? SettingsRestart() : div())
+    () => (destinationSection.val ? SettingsRestart(!["phone", "access"].includes(destinationSection.val)) : div())
   );
 }
 
@@ -87,6 +94,8 @@ function SettingsContent(section) {
           "Read the custom BMS explanation →"
         )
       );
+    case "access":
+      return div(h2("Who can control my bike?"), AccessExplanation());
     case "charging":
       return div(
         h2("Charging"),
@@ -106,7 +115,7 @@ function SettingsContent(section) {
         ),
         SettingsCard(
           "Saved Wi-Fi connections",
-          "Keep the working home network or phone hotspot. To change network credentials in this phase, use the installation guide over a reachable connection. Dashboard network changes follow in the next phase.",
+          "Keep the working home network or phone hotspot. To change saved network credentials, use the installation / repair guide over a reachable connection.",
           a(
             {
               class: "settings-link",
@@ -125,10 +134,7 @@ function SettingsContent(section) {
           Readiness("can"),
           CanRestartButton()
         ),
-        SettingsCard(
-          "Who can control my bike?",
-          "There is no dashboard login. Anyone on the same network can read data and use service actions; anyone with the shared Bluetooth key can do so over Bluetooth. Park the bike before service work. The bus safety gates and confirmations still apply."
-        )
+        AccessExplanation()
       );
     case "recording":
       return div(
@@ -207,58 +213,8 @@ function SettingsContent(section) {
 /** @param {keyof import("../../src/settings/view.ts").SettingsReadiness} key */
 function Readiness(key) {
   return () =>
-    div({ class: "settings-note", role: "status" }, `Active: ${settings.val?.readiness[key] ?? "Unconfirmed"}`);
-}
-
-/** @param {boolean} dismissible */
-export function MigrationSummary(dismissible) {
-  return () => {
-    const current = settings.val;
-    if (!current?.instanceId) return div();
-    const id = `cool-eva.setup-seen:${current.instanceId}`;
-    if (dismissible && (dismissed.val === id || readPhoneValue(id))) return div();
-    const text =
-      current.source === "legacy"
-        ? [
-            current.notices.includes("coolant-default-off")
-              ? "Coolant probes are now off. Enable them in Settings → Bike setup if you have the probes installed."
-              : "Your coolant probe choice was preserved.",
-            "Bike reads, service writes, Wi-Fi monitoring and GPS time are now available without configuration switches.",
-            current.saved.automaticDcChargingEnabled
-              ? "Automatic DC current reduction is allowed. Review it under Charging."
-              : "Your automatic DC current reduction OFF choice was preserved.",
-            "Anyone on this network or holding the Bluetooth key can control the bike. See Connections → Who can control my bike?",
-            current.notices.includes("hub-discover-once")
-              ? current.active.hubAddress
-                ? "Your discovered motorcycle hub has been remembered for future starts."
-                : "The motorcycle hub will be discovered once, then remembered after a successful connection."
-              : "Your motorcycle selection was preserved.",
-            current.notices.includes("private-key-on-pi")
-              ? "A private key is on the Pi, which defeats the sealed log; put the public key there instead. Recording continues."
-              : "",
-          ]
-            .filter(Boolean)
-            .join(" ")
-        : `Connected over ${BLE_MODE ? "Bluetooth" : "Wi-Fi"}. Choose Bike setup for installed hardware. Bluetooth and ride recording are optional; you can add them later.`;
-    return SettingsCard(
-      current.source === "legacy" ? "What changed on this Pi" : "Welcome to Cool Eva",
-      text,
-      dismissible
-        ? div(
-            { class: "settings-row" },
-            div("These notes remain in Advanced."),
-            button(
-              {
-                class: "settings-button",
-                onclick: () => {
-                  writePhoneValue(id, "1");
-                  dismissed.val = id;
-                },
-              },
-              "Got it"
-            )
-          )
-        : div()
+    div(
+      { class: "settings-note", role: "status" },
+      `${settingsConfirmed.val && !settingsError.val ? "Active" : "Unconfirmed — last contact"}: ${settings.val?.readiness[key] ?? "Not read"}`
     );
-  };
 }
