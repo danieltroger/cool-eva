@@ -2,18 +2,28 @@ import { execFile } from "node:child_process";
 import type { ServerResponse } from "node:http";
 import { promisify } from "node:util";
 import type { UpdateReply } from "./update.ts";
-import { readReleaseMetadata } from "../release/metadata.ts";
+import { isBundleRuntime, readReleaseMetadata } from "../release/metadata.ts";
 import { readUpdateStatus } from "../release/update-status.ts";
 
-export async function tryBundleUpdate(res: ServerResponse, directory: string): Promise<boolean> {
+export async function tryBundleUpdate(
+  res: ServerResponse,
+  directory: string,
+  context: BundleUpdateContext = {}
+): Promise<boolean> {
   try {
-    if (!(await readReleaseMetadata(directory))) return false;
-    await handleBundleUpdate(res);
+    if (!isBundleRuntime(directory, context.executable) && !(await readReleaseMetadata(directory, context.executable)))
+      return false;
+    await handleBundleUpdate(res, context.statusDirectory);
   } catch (error) {
     console.warn("update: cannot read bundle identity:", error);
     respond(res, 500, { ok: false, message: "Cannot verify this release. Check its release.json before updating." });
   }
   return true;
+}
+
+export interface BundleUpdateContext {
+  executable?: string;
+  statusDirectory?: string;
 }
 
 export async function handleBundleUpdate(res: ServerResponse, statusDirectory?: string): Promise<void> {

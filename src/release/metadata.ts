@@ -1,13 +1,21 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { record } from "../settings/schema.ts";
 
-export async function readReleaseMetadata(directory: string): Promise<RuntimeRelease | null> {
+export async function readReleaseMetadata(
+  directory: string,
+  executable = process.execPath
+): Promise<RuntimeRelease | null> {
   let contents: string;
   try {
     contents = await readFile(join(directory, "release.json"), "utf8");
   } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      if (isBundleRuntime(directory, executable)) {
+        throw new Error("The bundle release metadata is missing");
+      }
+      return null;
+    }
     throw error;
   }
   const value = record(JSON.parse(contents), "release metadata");
@@ -35,6 +43,10 @@ export async function readReleaseMetadata(directory: string): Promise<RuntimeRel
     branch: value.branch,
     settingsSchemaVersion: Number(value.settingsSchemaVersion),
   };
+}
+
+export function isBundleRuntime(directory: string, executable = process.execPath): boolean {
+  return resolve(executable) === resolve(directory, "runtime/bin/node");
 }
 
 export interface RuntimeRelease {

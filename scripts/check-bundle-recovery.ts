@@ -75,6 +75,13 @@ export async function checkBundleRecovery(): Promise<void> {
     assert.equal((await readState(fixture)).current, "new");
     assert.equal((await readState(fixture)).previous, "old");
     assert.match(await readFile(join(fixture.root, "commands.txt"), "utf8"), /reset-failed/);
+    await writeFile(join(fixture.root, "reset-unloaded"), "");
+    assert.match(await invokeUpdater(fixture, "failure"), /was unloaded/);
+    assert.equal((await readState(fixture)).current, "new");
+    await unlink(join(fixture.root, "reset-unloaded"));
+    await writeFile(join(fixture.root, "reset-denied"), "");
+    await assert.rejects(invokeUpdater(fixture, "failure"), /Access denied/);
+    await unlink(join(fixture.root, "reset-denied"));
     await writeFile(join(fixture.root, "NRestarts.txt"), "3");
     await writeFile(join(fixture.root, "Result.txt"), "exit-code");
     await invokeUpdater(fixture, "failure");
@@ -125,6 +132,11 @@ export async function checkBundleRecovery(): Promise<void> {
     await saveState(fixture, { ...initial, pending: { target: "new", rollback: "old", snapshot, phase: "trial" } });
     await writeFile(join(fixture.code, "releases/new/runtime/bin/node"), "#!/bin/sh\nexit 127\n");
     assert.match(await invokeUpdater(fixture, "recover"), /interrupted.*Update again/i);
+    assert.equal((await readState(fixture)).current, "old");
+    assert.deepEqual((await readState(fixture)).rejected, []);
+    await saveState(fixture, promoted);
+    await writeFile(join(fixture.code, "releases/new/release.json"), "damaged release metadata\n");
+    assert.match(await invokeUpdater(fixture, "failure"), /identity is unreadable/);
     assert.equal((await readState(fixture)).current, "old");
     assert.deepEqual((await readState(fixture)).rejected, []);
     await checkHelperFallback(fixture);

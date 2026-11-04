@@ -61,12 +61,13 @@ export async function createUpdateFixture(parent: string): Promise<UpdateFixture
   for (const command of [
     "id",
     "stat",
+    "mv",
     "systemctl",
     "curl",
     "cut",
     "sleep",
     "sync",
-    ...(process.platform === "linux" ? [] : ["mv", "realpath", "readlink", "sha256sum", "flock"]),
+    ...(process.platform === "linux" ? [] : ["realpath", "readlink", "sha256sum", "flock"]),
   ]) {
     await writeFile(join(fixture.commandDirectory, command), commandWrapper(command), { mode: 0o755 });
   }
@@ -93,6 +94,7 @@ const execFileAsync = promisify(execFile);
 export function commandWrapper(command: string): string {
   const trace = `#!/bin/sh\nprintf '%s\\n' '${command} '"$*" >> "$UPDATE_FIXTURE/commands.txt"\n`;
   if (command === "id") return trace + "printf '0\\n'\n";
+  if (command === "mv" && process.platform === "linux") return trace + 'exec /usr/bin/mv "$@"\n';
   if (["sleep", "sync", "flock"].includes(command)) return trace + "exit 0\n";
   if (command === "stat")
     return (
@@ -107,6 +109,9 @@ export function commandWrapper(command: string): string {
   if (command === "systemctl")
     return (
       trace +
+      'if [ "$1" = reset-failed ]; then\n' +
+      'if [ -e "$UPDATE_FIXTURE/reset-unloaded" ]; then printf "Unit %s not loaded.\\n" "$2" >&2; exit 1; fi\n' +
+      'if [ -e "$UPDATE_FIXTURE/reset-denied" ]; then printf "Access denied\\n" >&2; exit 1; fi\nfi\n' +
       'if [ "$1" = show ]; then\nfor argument do\ncase "$argument" in --property=*) property=${argument#--property=}; cat "$UPDATE_FIXTURE/$property.txt"; printf "\\n" ;; esac\ndone\nfi\n'
     );
   return `#!/bin/sh\nexec ${quote(process.execPath)} --experimental-strip-types ${quote(join(REPOSITORY, "scripts/update-check/command.ts"))} ${quote(command)} "$@"\n`;

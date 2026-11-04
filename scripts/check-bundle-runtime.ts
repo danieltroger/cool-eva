@@ -4,10 +4,10 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { join } from "node:path";
-import { readReleaseMetadata } from "../src/release/metadata.ts";
+import { isBundleRuntime, readReleaseMetadata } from "../src/release/metadata.ts";
 import { osPackagesChanged, rollbackNotice } from "../src/release/version.ts";
 import { readUpdateStatus } from "../src/release/update-status.ts";
-import { handleBundleUpdate } from "../src/http/bundle-update.ts";
+import { handleBundleUpdate, tryBundleUpdate } from "../src/http/bundle-update.ts";
 import { handleUpdateEndpoint } from "../src/http/update.ts";
 import { handleReleaseHealth, verifyReleaseStorage } from "../src/http/release-health.ts";
 import { settingsPaths } from "../src/settings/paths.ts";
@@ -42,6 +42,12 @@ export async function checkBundleRuntime(): Promise<void> {
     const metadata = await readReleaseMetadata(join(fixture.code, "releases/old"));
     assert.equal(metadata?.commit, "a".repeat(40));
     assert.equal(await readReleaseMetadata(fixture.root), null);
+    assert(isBundleRuntime(fixture.root, join(fixture.root, "runtime/bin/node")));
+    assert(!isBundleRuntime(fixture.root, "/usr/bin/node"));
+    await assert.rejects(
+      readReleaseMetadata(fixture.root, join(fixture.root, "runtime/bin/node")),
+      /metadata is missing/
+    );
     const markerPath = join(fixture.data, "state/installed.json");
     const marker = await readFile(markerPath, "utf8");
     await writeFile(markerPath, '{"installed":false,"archiveGroupId":0}');
@@ -86,6 +92,18 @@ export async function checkBundleRuntime(): Promise<void> {
       "systemctl start --no-block cool-eva-update.service"
     );
     assert.equal((await readUpdateStatus(join(fixture.data, "updater"))).running, false);
+    const metadataPath = join(fixture.code, "releases/old/release.json");
+    const intactMetadata = await readFile(metadataPath, "utf8");
+    await writeFile(metadataPath, "damaged metadata");
+    const repairRequest = recordedResponse();
+    assert(
+      await tryBundleUpdate(repairRequest.response, join(fixture.code, "releases/old"), {
+        executable: join(fixture.code, "releases/old/runtime/bin/node"),
+        statusDirectory: join(fixture.data, "updater"),
+      })
+    );
+    assert.equal(repairRequest.status, 202, "a bundle with damaged metadata must queue repair, never fall back to Git");
+    await writeFile(metadataPath, intactMetadata);
     for (const name of [
       "bluez",
       "network-manager",

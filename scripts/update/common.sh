@@ -93,9 +93,17 @@ settings_lock() {
 settings_unlock() { flock -u 8; exec 8>&-; }
 
 start_current() {
-    systemctl reset-failed "$SERVICE"
+    reset_service_failure
     # A blocking start would deadlock ExecStartPre against this process's lock.
     systemctl start --no-block "$SERVICE"
+}
+
+reset_service_failure() {
+    if reset_failure_message=$(LC_ALL=C systemctl reset-failed "$SERVICE" 2>&1); then return 0; fi
+    case "$reset_failure_message" in
+        *"not loaded"*) note "$SERVICE was unloaded; its restart counter is already clear." ;;
+        *) fail "Cannot clear the service restart counter: $reset_failure_message" ;;
+    esac
 }
 
 monotonic_seconds() { cut -d . -f 1 /proc/uptime; }

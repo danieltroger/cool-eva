@@ -84,7 +84,10 @@ rollback_to() {
     rollback_reason=$5
     reject_release=$6
     valid_release_directory "$rollback_target" && valid_release_directory "$failed_target" || fail 'A recorded rollback release is missing.'
-    failed_release=$(jq -er .release "$RELEASE_ROOT/releases/$failed_target/release.json")
+    if ! failed_release=$(jq -er .release "$RELEASE_ROOT/releases/$failed_target/release.json"); then
+        failed_release=$failed_target
+        note 'The failed release identity is unreadable; recovering by its recorded directory.'
+    fi
     if ! release_unedited "$failed_target"; then
         reject_release=false
         if [ "$rollback_reason" != interrupted ]; then rollback_reason=edited-release-failed; fi
