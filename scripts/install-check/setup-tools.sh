@@ -2,6 +2,7 @@
 set -eu
 
 # Development/CI only. No compiler, Python, Meson or QEMU is installed on the Pi.
+script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 mkdir -p "$1"
 tools=$(realpath "$1")
 qemu_version=11.1.3
@@ -28,17 +29,26 @@ if [ ! -x python/bin/python3 ]; then python3 -m venv python; fi
 python/bin/python3 -m pip install --disable-pip-version-check --cache-dir "$tools/pip-cache" meson==1.9.0 ninja==1.13.0
 PATH="$tools/python/bin:$PATH"
 export PATH
-if [ ! -f slirp-build/build.ninja ]; then
-    meson setup slirp-build "libslirp-v$slirp_version" --prefix "$tools/slirp" -Ddefault_library=static
-fi
+meson setup --reconfigure slirp-build "libslirp-v$slirp_version" --prefix "$tools/slirp" \
+    --libdir=lib -Ddefault_library=static --wrap-mode=nofallback
 meson install -C slirp-build
+PKG_CONFIG_PATH="$tools/slirp/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+export PKG_CONFIG_PATH
+resolved_slirp_version=$(pkg-config --modversion slirp)
+resolved_slirp_prefix=$(pkg-config --variable=prefix slirp)
+[ "$resolved_slirp_version" = "$slirp_version" ] && [ "$resolved_slirp_prefix" = "$tools/slirp" ] || {
+    printf 'Pinned libslirp was not selected by pkg-config: %s (%s)\n' "$resolved_slirp_version" "$resolved_slirp_prefix" >&2
+    exit 1
+}
+printf 'Pinned libslirp pkg-config: %s (%s)\n' "$resolved_slirp_version" "$resolved_slirp_prefix"
 mkdir -p qemu-build
 cd qemu-build
-if [ ! -f build.ninja ]; then
-    PKG_CONFIG_PATH="$tools/slirp/lib/pkgconfig:$tools/slirp/lib64/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" \
-        "../qemu-$qemu_version/configure" --target-list=aarch64-softmmu --without-default-features \
-        --enable-slirp --enable-tcg --disable-rust --disable-docs --disable-werror \
-        --python="$tools/python/bin/python3" --prefix="$tools/qemu"
-fi
+"../qemu-$qemu_version/configure" --target-list=aarch64-softmmu --without-default-features \
+    --enable-slirp --enable-tcg --disable-rust --disable-docs --disable-werror \
+    -Dwrap_mode=nofallback -Dpkg_config_path="$tools/slirp/lib/pkgconfig" \
+    --python="$tools/python/bin/python3" --prefix="$tools/qemu"
+"$tools/python/bin/python3" "$script_directory/verify-slirp.py" \
+    meson-info/intro-dependencies.json meson-info/intro-buildoptions.json \
+    "$slirp_version" "$tools/slirp/lib/libslirp.a"
 ninja -j4 qemu-system-aarch64
 ./qemu-system-aarch64 --version

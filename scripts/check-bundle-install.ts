@@ -23,6 +23,7 @@ import { checkRecoveryAssertion } from "./install-check/recovery-check.ts";
 import { installationFailureAdvice, MigrationNeedsHelpError } from "../src/install/errors.ts";
 import { checkMigrationFailures } from "./install-check/migration-check.ts";
 import { checkBundleLauncher } from "./install-check/launch-check.ts";
+import { checkQemuSlirp } from "./install-check/tools-check.ts";
 
 export async function checkBundleInstall(): Promise<void> {
   const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -80,6 +81,7 @@ export async function checkBundleInstall(): Promise<void> {
     assert(!installationFailureAdvice(new MigrationNeedsHelpError("conflict")).includes("paste"));
     assert.match(installationFailureAdvice(new Error("network")), /paste the same/);
     await checkRecoveryAssertion(directory);
+    await checkQemuSlirp(directory, root);
     await checkMigrationFailures(directory, root);
     checkPowerGate();
     checkLoopbackRoute();
