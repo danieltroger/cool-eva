@@ -81,6 +81,7 @@ export async function buildReleaseBundle(sourceDirectory: string, outputDirector
         `SOURCE_DATE_EPOCH=${epoch}`,
         builderTag,
         "/opt/node/bin/node",
+        "--no-wasm-lazy-compilation",
         "--experimental-strip-types",
         "scripts/release/assemble.ts",
         "/work/output",
@@ -95,10 +96,10 @@ export async function buildReleaseBundle(sourceDirectory: string, outputDirector
 }
 
 export async function copyBundleArtifacts(producedDirectory: string, outputDirectory: string): Promise<void> {
-  const expected = new Set(["bundle.tar.zst", "manifest.txt", "release.json", "tested-os-packages.txt"]);
+  const expected = new Set(["bundle.tar.zst", "manifest.txt", "release.json", "tested-os-packages.txt", "install.sh"]);
   const entries = await readdir(producedDirectory, { withFileTypes: true });
   if (entries.length !== expected.size || entries.some(entry => !entry.isFile() || !expected.has(entry.name))) {
-    throw new Error("Builder output must contain exactly the four regular bundle artifacts");
+    throw new Error("Builder output must contain exactly the five regular bundle artifacts");
   }
   for (const entry of entries) {
     await copyFile(join(producedDirectory, entry.name), join(outputDirectory, entry.name), constants.COPYFILE_EXCL);

@@ -4,7 +4,7 @@ import { lstat, readlink, readdir, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 export function selectSourcePaths(trackedPaths: string[]): string[] {
-  const buildFiles = new Set(["package-lock.json", ".npmrc"]);
+  const buildFiles = new Set(["package-lock.json", ".npmrc", "install.sh"]);
   const selected = trackedPaths.filter(
     path => isRuntimeSourcePath(path) || path.startsWith("scripts/release/") || buildFiles.has(path)
   );
@@ -16,6 +16,7 @@ export function selectSourcePaths(trackedPaths: string[]): string[] {
     "package-lock.json",
     "LICENSE",
     "src/index.ts",
+    "install.sh",
     "scripts/release/inputs.json",
   ]) {
     if (!selected.includes(required)) {
@@ -35,6 +36,7 @@ export const RUNTIME_SCRIPTS = [
   "scripts/update/helpers.sh",
   "scripts/update/dispatch.sh",
   "scripts/update/launch.sh",
+  "scripts/update/os-update-ready.sh",
   "scripts/update/cool-eva.service",
   "scripts/update/cool-eva-update.service",
   "scripts/update/cool-eva-rollback.service",

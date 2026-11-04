@@ -56,6 +56,11 @@ interface SelfCheck {
 /** In script-name order; they are independent, so nothing depends on which runs first. */
 const CHECKS: SelfCheck[] = [
   {
+    script: "scripts/check-bundle-install.ts",
+    covers:
+      "cross-shell SSH command, hidden public-only input, charging-gated OS upgrades, network keyfile escaping and release publication guards; pinned-image installation runs separately under QEMU",
+  },
+  {
     script: "scripts/check-a8-block.ts",
     covers:
       "the 25 bank-1 parameters A8's own firmware table serves that params.ecf does not describe (#219): their " +

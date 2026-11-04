@@ -23,6 +23,9 @@ import { handleCanRestartEndpoint } from "./http/can-restart.ts";
 import { handleUpdateEndpoint } from "./http/update.ts";
 import { handleReleaseHealth } from "./http/release-health.ts";
 import { handleUpdateStatus } from "./http/bundle-update.ts";
+import { createOsUpdateGate } from "./os-updates.ts";
+import { busHeldBy } from "./vcu/bus-lease.ts";
+import { handleOsUpdateReady } from "./http/os-update-ready.ts";
 import { handleBundleStop } from "./http/bundle-stop.ts";
 import { managedCodeRoot, readReleaseMetadata } from "./release/metadata.ts";
 import { handleDtcTableEndpoint } from "./http/dtc-table.ts";
@@ -462,6 +465,10 @@ const settingsRestart = createSettingsRestart({
   motionBlockers: () =>
     restartMotionBlockers(sampleServiceGate(key => ({ value: latestValue(key), ageMs: ageMs(key) }))),
 });
+const osUpdateGate = createOsUpdateGate(
+  key => ({ value: latestValue(key), ageMs: ageMs(key) }),
+  () => busHeldBy() !== null
+);
 const settingsHttp = {
   runtime: settingsRuntime,
   restart: settingsRestart,
@@ -578,6 +585,10 @@ const server = createServer(async (req, res) => {
   }
   if (url.pathname === "/release-health") {
     await handleReleaseHealth(res, ROOT);
+    return;
+  }
+  if (url.pathname === "/os-update-ready") {
+    handleOsUpdateReady(req, res, osUpdateGate);
     return;
   }
   if (url.pathname === "/update/reserve-stop") {
@@ -770,6 +781,7 @@ console.log(
 // --- Graceful shutdown ---
 let shuttingDown = false;
 async function shutdown(): Promise<void> {
+  osUpdateGate.close();
   if (shuttingDown) return;
   shuttingDown = true;
   settingsRestart.consume();
