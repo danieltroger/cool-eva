@@ -3,7 +3,7 @@ import { readFile } from "fs/promises";
 // The colour arithmetic both palette checks run on, and the palettes themselves.
 //
 // Extracted because there were two copies: scripts/check-theme-contrast.ts wrote it first
-// and scripts/check-power-bar.ts copied it when its own dead contrast floor was repaired —
+// and the retired power-bar check copied it when its own dead contrast floor was repaired —
 // under a comment in the first file explaining why a check must not carry its own copy of
 // the palette. The same argument applies to the arithmetic: two implementations of
 // contrast() can disagree, and the one that disagrees is the one nobody runs by hand.
@@ -40,7 +40,7 @@ export function parsePalette(css: string, opener: string): Record<string, string
   return palette;
 }
 
-/** Resolves a `var(--token)` string — the form colors.js and power-bar.js draw with. */
+/** Resolves a `var(--token)` string — the form colors.js and power-edge.js draw with. */
 export function resolve(palette: Record<string, string>, token: string): string {
   return palette[token.replace(/^var\(--|\)$/g, "")];
 }

@@ -1,5 +1,7 @@
 import { checkHistoryAndGestures } from "./riding-navigation-browser.ts";
 import { checkCoolingFan } from "./riding-fan-browser.ts";
+import { checkFaultRecovery } from "./riding-fault-browser.ts";
+import { checkPowerWords } from "./riding-power-browser.ts";
 import { assertRideContent, checkRideBrowser, checkRideZero } from "./riding-ride-browser.ts";
 import { openPreview, FRAME } from "./riding-preview-page.ts";
 import assert from "node:assert/strict";
@@ -70,6 +72,7 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
       await checkNoticeStates(page, previewFile, theme);
       await checkNoticeStates(page, previewFile, theme, "#ride");
       await checkRideBrowser(page, previewFile, assertFixedLayout, theme);
+      await checkPowerWords(page, previewFile, assertFixedLayout, theme);
     }
   }
   await resizePage(page, { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
@@ -83,6 +86,9 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
   await checkHistoryAndGestures(page, previewFile);
   await checkCoolingFailures(page, previewFile);
   await checkCoolingFan(page, previewFile, assertFixedLayout);
+  for (const theme of ["dark", "light"]) {
+    await checkFaultRecovery(page, previewFile, assertFixedLayout, theme);
+  }
   console.log(
     `  ✓ riding: real PWA/native insets, ${minimumClearance}px minimum Ride/Cooling clearance, complete content, notices/Connect, history/reload and both gestures`
   );

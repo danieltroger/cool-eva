@@ -1,4 +1,4 @@
-import { HATCH_DUTY as DASH_DUTY } from "../public/lib/power-edge.js";
+import { HATCH_DUTY } from "../public/lib/power-edge.js";
 import { contrast, contrastOf, luminance, readPalettes, separation } from "./palette.ts";
 
 // Measures both palettes in public/style.css against the floors that file commits to,
@@ -38,30 +38,10 @@ const INK_TOKENS = ["fg", "label", "sub", "good", "watch", "warn", "bad", "cold"
  */
 const MARK_FLOORS: Record<string, number> = { "track": 1.5 };
 
-/** Marks sized by visibility rather than readability — see the note in lib/power-bar.js. */
+/** Marks sized by visibility rather than readability — see docs/ride-power.md. */
 const MARK_TOKENS = Object.keys(MARK_FLOORS);
 
-/**
- * …and the two the DASHED stretch has to clear, which are not the same question.
- *
- * ⚠️ The meter has no second colour for a derate: the taken stretch is --track itself,
- * dashed, with the tile showing through the gaps. So there is no dash-ink-against-track
- * ratio to measure — the dash and the track are one colour — and what a rider actually
- * sees over a dashed run is the two averaged by the dash's duty cycle. Both numbers below
- * are that average: against the ground the meter sits on, which is how visible a derate
- * is at all, and against the solid track, which is what says the stretch is gone.
- *
- * RATCHETS under the shipped worst cases: 1.290 against the ground, which is the LIGHT
- * theme, and 1.177 against the solid track, which is the DARK one — the two worsts are not
- * in the same palette, which is why both floors are measured in both. They are small
- * numbers and that is the honest picture: this design carries the derate as a texture
- * rather than as a step in tone, a trade docs/dashboard-decisions.md §"The power meter"
- * states in full.
- *
- * ⚠️ What they guard is DASH_DUTY as much as the palette — the duty cycle is imported from
- * the module that draws it, so shortening the dashes or widening the gaps moves both of
- * these numbers and has to clear them here.
- */
+// Hatch-duty weighting and historical texture failures: docs/ride-power.md.
 const DASHED_ON_GROUND_FLOOR = 1.25;
 const DASHED_VS_SOLID_FLOOR = 1.15;
 
@@ -163,8 +143,18 @@ for (const [themeName, palette] of palettes) {
       );
     }
   }
+  // The retired renderer check's colour floors still apply to the actual Edge fills.
+  for (const token of ["flow", "good"]) {
+    const measured = contrast(palette[token], palette["track"]);
+    if (measured < 4) {
+      failures.push(`${themeName}: power fill --${token} has ${measured.toFixed(2)}:1 against track, under 4:1`);
+    }
+  }
+  if (separation(palette["flow"], palette["good"]) < 90) {
+    failures.push(`${themeName}: drive/regen power fills are under 90 apart in a*b*`);
+  }
   // The dashed stretch, duty-weighted — see DASHED_ON_GROUND_FLOOR.
-  const dashed = mix(palette["track"], palette["tile"], DASH_DUTY);
+  const dashed = mix(palette["track"], palette["tile"], HATCH_DUTY);
   for (const against of [
     { what: "the tile it is drawn on", token: "tile", floor: DASHED_ON_GROUND_FLOOR },
     { what: "the solid track beside it", token: "track", floor: DASHED_VS_SOLID_FLOOR },
@@ -203,7 +193,7 @@ for (const [themeName, palette] of palettes) {
     const row = INK_TOKENS.map(token => `${token} ${contrast(palette[token], palette[ground]).toFixed(1)}`).join("  ");
     console.log(`  on --${ground.padEnd(4)} ${row}`);
   }
-  const dashed = mix(palette["track"], palette["tile"], DASH_DUTY);
+  const dashed = mix(palette["track"], palette["tile"], HATCH_DUTY);
   const [nearest] = flowSeparations(palette);
   console.log(
     `  marks on --tile   ` +

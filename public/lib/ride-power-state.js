@@ -1,5 +1,5 @@
 // @ts-check
-import { POWER_SCALE_KW } from "./power-bar.js";
+import { POWER_SCALE_KW, limitKw } from "./power-limits.js";
 
 /** @typedef {import("./reading-status.js").ReadingStatus} ReadingStatus */
 /** @typedef {{state:ReadingStatus,kilowatts:number|null}} PowerLimit */
@@ -23,7 +23,9 @@ export function ridePowerState(read, status, charging) {
     excess,
     status: charging
       ? powerStatus === "fresh"
-        ? "Charging · riding limits off"
+        ? value !== null && value < 0
+          ? "Power out · riding limits off"
+          : "Charging · riding limits off"
         : `Charging · power ${reason(powerStatus)} · riding limits off`
       : powerStatus !== "fresh"
         ? `Power ${reason(powerStatus)}`
@@ -51,9 +53,9 @@ function limitState(key, read, status) {
   const amps = read(key);
   const volts = read("pack_v");
   if (state !== "fresh") return { state, kilowatts: null };
-  if (amps === null || volts === null || volts <= 0) return { state: "missing", kilowatts: null };
-  if (amps < 0) return { state: "fault", kilowatts: null };
-  return { state: "fresh", kilowatts: (amps * volts) / 1000 };
+  if (amps !== null && amps < 0) return { state: "fault", kilowatts: null };
+  const kilowatts = limitKw(amps, volts);
+  return { state: kilowatts === null ? "missing" : "fresh", kilowatts };
 }
 
 /** @param {string} side @param {PowerLimit} limit */

@@ -19,7 +19,7 @@ export const CALM = "var(--fg)";
    this dashboard, not two. */
 export const FLOW = "var(--flow)";
 /* The unfilled part of any bar, ring or meter. Here rather than beside the drawing code
-   because two modules draw with it — svg.js and power-bar.js — and it was exported from
+   because two modules draw with it — svg.js and power-edge.js — and it was exported from
    both for a while, with the two docblocks already disagreeing about what it was for. A
    palette-token name belongs with the palette-token names. ⚠️ Must NOT be --tile: that
    was the first version, and it made every bar invisible until more than half full, which
@@ -144,30 +144,7 @@ export function lossFraction(percent) {
   return BAD;
 }
 
-/**
- * Power flow: regen green because energy is coming back, drive its own blue at any load.
- *
- * ⚠️ `pack_kw` is NEGATIVE under discharge and POSITIVE on regen and charge — the
- * convention derive.js asserts by name rather than leaving in a minus sign. The
- * comparison here was `< -0.5` from 2026-08-03 (#33) until 2026-09-08, which is the
- * same test with the bike's sign convention read backwards: it painted a 100 kW pull
- * green and a 20 kW recovery amber. Nothing catches that by looking — both colours are
- * plausible on their own. scripts/check-power-bar.ts §1 asserts the direction.
- *
- * Drive used to ramp CALM → WATCH → WARN → BAD by magnitude, and that ramp is gone
- * rather than retuned. Two reasons, and the second is the real one:
- *
- *   • Contrast. The meter marks the BMS's ceiling ON TOP of the fill, and over the old
- *     BAD red that mark sat at 1.72:1 — the one state where crossing into unreachable
- *     power matters most. One flat colour per direction needs no second colour to be
- *     legible against, and scripts/check-power-bar.ts holds both to a floor.
- *   • The ramp answered a worse question. Its thresholds were absolute — 3, 15, 40 kW —
- *     while the hatching beside it answers "how close am I to what the pack will
- *     actually give me", which moves with heat, cold and SOC and is the number a rider
- *     can act on. Two colour languages for load, one of them fixed and wrong most of
- *     the time, is worse than one.
- * @param {number | null} kilowatts
- */
+/** Power direction and palette history: docs/ride-power.md. @param {number | null} kilowatts */
 export function power(kilowatts) {
   if (kilowatts == null) {
     return MUTED;

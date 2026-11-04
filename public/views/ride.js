@@ -1,4 +1,6 @@
 // @ts-check
+// Instrument geometry and thermal provenance: docs/ride-power.md and docs/ride-thermal.md.
+// Conditional units keep a text anchor: VanJS cannot revive a binding whose first result is null.
 import van from "../vendor/van-1.6.1.js";
 import { SubTabs } from "../lib/sub-tabs.js";
 import { chartTick, isStale, valueOf } from "../lib/store.js";
@@ -6,6 +8,7 @@ import { readingStatus } from "../lib/reading-status.js";
 import { chargeMode } from "../lib/charge-mode.js";
 import { powerEdge } from "../lib/power-edge.js";
 import { ridePowerState } from "../lib/ride-power-state.js";
+import { ridePowerDisplay } from "../lib/ride-power-display.js";
 import { differenceByTime, ringFor } from "../lib/ring.js";
 import { monotonicNow } from "../lib/clock.js";
 import { COOLANT_WATTS_PER_KELVIN } from "../lib/derive.js";
@@ -14,7 +17,6 @@ import { resistanceNote } from "../lib/pack-resistance.js";
 import { sparkline } from "../lib/svg.js";
 import * as colors from "../lib/colors.js";
 import * as units from "../lib/units.js";
-import { power } from "../lib/format.js";
 
 const { div, span } = van.tags;
 
@@ -36,7 +38,14 @@ export function RideView() {
 function PowerPanel() {
   return div(
     { class: "tile ride-power" },
-    div({ class: "ride-row" }, div({ class: "label" }, "Speed"), div({ class: "label" }, "Power")),
+    div(
+      { class: "ride-row" },
+      div({ class: "label" }, "Speed"),
+      div(
+        { class: "label", "data-power-direction": "", style: () => `color:${powerDisplay().color}` },
+        () => powerDisplay().label
+      )
+    ),
     div(
       { class: "ride-row ride-numbers" },
       div(
@@ -44,31 +53,42 @@ function PowerPanel() {
         span({ "data-signal": "gps_speed_kmh" }, () =>
           fresh("gps_speed_kmh") === null ? "—" : String(Math.round(units.speed(valueOf("gps_speed_kmh") ?? 0)))
         ),
-        span({ class: "hero-unit" }, units.speedUnit)
+        span({ class: "hero-unit" }, () => (fresh("gps_speed_kmh") === null ? "" : units.speedUnit()))
       ),
       div(
-        { class: "value ride-kilowatts", style: () => `color:${colors.power(currentPower().value)}` },
-        span({ "data-signal": "pack_kw" }, () => {
-          const reading = currentPower().value;
-          return reading === null ? "—" : `${reading > 0 ? "+" : ""}${power(reading)}`;
-        }),
-        span({ class: "unit" }, "kW")
+        { class: "value ride-kilowatts", style: () => `color:${powerDisplay().color}` },
+        span({ "data-signal": "pack_kw" }, () => powerDisplay().magnitude),
+        span({ class: "unit" }, () => (currentPower().value === null ? "" : "kW"))
       )
     ),
     div(
       { class: "ride-row ride-statusline" },
-      div({ class: "sub ride-power-status" }, () => currentPower().status || speedNote()),
+      div(
+        {
+          class: "sub ride-power-status",
+          style: () => {
+            const state = currentPower();
+            return `color:${state.powerStatus === "fault" || (!state.charging && [state.drive.state, state.regen.state].includes("fault")) ? colors.BAD : colors.MUTED}`;
+          },
+        },
+        () => currentPower().status || speedNote()
+      ),
       span(
         { class: "ride-soc", "data-signal": "soc", style: () => `color:${colors.stateOfCharge(fresh("soc"))}` },
         () => (fresh("soc") === null ? `SOC ${word(readingStatus("soc"))}` : `${Math.round(valueOf("soc") ?? 0)}%`)
       )
     ),
-    () => powerEdge(currentPower())
+    () => powerEdge(currentPower(), powerDisplay())
   );
 }
 
 function currentPower() {
   return ridePowerState(valueOf, readingStatus, chargeMode(valueOf, isStale) !== "none");
+}
+
+function powerDisplay() {
+  const speed = fresh("speed_can_kmh") ?? fresh("speed_kmh") ?? fresh("gps_speed_kmh");
+  return ridePowerDisplay(currentPower(), speed !== null && speed > 0);
 }
 
 function speedNote() {
@@ -91,7 +111,7 @@ function DeltaCard() {
         "data-reading": "coolant-delta",
       },
       () => (delta() === null ? word(thermalStatus()) : units.tempDelta(delta() ?? 0).toFixed(2)),
-      span({ class: "unit" }, units.tempUnit)
+      span({ class: "unit" }, () => (delta() === null ? "" : units.tempUnit()))
     ),
     () => {
       chartTick.val;
@@ -120,11 +140,12 @@ function HeatCard() {
       span({ "data-reading": "resistance-heat" }, () =>
         heat() === null ? word(readingStatus("pack_a")) : ((heat() ?? 0) / 1000).toFixed(2)
       ),
+      () => (heat() !== null && delta() === null ? span({ class: "unit" }, "kW") : ""),
       " / ",
       span({ "data-reading": "loop-removal" }, () =>
         delta() === null ? word(thermalStatus()) : (((delta() ?? 0) * COOLANT_WATTS_PER_KELVIN) / 1000).toFixed(2)
       ),
-      span({ class: "unit" }, "kW")
+      span({ class: "unit" }, () => (delta() === null ? "" : "kW"))
     ),
     div({ class: "sub" }, () => {
       const output = fresh("pack_kw");
@@ -159,8 +180,11 @@ function TemperatureCard(label, keys, caption) {
             return reading === null ? "—" : units.temp(reading).toFixed(0);
           }
         ),
-      ]),
-      span({ class: "unit" }, units.tempUnit)
+        () =>
+          fresh(key) !== null && !keys.slice(index + 1).some(next => fresh(next) !== null)
+            ? span({ class: "unit" }, units.tempUnit)
+            : "",
+      ])
     ),
     div({ class: "sub" }, () => {
       const states = keys.map(key => readingStatus(key));

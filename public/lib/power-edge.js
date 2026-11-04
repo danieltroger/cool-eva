@@ -1,4 +1,5 @@
 // @ts-check
+// Fixed geometry, zero-gap and paint-order constraints: docs/ride-power.md.
 import van from "../vendor/van-1.6.1.js";
 import { powerPosition } from "./ride-power-state.js";
 
@@ -8,8 +9,8 @@ const HATCH_STROKE = 3;
 export const HATCH_DUTY = (HATCH_STROKE * Math.SQRT2) / 8;
 /** @typedef {import("./ride-power-state.js").RidePowerState} RidePowerState */
 
-/** The 18px Edge and 2px tick extension share CSS-pixel coordinates. @param {RidePowerState} state */
-export function powerEdge(state) {
+/** The 18px Edge and 2px tick extension share CSS-pixel coordinates. @param {RidePowerState} state @param {import("./ride-power-display.js").RidePowerDisplay} display */
+export function powerEdge(state, display) {
   const pattern = `power-hatch-${++sequence}`;
   const excessPattern = `${pattern}-excess`;
   const origin = powerPosition(0);
@@ -139,7 +140,7 @@ export function powerEdge(state) {
       height: 20,
       width: "100%",
       role: "img",
-      "aria-label": description(state),
+      "aria-label": description(state, display),
       "data-charging": String(state.charging),
     },
     tags.svg({ class: "power-band", width: "100%", height: 20 }, ...band),
@@ -147,11 +148,12 @@ export function powerEdge(state) {
   );
 }
 
-/** @param {RidePowerState} state */
-function description(state) {
+/** @param {RidePowerState} state @param {import("./ride-power-display.js").RidePowerDisplay} display */
+function description(state, display) {
+  const power = `${display.label} ${state.value === null ? state.powerStatus : `${display.magnitude} kW`}`;
   return state.charging
-    ? `Signed power ${state.value ?? state.powerStatus} kW. Charging; riding limits inactive.`
-    : `Fixed scale: 36 kW regen, 130 kW drive. Power ${state.value ?? state.powerStatus} kW. Drive limit ${state.drive.kilowatts === null ? state.drive.state : `${state.drive.kilowatts.toFixed(1)} kW`}; regen limit ${state.regen.kilowatts === null ? state.regen.state : `${state.regen.kilowatts.toFixed(1)} kW`}.`;
+    ? `${power}. Riding limits inactive.`
+    : `Fixed scale: 36 kW regen, 130 kW drive. ${power}. Drive limit ${state.drive.kilowatts === null ? state.drive.state : `${state.drive.kilowatts.toFixed(1)} kW`}; regen limit ${state.regen.kilowatts === null ? state.regen.state : `${state.regen.kilowatts.toFixed(1)} kW`}.`;
 }
 
 /** @param {string} id @param {string} color */

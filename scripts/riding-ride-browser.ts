@@ -15,7 +15,7 @@ export async function assertRideContent(page: HeadlessPage) {
     ),
     [
       ["gps_speed_kmh", "87"],
-      ["pack_kw", "-48"],
+      ["pack_kw", "48"],
       ["soc", "46%"],
       ["batt_temp_lo", "38"],
       ["batt_temp_hi", "41"],
@@ -111,6 +111,22 @@ export async function checkRideBrowser(
       status: "Over drive limit",
     },
     { name: "over", patch: "allowed_discharge_a:[50,'A','battery']", ticks: 2, unknown: 0, status: "Over drive limit" },
+    {
+      name: "regen-over",
+      patch: "pack_kw:[8,'kW','battery'],allowed_regen_a:[10,'A','battery']",
+      ticks: 2,
+      unknown: 0,
+      status: "Over regen limit",
+      side: "left",
+    },
+    {
+      name: "regen-off-scale",
+      patch: "pack_kw:[45,'kW','battery'],pack_a:[45000/340,'A','battery']",
+      ticks: 2,
+      unknown: 0,
+      status: "Over regen limit",
+      side: "left",
+    },
     {
       name: "off-scale",
       patch: "pack_kw:[-170,'kW','battery'],pack_a:[-500,'A','battery']",
@@ -213,8 +229,12 @@ export async function checkRideBrowser(
         "Measured zero must remain a reading."
       );
     }
-    if (state.name === "off-scale") {
+    if (state.name.endsWith("off-scale")) {
       assert.equal(await evaluateOnPage(page, "!!document.querySelector('[data-layer=off-scale]')"), true);
+      assert.equal(
+        await evaluateOnPage(page, "document.querySelector('[data-layer=off-scale]').getAttribute('x')"),
+        state.name === "regen-off-scale" ? "0%" : "100%"
+      );
       assert.equal(
         await evaluateOnPage(
           page,
@@ -304,7 +324,7 @@ export async function checkRideZero(
 async function assertEdge(page: HeadlessPage, ticks: number, unknown: number) {
   const result = (await evaluateOnPage(
     page,
-    `(() => {const edge=document.querySelector('.power-edge');const gap=edge.querySelector('[data-layer=zero-gap]');const box=edge.getBoundingClientRect();const gapBox=gap.getBoundingClientRect();const layers=[...edge.querySelectorAll('[data-layer]')].map(element=>element.getAttribute('data-layer')).filter(Boolean);const gapAt=layers.indexOf('zero-gap');return {charging:edge.getAttribute('data-charging')==='true',outerRadius:parseFloat(getComputedStyle(edge).borderBottomLeftRadius),bandRadius:parseFloat(getComputedStyle(edge.querySelector('.power-band')).borderBottomLeftRadius),bandClip:getComputedStyle(edge.querySelector('.power-band')).clipPath,paint:layers[0]==='base'&&gapAt>=0&&layers.slice(gapAt+1).every((name,index)=>name===(index%2===0?'ceiling-halo':'ceiling')),ticks:edge.querySelectorAll('[data-layer=ceiling]').length,unknown:edge.querySelectorAll('[data-layer=unknown]').length,height:box.height,gapWidth:gapBox.width,gapHeight:gapBox.height,origin:(gapBox.left+gapBox.width/2-box.left)/box.width,partial:[...edge.querySelectorAll('line')].some(line=>line.style.stroke==='var(--fg)'&&(line.getAttribute('y1')!=='0'||line.getAttribute('y2')!=='20'||line.getAttribute('stroke-width')!=='2')),dash:[...edge.querySelectorAll('[data-layer=unknown]')].every(line=>line.getAttribute('stroke-dasharray')==='4 4'&&line.getAttribute('stroke-width')==='2'),legend:/Regen max|Drive max/.test(document.querySelector('.ride-view').innerText),accessible:edge.getAttribute('aria-label')};})()`
+    `(() => {const edge=document.querySelector('.power-edge');const gap=edge.querySelector('[data-layer=zero-gap]');const box=edge.getBoundingClientRect();const gapBox=gap.getBoundingClientRect();const layers=[...edge.querySelectorAll('[data-layer]')].map(element=>element.getAttribute('data-layer')).filter(Boolean);const gapAt=layers.indexOf('zero-gap');const foreground=getComputedStyle(document.body).color;return {charging:edge.getAttribute('data-charging')==='true',outerRadius:parseFloat(getComputedStyle(edge).borderBottomLeftRadius),bandRadius:parseFloat(getComputedStyle(edge.querySelector('.power-band')).borderBottomLeftRadius),bandClip:getComputedStyle(edge.querySelector('.power-band')).clipPath,paint:layers[0]==='base'&&gapAt>=0&&layers.slice(gapAt+1).every((name,index)=>name===(index%2===0?'ceiling-halo':'ceiling')),ticks:edge.querySelectorAll('[data-layer=ceiling]').length,unknown:edge.querySelectorAll('[data-layer=unknown]').length,height:box.height,gapWidth:gapBox.width,gapHeight:gapBox.height,origin:(gapBox.left+gapBox.width/2-box.left)/box.width,strayForeground:[...edge.querySelectorAll('*')].filter(element=>{const style=getComputedStyle(element);return ([style.fill,style.stroke].includes(foreground)||[element.getAttribute('fill'),element.getAttribute('stroke'),element.style.fill,element.style.stroke].some(paint=>paint?.includes('--fg')))&&!element.closest('[data-layer=ceiling],[data-layer=off-scale]');}).length,partial:[...edge.querySelectorAll('line')].some(line=>line.style.stroke==='var(--fg)'&&(line.getAttribute('y1')!=='0'||line.getAttribute('y2')!=='20'||line.getAttribute('stroke-width')!=='2')),dash:[...edge.querySelectorAll('[data-layer=unknown]')].every(line=>line.getAttribute('stroke-dasharray')==='4 4'&&line.getAttribute('stroke-width')==='2'),legend:/Regen max|Drive max/.test(document.querySelector('.ride-view').innerText),accessible:edge.getAttribute('aria-label')};})()`
   )) as {
     charging: boolean;
     outerRadius: number;
@@ -318,6 +338,7 @@ async function assertEdge(page: HeadlessPage, ticks: number, unknown: number) {
     gapHeight: number;
     origin: number;
     partial: boolean;
+    strayForeground: number;
     dash: boolean;
     legend: boolean;
     accessible: string;
@@ -339,6 +360,7 @@ async function assertEdge(page: HeadlessPage, ticks: number, unknown: number) {
     "Zero must use the same fixed 36/166 origin as every segment."
   );
   assert.equal(result.partial, false, "No bright partial zero stroke or thin ceiling ticks.");
+  assert.equal(result.strayForeground, 0, "Only ceiling and off-scale children may paint foreground ink in the Edge.");
   assert.equal(
     result.paint,
     true,

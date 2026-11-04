@@ -1,6 +1,20 @@
 import assert from "node:assert/strict";
 import { powerPosition, ridePowerState } from "../public/lib/ride-power-state.js";
 import type { ReadingStatus } from "../public/lib/reading-status.js";
+import { POWER_SCALE_KW, limitKw } from "../public/lib/power-limits.js";
+import { ridePowerDisplay } from "../public/lib/ride-power-display.js";
+
+assert.deepEqual(POWER_SCALE_KW, { drive: 130, regen: 36 });
+for (const [amps, volts, expected] of [
+  [0, 340, 0],
+  [210, 340, 71.4],
+  [null, 340, null],
+  [210, null, null],
+  [210, 0, null],
+  [-1, 340, null],
+] as const) {
+  assert.equal(limitKw(amps, volts), expected);
+}
 
 const readings: Record<string, number> = { pack_kw: -48.3, pack_v: 340, allowed_discharge_a: 210, allowed_regen_a: 55 };
 const read = (key: string) => readings[key] ?? null;
@@ -38,7 +52,7 @@ const zeroVolts = ridePowerState(key => (key === "pack_v" ? 0 : read(key)), fres
 assert.equal(zeroVolts.drive.kilowatts, null);
 assert.equal(zeroVolts.regen.kilowatts, null);
 const charge = ridePowerState(read, fresh, true);
-assert.equal(charge.status, "Charging · riding limits off");
+assert.equal(charge.status, "Power out · riding limits off");
 assert.equal(charge.excess, false);
 assert.equal(charge.value, -48.3, "Charging must preserve signed measured power.");
 assert.equal(
@@ -48,3 +62,27 @@ assert.equal(
 console.log(
   "✓ Ride fixed scale, sign, measured voltage, zero, unknown/fault/stale states, opposite-limit retention and charging"
 );
+
+for (const [value, charging, moving, label, magnitude, color] of [
+  [-48.3, false, true, "DRIVE", "48", "flow"],
+  [8, false, true, "REGEN", "8.0", "good"],
+  [0.2, false, true, "REGEN", "0.2", "good"],
+  [-0.2, false, true, "DRIVE", "0.2", "flow"],
+  [0, false, true, "POWER", "0.0", "fg"],
+  [-0.01, false, true, "POWER", "0.0", "fg"],
+  [-0, false, true, "POWER", "0.0", "fg"],
+  [15, true, false, "CHARGING", "15", "good"],
+  [-5, true, false, "POWER OUT", "5.0", "flow"],
+  [-0.2, false, false, "POWER OUT", "0.2", "flow"],
+] as const) {
+  const state = ridePowerState(key => (key === "pack_kw" ? value : read(key)), fresh, charging);
+  assert.deepEqual(ridePowerDisplay(state, moving), { label, magnitude, color: `var(--${color})` });
+}
+for (const status of ["missing", "stale", "fault"] as const) {
+  const state = ridePowerState(read, key => (key === "pack_kw" ? status : "fresh"), false);
+  assert.deepEqual(ridePowerDisplay(state, true), {
+    label: "POWER",
+    magnitude: "—",
+    color: status === "fault" ? "var(--bad)" : "var(--sub)",
+  });
+}
