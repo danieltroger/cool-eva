@@ -169,6 +169,10 @@ export async function checkUpdaterSystemd(): Promise<void> {
     );
     assert.notEqual((await readState(fixture)).current, "old");
     console.log("real systemd: the next good release promoted after rollback");
+  } catch (error) {
+    await printSystemdDiagnostics([service, rollbackService, updateService, repairService]);
+    console.error("updater state at failure:", await readFile(fixture.state, "utf8"));
+    throw error;
   } finally {
     for (const name of [updateService, repairService, service, rollbackService]) {
       try {
@@ -187,6 +191,24 @@ export async function checkUpdaterSystemd(): Promise<void> {
 }
 
 const execFileAsync = promisify(execFile);
+
+async function printSystemdDiagnostics(units: string[]): Promise<void> {
+  const commands = [
+    {
+      executable: "systemctl",
+      arguments: ["show", ...units, "--property=LoadState,ActiveState,SubState,Result,ExecMainStatus,Job"],
+    },
+    { executable: "systemctl", arguments: ["list-jobs", "--no-pager"] },
+    { executable: "journalctl", arguments: [...units.flatMap(unit => ["-u", unit]), "--no-pager", "-n", "180"] },
+  ];
+  for (const command of commands) {
+    try {
+      console.error((await execFileAsync(command.executable, command.arguments, { maxBuffer: 1024 * 1024 })).stdout);
+    } catch (error) {
+      console.warn(`could not collect ${command.executable} diagnostics:`, error);
+    }
+  }
+}
 
 async function control(...arguments_: string[]): Promise<void> {
   await execFileAsync("systemctl", arguments_, { timeout: 20_000 });
