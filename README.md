@@ -63,6 +63,8 @@ git checkout -- package-lock.json
 
 <!-- for-now: #327 -->
 
+For browser generation and a phone-only file handoff, see [recording key setup](docs/hosted-pages.md#make-recording-keys). Use the manual route below until the hosted page is verified.
+
 For now, follow the [computer key setup](docs/manual-install.md#4-enable-saved-ride-history--on-your-computer): run `node --experimental-strip-types scripts/generate-log-key.ts`, back up the private key, then upload only the public key in Settings → Ride recording after starting the service; without it, the dashboard works but no rides are saved.
 
 ### 5. Before the first service start

@@ -2,6 +2,8 @@
 
 Encryption here applies to the sealed `.celog` files. The optional [raw CAN capture](can-capture.md) is a separate artifact and can contain personal telemetry; it is not made confidential by sealing the ride log. Keep raw captures private.
 
+The [browser key setup](hosted-pages.md#make-recording-keys) generates compatible PEM files locally, with a phone-only download/public-file handoff. Its hosted address is published after hosting verification; the manual key-generation route below remains available.
+
 > The following sections preserve the former README at commit `58c7eba` (2026-11-03), including dated measurements and limitations. For first installation, use the [current README](../README.md). Older validation/status claims are historical; the existing subsystem findings and current code take precedence.
 
 The menu seals the current buffer through a protected POST before downloading. Direct `GET /dl` returns already sealed segments without a disk write.
