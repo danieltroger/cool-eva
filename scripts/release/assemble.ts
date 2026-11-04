@@ -16,6 +16,7 @@ import {
 } from "./dependencies.ts";
 import { assertRuntimePayload, copyRuntimePayload } from "./payload.ts";
 import { renderInstaller } from "./installer.ts";
+import { verifyInstallerStartup } from "./startup.ts";
 
 export async function assembleBundle(sourceDirectory: string, outputDirectory: string): Promise<void> {
   if (process.platform !== "linux" || process.arch !== "arm64") {
@@ -126,6 +127,7 @@ export async function assembleBundle(sourceDirectory: string, outputDirectory: s
     ],
     extractedOptions
   );
+  await verifyInstallerStartup(extractedDirectory);
   await assertRuntimePayload(extractedDirectory);
   await assertNoDevDependencies(extractedDirectory, dependencyLock);
   await assertNoBuildDependencies(extractedDirectory);

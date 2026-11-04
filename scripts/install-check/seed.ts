@@ -12,6 +12,7 @@ export function guestSeed(publicKey: string, assetPort: number, tag: string): st
 set -eu
 mount -t proc proc /proc || mountpoint -q /proc
 mount -t sysfs sysfs /sys || mountpoint -q /sys
+if [ -e /proc/sys/kernel/print-fatal-signals ]; then echo 1 > /proc/sys/kernel/print-fatal-signals; fi
 resize2fs /dev/mmcblk0p2
 existing_user=$(getent passwd 1000 | cut -d: -f1)
 if [ -n "$existing_user" ]; then

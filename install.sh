@@ -80,6 +80,7 @@ main() {
         flock -x -w 2100 8 || fail 'An update or rollback is still running. Let it finish before retrying setup.'
         jq -e --arg release "$RELEASE" '.pending == null and .current == $release' /var/lib/cool-eva/updater/state.json >/dev/null || fail 'The release changed while setup was starting. Paste the line again; no service was stopped.'
         [ "$(readlink -f /opt/cool-eva/current)" = "$TARGET" ] || fail 'The selected release changed. Retry setup.'
+        note 'Starting the bundled Node installer with the existing release and settings.'
         "$TARGET/runtime/bin/node" --experimental-strip-types "$TARGET/src/install/main.ts" "$TARGET"
         return 0
     fi
@@ -103,7 +104,9 @@ main() {
     [ -d "$TARGET" ] && [ ! -L "$TARGET" ] || fail 'Unsafe existing release directory.'
     (cd "$TARGET" && sha256sum --check --strict --quiet files.sha256) || fail 'Existing release files changed; keep them safe and use the dashboard Update path.'
     jq -e --arg release "$RELEASE" '.format == 1 and .updaterProtocol == 1 and .release == $release and .platform == "linux-arm64"' "$TARGET/release.json" >/dev/null || fail 'Unsupported release metadata.'
+    note 'Checking the bundled Node runtime and native modules.'
     "$TARGET/runtime/bin/node" --experimental-strip-types "$TARGET/src/release/preflight.ts" native || fail 'This bundle cannot load its native modules on the installed OS. No service was replaced.'
+    note 'Starting the bundled Node installer.'
     "$TARGET/runtime/bin/node" --experimental-strip-types "$TARGET/src/install/main.ts" "$TARGET"
 }
 

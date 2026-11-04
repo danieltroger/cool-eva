@@ -91,6 +91,12 @@ export async function runInstaller(
     throw new Error(`Installer echoed a password; see private ${log}`);
   }
   if (status !== 0 || answerIndex !== answers.length || !output.includes("Dashboard ready:")) {
+    try {
+      const kernel = await sshCommand(guest, "sudo dmesg | tail -100");
+      await appendFile(log, "\nKernel diagnostics after installer failure:\n" + kernel);
+    } catch (error) {
+      console.warn("Cannot collect guest kernel diagnostics:", error instanceof Error ? error.message : error);
+    }
     throw new Error(`Installer failed (${status}, ${answerIndex}/${answers.length} prompts); see ${log}`);
   }
   return output;
