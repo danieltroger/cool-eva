@@ -175,6 +175,25 @@ export function formatDuty(percent) {
 }
 
 /**
+ * Enabled at zero duty shorts the winding through the BTS7960 low sides and brakes
+ * the rotor. control.ts refuses this state: seeing it means a stop failed halfway.
+ * control.ts goIdle publishes zero target after attempting to lower the enables.
+ * If they stay HIGH, it leaves PWM driving to avoid braking. Positive duty with
+ * zero target and enables HIGH therefore means a failed stop, not a transient.
+ * @param {number | null} duty
+ * @param {number | null} target
+ * @param {number | null} driverEnabled
+ */
+export function fanDriveState(duty, target, driverEnabled) {
+  if (duty === null || driverEnabled === null) return "unreported";
+  if (driverEnabled !== 1) return "standby";
+  if (duty === 0) return "braking";
+  if (target === 0) return "stop-failed";
+  if (target !== null && duty > target) return "kick-start";
+  return "driving";
+}
+
+/**
  * What the automatic mode is doing right now, as one line.
  * @param {number | null} reason
  * @param {number | null} temperatureInput

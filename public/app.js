@@ -36,13 +36,13 @@ const { button, div } = van.tags;
 // tap on the bar, the high-beam gesture and the bike's own rules alike — so that Back
 // walks through the screens the rider actually saw, whoever chose them.
 
-/** @typedef {import("./lib/router.js").TabName} ViewName */
+/** @typedef {import("./lib/router.js").ViewName} ViewName */
 
 /**
- * The view each tab shows.
+ * The view each route shows.
  *
  * A Record over ViewName rather than the switch this used to be: ViewName is derived
- * from the router's TABS, so adding a tab there widens it and a tab with no view here
+ * from the router's ROUTES, so adding a route widens it and a route with no view here
  * fails `npm run typecheck`. The switch's `default` case would instead have drawn the
  * riding screen under the new tab's URL and said nothing.
  *
@@ -50,6 +50,7 @@ const { button, div } = van.tags;
  */
 const VIEWS = {
   ride: RideView,
+  cooling: CoolingView,
   hypermile: HypermileView,
   charge: ChargeView,
   all: AllView,
@@ -91,7 +92,7 @@ function App() {
         )
       );
     },
-    () => (destination.val ? DestinationPage() : currentView() === "cooling" ? CoolingView() : VIEWS[currentTab()]()),
+    () => (destination.val ? DestinationPage() : VIEWS[currentView()]()),
     () => (destination.val ? div() : TabBar()),
     Sheet(),
     Toast()

@@ -4,6 +4,7 @@ import { chartTick, faultState, isStale, signalState, valueOf } from "../lib/sto
 import { STALE_MS } from "../lib/tiles.js";
 import { SubTabs } from "../lib/sub-tabs.js";
 import { settings } from "../lib/settings.js";
+import { FAN_MODE_CODE, fanDriveState } from "../lib/fan-display.js";
 import * as units from "../lib/units.js";
 import * as colors from "../lib/colors.js";
 
@@ -26,19 +27,43 @@ export function CoolingView() {
       { class: "tile cooling-short" },
       div({ class: "label" }, "Cooling fan · commanded"),
       div({ class: "value" }, Reading("fan_target_pct", 0, false), span({ class: "unit" }, "%")),
-      div({ class: "sub" }, () => {
-        chartTick.val;
-        if (settings.val?.active.radiatorFanEnabled === false) return "Not installed";
-        if (faultState("fan_auto_mode").val || faultState("fan_driver_enabled").val) return "Fan status fault";
-        if (isStale("fan_auto_mode", STALE_MS) || isStale("fan_driver_enabled", STALE_MS))
-          return "Fan status unavailable";
-        const mode = valueOf("fan_auto_mode");
-        const enabled = valueOf("fan_driver_enabled");
-        const modeText = mode === 1 ? "Automatic" : mode === 2 ? "Fun" : mode === 0 ? "Manual" : "Mode unavailable";
-        return `${modeText} · ${enabled === 1 ? "driver ready" : enabled === 0 ? "driver off" : "readiness unavailable"}`;
-      })
+      FanStatus()
     )
   );
+}
+
+function FanStatus() {
+  return div({ class: "sub", "data-fan-status": "" }, () => {
+    chartTick.val;
+    if (settings.val?.active.radiatorFanEnabled === false) return "Not installed";
+    const signals = ["fan_auto_mode", "fan_driver_enabled", "fan_duty_pct", "fan_target_pct"];
+    if (signals.some(key => faultState(key).val)) {
+      return span({ style: `color:${colors.BAD}` }, "Fan status fault");
+    }
+    if (signals.some(key => isStale(key, STALE_MS))) {
+      return "Fan status unavailable";
+    }
+    const mode = valueOf("fan_auto_mode");
+    const modeText =
+      mode === FAN_MODE_CODE.AUTOMATIC
+        ? "Automatic"
+        : mode === FAN_MODE_CODE.FUN
+          ? "Fun"
+          : mode === FAN_MODE_CODE.MANUAL
+            ? "Manual"
+            : "Mode unavailable";
+    const driveState = fanDriveState(valueOf("fan_duty_pct"), valueOf("fan_target_pct"), valueOf("fan_driver_enabled"));
+    if (driveState === "braking") {
+      return span({ style: `color:${colors.BAD}` }, "Braking fault · cut fan power");
+    }
+    if (driveState === "stop-failed") {
+      return span({ style: `color:${colors.BAD}` }, "Stop failed · still driving");
+    }
+    if (driveState === "unreported") return "Fan status unavailable";
+    if (driveState === "standby") return `${modeText} · Standby`;
+    if (driveState === "kick-start") return `${modeText} · kick-starting`;
+    return `${modeText} · driving`;
+  });
 }
 
 /** @param {string} label @param {string[]} keys @param {string | (() => string)} caption @param {number} [decimals] @param {string} [extraClass] */
@@ -68,8 +93,9 @@ function Reading(key, decimals, temperature) {
       if (
         (key.startsWith("coolant_") && settings.val?.active.coolantProbesEnabled === false) ||
         (key.startsWith("fan_") && settings.val?.active.radiatorFanEnabled === false)
-      )
+      ) {
         return "—";
+      }
       if (faultState(key).val) return "fault";
       const reading = signalState(key).val;
       if (!reading) return "—";

@@ -51,14 +51,12 @@ try {
   assert.equal(currentTab(), "all");
   assert.equal(armed.val, "", "Gesture navigation must also disarm.");
 
-  for (const arrival of ["current-parent tap", "automatic arrival"]) {
-    showView("cooling");
-    assert.equal(currentTab(), "ride");
-    arm("charge-stop");
-    showTab("ride");
-    assert.equal(currentView(), "ride", `${arrival} must restore the parent's overview.`);
-    assert.equal(armed.val, "", `${arrival} is a real route change and must disarm.`);
-  }
+  showView("cooling");
+  assert.equal(currentTab(), "ride");
+  arm("charge-stop");
+  showTab("ride");
+  assert.equal(currentView(), "ride", "current-parent tap must restore the parent's overview.");
+  assert.equal(armed.val, "", "A current-parent tap is a real route change and must disarm.");
 
   for (const eventName of ["popstate", "hashchange"]) {
     arm("charge-stop");

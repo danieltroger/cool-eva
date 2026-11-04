@@ -1,4 +1,5 @@
 // @ts-check
+// Measured notice fallback and full Settings access: docs/dashboard-header.md.
 import van from "../vendor/van-1.6.1.js";
 import { settings } from "../lib/settings.js";
 import { systemStatus } from "../lib/store.js";

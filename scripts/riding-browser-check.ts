@@ -1,4 +1,5 @@
 import { checkHistoryAndGestures } from "./riding-navigation-browser.ts";
+import { checkCoolingFan } from "./riding-fan-browser.ts";
 import { openPreview, FRAME } from "./riding-preview-page.ts";
 import assert from "node:assert/strict";
 import { ROUTES } from "../public/lib/router.js";
@@ -31,10 +32,9 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
     Object.keys(COVERAGE).sort(),
     "Every router view needs an acceptance contract."
   );
-  assert.deepEqual(
-    ROUTES.filter(route => route.fixed).map(route => route.name),
-    ["cooling"]
-  );
+  const fixedViews = Object.entries(COVERAGE)
+    .filter(([, policy]) => policy === "fixed")
+    .map(([name]) => name);
   for (const geometry of [
     { height: 844, top: 47 },
     { height: 797, top: 0 },
@@ -51,7 +51,7 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
         await assertInsets(page, geometry.top, geometry.height);
         await assertPopulatedFixture(page);
         visited.add(route.name);
-        if (route.fixed) {
+        if (fixedViews.includes(route.name)) {
           await assertCoolingContent(page);
           await assertFixedLayout(page);
         }
@@ -69,6 +69,7 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
   await checkInsetCounterexample(page, previewFile);
   await checkHistoryAndGestures(page, previewFile);
   await checkCoolingFailures(page, previewFile);
+  await checkCoolingFan(page, previewFile, assertFixedLayout);
   console.log(
     `  ✓ riding: real PWA/native insets, ${minimumClearance}px minimum Cooling clearance, complete content, notices/Connect, history/reload and both gestures`
   );
@@ -122,7 +123,7 @@ async function assertPopulatedFixture(page: HeadlessPage) {
     page,
     `(() => {
     const store = ridingPreview("lib/store.js");
-    const required = ${JSON.stringify([...COOLING_SIGNALS, "batt_temp_lo_vcu", "batt_temp_hi_vcu", "cell_cutoff_mv"])};
+    const required = ${JSON.stringify([...COOLING_SIGNALS, "fan_duty_pct", "fan_driver_enabled", "fan_auto_mode", "batt_temp_lo_vcu", "batt_temp_hi_vcu", "cell_cutoff_mv"])};
     return {missing:required.filter(key => store.valueOf(key) === null), cells:store.knownKeys.val.filter(key => /^lmu[0-9]+_cell[0-9]+_mv$/.test(key)).length, installed:ridingPreview("lib/settings.js").settings.val?.active.coolantProbesEnabled};
   })()`
   );
@@ -167,10 +168,7 @@ async function assertCoolingContent(page: HeadlessPage) {
     "Required readings must render; hidden tiles cannot buy a short screen."
   );
   assert.equal(
-    await evaluateOnPage(
-      page,
-      "document.querySelector('.cooling-view').innerText.includes('Automatic · driver ready')"
-    ),
+    await evaluateOnPage(page, "document.querySelector('.cooling-view').innerText.includes('Automatic · driving')"),
     true
   );
 }

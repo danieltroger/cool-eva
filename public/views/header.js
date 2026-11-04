@@ -1,4 +1,5 @@
 // @ts-check
+// Header geometry, notice policy and CAN liveness constraints: docs/dashboard-header.md.
 import van from "../vendor/van-1.6.1.js";
 import { connection, signalState, systemStatus } from "../lib/store.js";
 import { destination, backDestinationName, openDestination, closeDestination } from "../lib/destination.js";

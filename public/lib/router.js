@@ -18,7 +18,7 @@ import { armed } from "./arming.js";
 // The full argument for each of those, and for what Back does across a repeat visit:
 // docs/dashboard-decisions.md §Routing.
 
-/** Bottom destinations retain their bookmark addresses; the subview routes are listed separately below. */
+/** Bookmark names are pinned by check-tab-routing.ts; rationale: docs/dashboard-routing.md. */
 export const TABS = /** @type {const} */ ([
   { name: "ride", label: "Ride" },
   { name: "hypermile", label: "Range" },
@@ -30,12 +30,12 @@ export const TABS = /** @type {const} */ ([
 /** @typedef {(typeof TABS)[number]["name"]} TabName */
 
 export const ROUTES = /** @type {const} */ ([
-  { name: "ride", tab: "ride", label: "Ride", hash: "#ride", fixed: false },
-  { name: "cooling", tab: "ride", label: "Cooling", hash: "#ride/cooling", fixed: true },
-  { name: "hypermile", tab: "hypermile", label: "Range", hash: "#hypermile", fixed: false },
-  { name: "charge", tab: "charge", label: "Charge", hash: "#charge", fixed: false },
-  { name: "all", tab: "all", label: "All", hash: "#all", fixed: false },
-  { name: "faults", tab: "faults", label: "Faults", hash: "#faults", fixed: false },
+  { name: "ride", tab: "ride", label: "Ride", hash: "#ride" },
+  { name: "cooling", tab: "ride", label: "Cooling", hash: "#ride/cooling" },
+  { name: "hypermile", tab: "hypermile", label: "Range", hash: "#hypermile" },
+  { name: "charge", tab: "charge", label: "Charge", hash: "#charge" },
+  { name: "all", tab: "all", label: "All", hash: "#all" },
+  { name: "faults", tab: "faults", label: "Faults", hash: "#faults" },
 ]);
 /** @typedef {(typeof ROUTES)[number]["name"]} ViewName */
 
@@ -47,7 +47,7 @@ export const ROUTES = /** @type {const} */ ([
  */
 export const DEFAULT_TAB = /** @type {TabName} */ ("ride");
 
-/** Only explicit navigation and URL restoration may write the private parent/subview states. */
+/** Only explicit navigation and URL restoration write these states; why private: docs/dashboard-routing.md. */
 const tab = van.state(DEFAULT_TAB);
 const view = van.state(/** @type {ViewName} */ (DEFAULT_TAB));
 
@@ -132,6 +132,7 @@ export function advanceTab() {
 
 /** @param {ViewName} name @returns {ViewName} */
 export function nextViewAfter(name) {
+  // Unknown names wrap to the first view; the -1 case is explained in docs/dashboard-routing.md.
   const index = ROUTES.findIndex(route => route.name === name);
   return ROUTES[(index + 1) % ROUTES.length].name;
 }

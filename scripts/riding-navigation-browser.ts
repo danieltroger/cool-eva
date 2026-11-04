@@ -64,15 +64,26 @@ export async function checkHistoryAndGestures(page: HeadlessPage, file: string) 
     await waitOnPage(page, "location.hash === '#faults'", "gesture All to Faults");
     assert.equal(await evaluateOnPage(page, "scrollY"), 0, "Handlebar arrivals must reset scrolling.");
     for (const panel of ["settings", "session", "bike-information", "advanced-service"]) {
+      const origin = await evaluateOnPage(page, "[ridingPreview('lib/router.js').currentView(), location.hash]");
       await evaluateOnPage(page, `ridingPreview('lib/destination.js').openDestination(${JSON.stringify(panel)})`);
       await evaluateOnPage(page, FRAME);
       await gesture(page, kind);
       assert.equal(await evaluateOnPage(page, "ridingPreview('lib/destination.js').destination.val"), panel);
+      assert.deepEqual(
+        await evaluateOnPage(page, "[ridingPreview('lib/router.js').currentView(), location.hash]"),
+        origin,
+        `${kind} must preserve the view and hash beneath ${panel}.`
+      );
       await evaluateOnPage(page, "ridingPreview('lib/destination.js').closeDestination()");
       await waitOnPage(
         page,
         "!ridingPreview('lib/destination.js').destination.val",
         "return from the excluded menu page"
+      );
+      assert.deepEqual(
+        await evaluateOnPage(page, "[ridingPreview('lib/router.js').currentView(), location.hash]"),
+        origin,
+        `Closing ${panel} after ${kind} must return to the original view and hash.`
       );
     }
   }

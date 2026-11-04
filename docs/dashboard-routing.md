@@ -4,6 +4,12 @@ The bottom destinations retain their original addresses, including #hypermile fo
 
 Browser history is the only history stack. Explicit arrivals start at the top; URL restoration disarms separately because Back/Forward and hash edits bypass the explicit navigation function. Menu pages retain their gesture and automatic-move exclusions and return to the actual subview label.
 
+A tab's name is a URL, not just a display label: `/#charge` is what a phone home-screen bookmark holds. Renaming a name in TABS silently breaks those bookmarks even while a freshly opened dashboard still builds, typechecks and works. `scripts/check-tab-routing.ts` therefore pins names by hand rather than deriving its expected URLs from TABS, so changing one is an explicit decision.
+
+The parent and subview states are private and have exactly two writers: explicit navigation in `showView()` (also reached through `showTab()`) moves the screen and URL together; `showTabFromUrl()` follows a URL the browser already moved. Nothing outside the router can set one without the other. This makes screen/URL agreement a property of the module instead of something every caller must remember.
+
+`nextViewAfter()` wraps a name absent from ROUTES to the first view: `findIndex` returns -1 and adding one turns that into zero before the modulo. ViewName prevents that input in checked callers, but the fallback remains the right answer if it ever occurs.
+
 | Screen | Address and kind | Handlebar gesture | Automatic arrivals |
 | --- | --- | --- | --- |
 | Ride / Cooling | `#ride` / `#ride/cooling`, riding views | Ride → Cooling → Range | Restore the requested parent overview |
