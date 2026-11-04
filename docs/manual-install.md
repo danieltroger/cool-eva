@@ -58,7 +58,7 @@ Removing the lockfile is for this first Linux installation; [why it is needed](d
 
 ## 4. Enable saved ride history — on your computer
 
-For browser generation and the phone-only file handoff, see [recording key setup](hosted-pages.md#make-recording-keys). Until its hosted address is published, use the laptop route below.
+You can generate the same PEM pair at [the recording key page](https://cool-eva-keys.cool-eva.workers.dev). See [recording key setup](hosted-pages.md#make-recording-keys) for backup and the phone-only handoff; phone acceptance remains outstanding. The manual laptop route below remains available.
 
 Keep your Pi session open. Install **Node 24** from [nodejs.org](https://nodejs.org/en/download) on the computer if needed.
 

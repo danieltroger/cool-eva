@@ -4,10 +4,9 @@ import { requireCurrentPage } from "./page-reload.js";
 import { BLE_MODE, nativeShell, tunnelRequest } from "./ble-link.js";
 
 // How the dashboard reaches the Pi's endpoints: `fetch` when the page was served by the
-// Pi, the BLE tunnel when it was not — GitHub Pages, or the iOS app (./ble-link.js BLE_MODE). Every endpoint call in
-// public/ goes through request() so that choice is made in one place — a stray `fetch`
-// would work on wifi and 404 against GitHub Pages, which is the kind of bug that only
-// shows up at the roadside.
+// Pi, the BLE tunnel on the hosted HTTPS dashboard or iOS app (./ble-link.js BLE_MODE).
+// Every endpoint call in public/ goes through request() — a stray `fetch` would work
+// on wifi and 404 against the static host, only failing once the rider is away from wifi.
 
 /**
  * The part of `Response` the dashboard actually uses. Narrow on purpose, so the tunnel's

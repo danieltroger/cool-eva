@@ -15,7 +15,6 @@ export function allowedBleOrigin(url) {
   return url.protocol === "https:" && HOSTED_BLE_ORIGINS.includes(url.origin);
 }
 
-// An account Pages origin is safe only while NO other Pages site uses that account.
 // Fork owners add their exact exclusive origin here; paths and wildcards do not isolate storage.
-export const HOSTED_BLE_ORIGINS = ["https://danieltroger.github.io"];
+export const HOSTED_BLE_ORIGINS = ["https://cool-eva-dashboard.cool-eva.workers.dev"];
 export const BLE_ORIGIN_MESSAGE = "Bluetooth needs its own address";
