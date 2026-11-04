@@ -34,6 +34,9 @@ import { BLE_MODE, nativeShell, tunnelRequest } from "./ble-link.js";
  * @returns {Promise<EndpointResponse>}
  */
 export async function request(path, init = {}) {
+  if (init.method && !["GET", "HEAD"].includes(init.method)) {
+    init = { ...init, headers: { "Content-Type": "application/json", ...init.headers } };
+  }
   if (!BLE_MODE) {
     const { onProgress: _unused, ...fetchInit } = init;
     return fetch(path, fetchInit);

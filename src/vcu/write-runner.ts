@@ -656,19 +656,17 @@ async function checkPreconditions(
   if (!context.enabled) {
     return {
       ok: false,
-      reason:
-        "writing is switched off on this Pi. Set SERVICE_WRITE_ENABLED=1 to allow it — it is off by default, unlike every other switch here.",
+      reason: "Service data is unavailable. Resolve the Settings fault before writing.",
     };
   }
   const channel = context.channel();
   if (!channel) {
-    return { ok: false, reason: "CAN is switched off on this Pi (CAN_ENABLED=0) — there is no bus to write to" };
+    return { ok: false, reason: "CAN is unavailable — check Settings → Connections → Bike data / CAN adapter" };
   }
   if (!context.busIsActive) {
     return {
       ok: false,
-      reason:
-        "the bus is listen-only (OBD_ENABLED=0) — nothing can be transmitted, so a write would silently do nothing",
+      reason: "the CAN channel cannot transmit — check the adapter and bus configuration",
     };
   }
   // Which gates apply is one table (serviceActionPolicy) and how they compose into a refusal

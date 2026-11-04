@@ -7,7 +7,7 @@ import { defineSignals, latestValue, record, snapshot } from "../src/can/signals
 import { MIN_FIX_INTERVAL_MS } from "../src/gps/fix-plausibility.ts";
 import { monotonicNow, since } from "../src/monotonic.ts";
 import { startWaypointFixTracking } from "../src/gps/waypoint.ts";
-import { systemClockTrust, syncSystemClockFromGps } from "../src/gps/clock.ts";
+import { configureGpsClock, systemClockTrust, syncSystemClockFromGps } from "../src/gps/clock.ts";
 import type { WaypointReply } from "../src/http/waypoint.ts";
 import { handleWaypointEndpoint } from "../src/http/waypoint.ts";
 import { LATITUDE_RANGE, LONGITUDE_RANGE } from "../src/gps/fix-plausibility.ts";
@@ -23,14 +23,17 @@ import { LATITUDE_RANGE, LONGITUDE_RANGE } from "../src/gps/fix-plausibility.ts"
 //
 // The awkward part is the clock: handleWaypointEndpoint refuses unless
 // systemClockTrust() says "satellite-backed", and that is process state set by the real
-// gate. Rather than fake it with GPS_TIME_SYNC=0 — which makes systemClockTrust() return
+// gate. Rather than fake it with externalClock: true — which makes systemClockTrust() return
 // "satellite-backed" unconditionally and so DELETES the refusal this file wants to
 // assert — the clock is corroborated the way the bike corroborates it, with readings.
 // Cache-busting the import instead (`waypoint.ts?x`) does not work: the copy re-resolves
 // its own static import of gps/clock.ts without the query and shares the loaded one.
 
-/** Something else owns the clock, so two of the assertions below cannot mean anything. */
-const clockClaimedElsewhere = process.env.GPS_TIME_SYNC === "0";
+configureGpsClock({
+  run: async () => {
+    throw new Error("This endpoint check must never set the host clock.");
+  },
+});
 
 let failures = 0;
 
@@ -171,16 +174,10 @@ check("…and the sentence says which of the five reasons it was", noFix.message
 
 await stageFix(45.374038, 14.321478);
 
-// The clock branch. Skipped rather than failed if the operator has claimed the clock,
-// because GPS_TIME_SYNC=0 makes this refusal structurally unreachable — see the header.
-if (clockClaimedElsewhere) {
-  console.log("  – clock refusal not checked: GPS_TIME_SYNC=0 says something else owns the clock");
-} else {
-  const untrusted = await ask();
-  check("a good fix with an unsynced clock is still refused", !untrusted.saved);
-  check("…and the sentence blames the clock, not the fix", untrusted.message.includes("clock"));
-  check("…and no waypoint reached the log", latestValue("waypoint_seq") === null);
-}
+const untrusted = await ask();
+check("a good fix with an unsynced clock is still refused", !untrusted.saved);
+check("…and the sentence blames the clock, not the fix", untrusted.message.includes("clock"));
+check("…and no waypoint reached the log", latestValue("waypoint_seq") === null);
 
 // --- 3. The clock, corroborated the way the bike corroborates it --------------
 //
@@ -197,16 +194,10 @@ console.log("\n3. a corroborated clock, and then a waypoint");
 for (let reading = 0; reading < REQUIRED_CONSISTENT_READINGS + 1; reading += 1) {
   await syncSystemClockFromGps(Date.now() / 1000);
 }
-if (clockClaimedElsewhere) {
-  // Asserting it here would pass without the readings having done anything, since the
-  // env makes systemClockTrust() answer "satellite-backed" before it looks at the gate.
-  console.log("  – the clock was already trusted by GPS_TIME_SYNC=0, so the corroboration proves nothing here");
-} else {
-  check(
-    `${REQUIRED_CONSISTENT_READINGS + 1} corroborating readings make the clock satellite-backed`,
-    systemClockTrust() === "satellite-backed"
-  );
-}
+check(
+  `${REQUIRED_CONSISTENT_READINGS + 1} corroborating readings make the clock satellite-backed`,
+  systemClockTrust() === "satellite-backed"
+);
 
 check("⚠️  no landing hop has fired yet, so this save is a run's FIRST fix, seen twice", landingHops === 0);
 const saved = await ask();

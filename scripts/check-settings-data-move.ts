@@ -171,6 +171,12 @@ async function checkConflictAndOverride(): Promise<void> {
     assert.equal(moved.rideLogDirectory, await realpath(external));
     assert.equal((await stat(external)).mode, externalBefore.mode);
     assert.equal(await readFile(join(external, "keep"), "utf-8"), "explicit override");
+    assert.equal(
+      await readFile(join(fixture.paths.rideLogDirectory, "synthetic.celog"), "utf-8"),
+      "synthetic rideLogDirectory",
+      "Older history in an unused default folder must survive release cleanup too."
+    );
+    assert.equal((await lstat(join(options.codeDirectory, "ride-logs"))).isSymbolicLink(), true);
   } finally {
     await closeSettingsFixture(fixture);
   }

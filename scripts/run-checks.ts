@@ -1034,6 +1034,35 @@ const CHECKS: SelfCheck[] = [
       "additive-field preservation, concurrent atomic replacements and selective orphan cleanup",
   },
   {
+    script: "scripts/check-settings-cutover.ts",
+    covers: "legacy instruction removal, unit cutover ordering, CSRF waypoint client and GPS command seams",
+  },
+  {
+    script: "scripts/check-settings-discovery.ts",
+    covers:
+      "bounded read-only candidate scanning, handshake/single-flight refusal and cleanup without pairing or resets",
+  },
+  {
+    script: "scripts/check-settings-http.ts",
+    covers:
+      "settings redaction, strict HTTP mutations, pending/active state, canonical public keys and Bluetooth key handover",
+  },
+  {
+    script: "scripts/check-settings-phone.ts",
+    covers:
+      "phone drafts scoped to the confirmed Pi, stale edit CAS, active/learned revision semantics and disarm on process changes",
+  },
+  {
+    script: "scripts/check-settings-restart.ts",
+    covers:
+      "revision/bus reservation, bounded BLE drain and restart expiry, generation idempotence and existing motion rules",
+  },
+  {
+    script: "scripts/check-settings-runtime.ts",
+    covers:
+      "fresh and migrated service starts, durable pre-move capture, interrupted startup, degraded faults, M8 and M12",
+  },
+  {
     script: "scripts/check-settings-data-move.ts",
     covers:
       "the single journalled move of default ride/service/wifi/capture data, interruption at " +

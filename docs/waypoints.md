@@ -396,7 +396,7 @@ So: one suggestive number and one refuted explanation. Two mechanisms nobody has
 
 ## Saving a waypoint from Siri
 
-`GET /waypoint` stamps the current fix into the ride log and replies with one line of text, which Siri reads back. To set it up: **Shortcuts → new shortcut → Get Contents of URL → `http://cool-eva.local/waypoint`**, then add **Speak Text** with the result. Name it something like "Mark this spot" and it works from the handlebars.
+`POST /waypoint` with `X-Cool-Eva: waypoint` and `Content-Type: application/json` stamps the current fix into the ride log and replies with one line of text, which Siri reads back. To set it up: **Shortcuts → new shortcut → Get Contents of URL → `http://cool-eva.local/waypoint`**, Set the method to **POST**, add those two headers and an empty JSON body (`{}`), then add **Speak Text** with the result. Name it something like "Mark this spot" and it works from the handlebars.
 
 A waypoint is stored as three ordinary signals (`waypoint_seq`, `waypoint_lat`, `waypoint_lon`), so it travels the normal path into the encrypted log and needs no change to the log format. It refuses to save on a fix older than 30 seconds, on an unsynced clock, or on a fix that is not a position on Earth, and says which rather than silently recording the wrong place — though a fix that is wrong while still being a legal coordinate is refused by none of those, only flagged later by the map ([#165](https://github.com/danieltroger/cool-eva/issues/165)).
 

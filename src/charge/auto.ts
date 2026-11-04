@@ -93,7 +93,10 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
     record("charge_auto_reason", CHARGE_AUTO_REASON.DISABLED);
     return {
       state: () => ({ mode: "off", reason: CHARGE_AUTO_REASON.DISABLED, commandedAmps: null }),
-      setMode: () => console.warn("charge-auto: ignoring a mode change — CHARGE_AUTO_ENABLED is 0"),
+      setMode: () =>
+        console.warn(
+          "charge-auto: ignoring a mode change — automatic current reduction is not allowed in Settings → Charging"
+        ),
       noteChargeCurrentOutgoing: () => {},
       stop: () => {},
     };

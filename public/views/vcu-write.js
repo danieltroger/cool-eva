@@ -297,7 +297,7 @@ function Availability() {
       return div(
         div(
           { style: `color:${MUTED}` },
-          "🔒  Writing is off on this Pi. It is off by default — set SERVICE_WRITE_ENABLED=1 in the service's environment to allow it. Reading is unaffected."
+          "Service data is unavailable. Open Settings and resolve its fault before writing."
         ),
         RunningVersion(status)
       );
@@ -2531,4 +2531,8 @@ function adoptListing(payload) {
     return true;
   }
   return false;
+}
+
+export function LastServiceRead() {
+  return ActionButton("read-service-stamp", () => "Read last-service stamp", READ_STAMP_NOTES);
 }

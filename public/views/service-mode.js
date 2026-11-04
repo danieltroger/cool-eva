@@ -64,14 +64,15 @@ const tick = van.state(0);
 let watchingSince = /** @type {number | null} */ (null);
 let polling = false;
 
-export function ServiceMode() {
+/** @param {boolean} [includeBatteryRead] */
+export function ServiceMode(includeBatteryRead = true) {
   return div(
     GateNote(),
     ReadButton(),
     () => (message.val ? div({ class: "action-note" }, message.val) : div()),
     ProgressNote(),
     ExportButton(),
-    LifetimeReadButton(() => state.val),
+    includeBatteryRead ? LifetimeReadButton(() => state.val) : div(),
     FreezeFrameReadButton(() => state.val),
     div(
       { class: "action-note" },

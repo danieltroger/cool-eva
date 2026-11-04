@@ -33,6 +33,12 @@ export interface DashboardMessage {
   type: "snapshot" | "patch";
   ts: number;
   signals: Record<string, LiveValue>;
+  system?: DashboardSystemStatus;
+}
+
+export interface DashboardSystemStatus {
+  settingsFault: string | null;
+  can: { state: "up" | "down" | "unknown"; message: string };
 }
 
 /**
@@ -140,7 +146,7 @@ export function dropStuckClients<Client extends BroadcastClient>(
  */
 export const MAX_CLIENT_FRAME_BYTES = 4 * 1024;
 
-export function setupWs(server: Server, heartbeatMs = HEARTBEAT_MS): WsHandle {
+export function setupWs(server: Server, heartbeatMs = HEARTBEAT_MS, system?: () => DashboardSystemStatus): WsHandle {
   const wss = new WebSocketServer({ server, maxPayload: MAX_CLIENT_FRAME_BYTES });
   const stuck = new WeakSet<WebSocket>();
 
@@ -167,7 +173,12 @@ export function setupWs(server: Server, heartbeatMs = HEARTBEAT_MS): WsHandle {
     });
     // Through the same path as everything else. This is the message a client's whole
     // recovery depends on, so it is not the one to send by a route nothing checks.
-    broadcastTo([ws], { type: "snapshot", ts: Date.now(), signals: snapshot() });
+    broadcastTo([ws], {
+      type: "snapshot",
+      ts: Date.now(),
+      signals: snapshot(),
+      ...(system ? { system: system() } : {}),
+    });
   });
 
   // ⚠️ The same hazard one layer out — but NOT for the reason it is tempting to assume.
@@ -198,7 +209,7 @@ export function setupWs(server: Server, heartbeatMs = HEARTBEAT_MS): WsHandle {
     for (const { bufferedAmount } of dropStuckClients(wss.clients, stuck)) {
       console.log(`ws: hung up on a client holding ${bufferedAmount} unsent bytes across two heartbeats`);
     }
-    broadcast({ type: "snapshot", ts: Date.now(), signals: snapshot() });
+    broadcast({ type: "snapshot", ts: Date.now(), signals: snapshot(), ...(system ? { system: system() } : {}) });
   }, heartbeatMs);
 
   return {

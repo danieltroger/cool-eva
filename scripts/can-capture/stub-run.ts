@@ -136,6 +136,8 @@ async function buildStubEnvironment(root: string, scriptPath: string, options: S
   // half-rewritten and pointed at the real /proc.
   const rewritten = original
     .replace(/^DIRECTORY=.*$/m, `DIRECTORY=${captureDirectory}`)
+    .replaceAll("/home/pi/ride-captures", captureDirectory)
+    .replaceAll("/var/lib/cool-eva", join(root, "managed-data"))
     .replaceAll("/proc/sys/kernel/random/boot_id", bootIdFile)
     .replaceAll("/proc/uptime", uptimeFile);
   // ⚠️ Asserted in BOTH directions, because "the replacement is present" cannot see a
@@ -147,7 +149,12 @@ async function buildStubEnvironment(root: string, scriptPath: string, options: S
       throw new Error(`stub-run: rewriting the script for ${expected} did not apply — the check would test nothing`);
     }
   }
-  for (const original of ["/proc/sys/kernel/random/boot_id", "/proc/uptime", "DIRECTORY=/home/pi"]) {
+  for (const original of [
+    "/proc/sys/kernel/random/boot_id",
+    "/proc/uptime",
+    "/home/pi/ride-captures",
+    "/var/lib/cool-eva",
+  ]) {
     if (rewritten.includes(original)) {
       throw new Error(`stub-run: ${original} survived the rewrite — the run would read the real thing`);
     }

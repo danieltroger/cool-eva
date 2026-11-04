@@ -17,10 +17,11 @@ import { Rejections } from "./rejections.ts";
 import { BleSession, refused, type ReceiveResult } from "./session.ts";
 import { startTelemetryStream, type TelemetryStream } from "./stream.ts";
 import { MAX_REQUEST_BODY_BYTES, forwardRequest } from "./tunnel.ts";
+import type { DashboardSystemStatus } from "../ws.ts";
 
 export async function startBleServer(options: BleServerOptions): Promise<BleServer> {
   if (!validBleSecret(options.secret)) {
-    throw new Error("BLE_SECRET must be a generated 64-character lowercase-hex key (openssl rand -hex 32)");
+    throw new Error("The Dashboard Bluetooth key must be a generated 64-character lowercase-hex key.");
   }
   let app: GattApplication | null = null;
   const context: ServerContext = {
@@ -62,6 +63,13 @@ export async function startBleServer(options: BleServerOptions): Promise<BleServ
   });
   context.app = app;
   return {
+    ready: () => app?.ready?.() ?? false,
+    drain: async () => {
+      while (context.requestsInFlight > 0 || context.pendingSeals > 0 || context.outbound.bufferedBytes > 0) {
+        if (context.stopped || !context.subscribed) return;
+        await delay(DRAIN_POLL_MS);
+      }
+    },
     stop: async () => {
       context.stopped = true;
       endSession(context, "service stopping");
@@ -89,8 +97,11 @@ export interface BleServerOptions {
   timers?: DeadlineTimers;
   /** Allows checks to stall or fail session work without a radio or unbounded heap assertions. */
   session?: BleSession;
+  system?: () => DashboardSystemStatus;
 }
 export interface BleServer {
+  ready: () => boolean;
+  drain: () => Promise<void>;
   stop: () => Promise<void>;
   stats: () => {
     inbound: number;
@@ -257,6 +268,7 @@ function dispatch(context: ServerContext, kind: number, header: unknown, body: B
   if (kind === MessageKind.SUBSCRIBE) {
     if (context.stream !== null) return;
     context.stream = startTelemetryStream({
+      system: context.options.system,
       send: message => {
         void sendSealed(context, MessageKind.STREAM, message satisfies DashboardMessage);
       },

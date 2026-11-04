@@ -303,6 +303,7 @@ const EXPECTED_SITES = [
   "pi-actions.js → performCanRestart",
   "pi-actions.js → performUpdate",
   "service-mode.js → performSweep",
+  "settings-restart.js → performRestart",
   "vcu-write.js → performAction",
   "vcu-write.js → performAction",
   "vcu-write.js → performAllLights",

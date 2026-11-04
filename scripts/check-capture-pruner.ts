@@ -2,7 +2,7 @@ import assert from "assert/strict";
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import { capturePruneSudoers, CAPTURE_PRUNE_HELPER } from "./can-capture/install-prune.ts";
+import { capturePruneSudoers, CAPTURE_PRUNE_HELPER } from "../src/storage/capture-pruner.ts";
 import { captureDirectoryCommand, deleteCaptureCommand } from "./can-capture/remote-directory.ts";
 
 await checkPruner();
@@ -35,7 +35,7 @@ process.stdout.write(process.argv[3] === '%u' ? '0\\n' : (metadata.mode & 0o7777
 require('node:fs/promises').unlink(process.argv.at(-1)).catch(error => { console.error(error); process.exitCode = 1; });
 `
     );
-    const source = await readFile(new URL("./can-capture/prune-helper.sh", import.meta.url), "utf-8");
+    const source = await readFile(new URL("../src/storage/capture-pruner.sh", import.meta.url), "utf-8");
     assert.equal(source.split("DIRECTORY=/var/lib/cool-eva/captures").length, 2);
     assert.ok(source.includes("PATH=/usr/sbin:/usr/bin:/sbin:/bin"));
     assert.ok(source.includes("for parent in /var /var/lib /var/lib/cool-eva; do"));
@@ -52,6 +52,10 @@ require('node:fs/promises').unlink(process.argv.at(-1)).catch(error => { console
     const active = "capture-20200101-010203-feedface-00000010.log.gz";
     await writeFile(join(captureDirectory, old), "synthetic old capture");
     await writeFile(join(captureDirectory, active), "synthetic active capture");
+    const probe = await runHelper(helper, "COOL_EVA_STDIN_PROBE\n", environment);
+    assert.equal(probe.code, 0);
+    assert.equal(probe.output, "COOL_EVA_PRUNE_STDIN_OK\n");
+    assert.equal(await readFile(join(captureDirectory, old), "utf-8"), "synthetic old capture");
     const removed = await runHelper(helper, `${old}\n`, environment);
     assert.equal(removed.code, 0, removed.errors);
     assert.equal(removed.output, `GONE\t${old}\n`);

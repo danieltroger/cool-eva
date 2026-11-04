@@ -4,7 +4,7 @@ To connect a phone, follow [connecting-over-bluetooth.md](connecting-over-blueto
 
 ## Why a tunnel
 
-The Pi does not reimplement endpoints over GATT. `src/ble-server/tunnel.ts` forwards each authenticated request to this process's HTTP server on loopback and streams its response back. The existing `X-Cool-Eva` header gates, `SERVICE_WRITE_ENABLED`, confirmation tokens, write locks, table gate and audit behavior apply because the handler receives an actual HTTP request. Adding an endpoint therefore needs no separate BLE handler.
+The Pi does not reimplement endpoints over GATT. `src/ble-server/tunnel.ts` forwards each authenticated request to this process's HTTP server on loopback and streams its response back. The existing `X-Cool-Eva` header gates, service-data availability, confirmation tokens, write locks, table gate and audit behavior apply because the handler receives an actual HTTP request. Adding an endpoint therefore needs no separate BLE handler.
 
 Live telemetry deliberately bypasses the tunnel: `stream.ts` subscribes directly to `src/can/signals.ts`, as `src/ws.ts` does, instead of opening a loopback WebSocket. The tunnel owns hop-by-hop headers, including `Host`, `Content-Length`, `Connection` and transfer encoding; the phone cannot supply them or receive loopback-specific values. Uploads are capped at 16 KiB. At most six concurrent requests cover the dashboard's opening burst while bounding the loopback sockets they retain, and the socket inactivity timeout is 180 seconds.
 
@@ -16,7 +16,7 @@ The characteristics deliberately omit `encrypt-*` flags. Application sealing sup
 
 ## Key and protocol
 
-`BLE_SECRET` is a generated **32-byte key encoded as 64 lowercase hexadecimal characters**. Generate it once with `openssl rand -hex 32`, store it on the Pi, and paste it into the phone. Onboarding (#317) uses `generateBleSecret()` from `public/lib/ble-secret.js` and persists it; restarting the service or rebuilding the app must not change it. A format validator cannot prove random provenance. Human phrases are rejected before BLE starts, while the rest of telemetry continues.
+The dashboard Bluetooth key is **32 random bytes encoded as 64 lowercase hexadecimal characters**. Create it in Settings → Connections → Dashboard Bluetooth, keep a recoverable copy, Save, then explicitly Restart. A second phone imports the existing code; it does not rotate it. Onboarding (#317) uses `generateBleSecret()` from `public/lib/ble-secret.js` and persists it; restarting the service or rebuilding the app must not change it. A format validator cannot prove random provenance. Human phrases are rejected before BLE starts, while the rest of telemetry continues.
 
 Unset, BLE stays off and the Pi does not advertise. Keys are never put in URLs or diagnostic messages. Changing the Pi's key and restarting revokes old copies. The phone trims surrounding whitespace and normalizes hex case before validating and saving an entered key; invalid input cannot replace a saved key.
 

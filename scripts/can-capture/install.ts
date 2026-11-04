@@ -15,7 +15,7 @@ export function installCanCaptureUnit(projectDir: string): void {
   backUpExistingUnit(unitText);
   writeFileSync(CAN_CAPTURE_UNIT_PATH, unitText);
   execSync("systemctl daemon-reload");
-  console.log(`Wrote ${CAN_CAPTURE_UNIT_PATH} (raw CAN capture -> /home/pi/ride-captures)`);
+  console.log(`Wrote ${CAN_CAPTURE_UNIT_PATH} (raw CAN capture -> /var/lib/cool-eva/captures)`);
 
   // ⚠️ Enabled only once candump is known to exist. can-utils is not a default Raspberry
   // Pi OS package, and a unit enabled without it restart-loops from the next boot — the

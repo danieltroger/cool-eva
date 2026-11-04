@@ -1,6 +1,6 @@
 # Settings storage contract
 
-The first settings PR adds unused storage/migration modules and checks. The service still reads its current environment, and its unit, dashboard and capture writer keep their current configuration. The later cutover activates these modules with the UI and unit changes together; a merged foundation must remain deployable.
+The runtime cutover activates the storage foundation from #331. The service loads one active snapshot before starting configurable components. Dashboard saves persist choices for the next explicit restart; they do not replace live components. See [first boot and deployment](settings-cutover.md) for the exact move, visible states and failure behaviour.
 
 The shared paths and permissions, including capture cleanup, are in [data-layout.md](data-layout.md). The settings service is the sole data mover. The installer may invoke/wait for it and verify completion, but cannot run a second move or keep another move journal. Stop all archive writers and install the non-interactive capture pruner before moving captures. `beforeDataMove` is the integration hook for those prerequisites; production cannot use a no-op there.
 
@@ -14,13 +14,13 @@ Only the service's own resolved environment is a legacy source. The pure importe
 
 The store serialises all writes and requires an acquired OS writer lock. Linux uses flock with a minimal `/bin/sh` holder that prints readiness and execs `/bin/cat` until stdin closes; there is no second Node process in production. Offline writers must take the same lock while the service is inactive. The lock is held for the store's lifetime and released only after `settled()`. Unique exclusive replacement temps additionally keep unrelated concurrent callers from corrupting a file. Private files explicitly chmod 0600; archive access is preserved. Sweep recognised temp names under the writer lock in `state/` and all four managed archive trees after a power cut. The installation marker is replaced only when its contents or access need changing; read/spawn faults retain their safe errno codes.
 
-## Integration conditions for the later phases
+## Runtime and remaining integration conditions
 
 - Network candidates are inactive (`autoconnect=no`) with bounded authentication retries, never the existing profiles' unlimited `auth-retries=0`. Only an explicit armed, motion-checked apply authorises one trial. Persist a confirmed, failed or interrupted outcome; failed/interrupted trials never switch networks at a later start until the owner explicitly retries/edits. Bring up the retained profile explicitly. A failed trial followed by two starts must not drop the hotspot again. Network UI is a later phase, using the approved compact action row.
 - The motion predicate comes from service-gate.ts's rule table with unknowns accepted; do not maintain another list/windows. Restart uses the process generation and bounded reservation, without restart receipts or operation IDs.
 - Data root and Wi-Fi diagnostic location are display-only. Only ride-log and service-data locations are editable.
 - The legacy-name cutover check scans executable string/template literals and UI text, **not comments**. Comments follow the repo's “block you touch” obligation; this check does not force an unrelated comment migration into the cutover PR.
-- Keep an existing migrated Bluetooth server as-is. Only creating/rotating its code requires #318's hardened flow; the foundation itself starts no BLE server.
+- Keep an existing migrated Bluetooth server as-is. Creating/rotating its code requires the saved-copy confirmation and pending/active handover; reconnect readback confirms the active key.
 
 All source archives are checked for links/special files before any journal publication or rename, including after an interrupted attempt. A refusal returns `migrationFault` with code `unsafe-archive`; integration must show that fault and await repair/explicit retry, not run an automatic retry loop. Permission normalisation is followed by one filesystem sync for the entire pass, before the move can commit. On resume, linked archives are normalised again before that sync. A missing explicit recording key returns `recording-key-unavailable` with its errno; once the move journal is complete, key recovery touches no writer stop, pruner installation or move-journal write. Logger and importer share the original permissive X25519 decoder, including leading newline/BOM/text and private-key compatibility; decoder errors retain their original cause. The live logger keeps recording with a private key at its public-key path, and has no new size limit. Migration saves the derived public half and returns a nonblocking `private-key-on-pi` warning: “A private key is on the Pi, which defeats the sealed log; put the public key there instead.” The warning is retained in migration notices; it never disables recording. Newly supplied settings still require a bounded public-only value.
 
@@ -32,6 +32,16 @@ All source archives are checked for links/special files before any journal publi
 - Delete setup-service's `readEnvFile` only in the atomic cutover; migration reads the running service's own environment. Add GPS clock/command seams before removing `GPS_TIME_SYNC`.
 - Cover current custom recording/service archive paths in startup temp cleanup. The restart reservation also refuses a late `learnHub`.
 
-- Ask Daniel in phase 2 whether the live loader should eventually refuse private keys; phase 1 preserves its existing recording behaviour.
+- Retain the live loader's private-key compatibility in this cutover. Any eventual refusal remains Daniel's future decision; migration warns and new settings saves refuse private keys.
 - Show a bounded permission-sync timeout on a slow card as a visible fault; no silent retry loop. Keep M8 (cross-filesystem guard) and M12 (inode check on resume) on the phase-2 test list.
 - Settings saves persist the cleaned SPKI public key returned by `validatePublicKey`, rather than the raw submission, so BOMs/leading text are removed and private keys never reach `settings.json`.
+
+## APIs and installer interface
+
+Sealing the current recording is `POST /recording/flush` with `X-Cool-Eva: recording` and JSON content type. The menu calls it before downloading; a plain `GET /dl` serves already sealed data and causes no disk write.
+
+`GET /settings` returns the saved/active public view, revision, process generation, readiness, active public-key fingerprint and faults. It never returns a Bluetooth key or public/private key material. `PATCH /settings` accepts `{revision, changes}`; `POST /settings/hub` accepts `{revision, address}`; `POST /settings/hub-candidates` scans without enrolment; `POST /settings/apply` accepts `{expectedGeneration, revision, bluetoothCodeId?}`. Settings mutations require `X-Cool-Eva: settings` and JSON content type; strict fields, a 16 KiB body bound and compare-and-swap protect edits. The custom header is a CSRF barrier, not authentication. Every HTTP mutation uses the barrier; waypoint saving is now POST with `X-Cool-Eva: waypoint`, including Siri Shortcuts. The BLE tunnel forwards the same headers and JSON bodies.
+
+`scripts/configure-settings.ts` is the root offline JSON-stdin writer for fresh setup/installer changes. Cool Eva must be stopped; it takes the same OS lock and refuses unreadable or incomplete migration state. It never imports the installer's environment. Pass an object keyed by `StartupSettings` fields accepted by `validateSettingsPatch`, for example `{}` for optional setup later over Wi-Fi. NetworkManager credentials remain the installer's own task until phase 3. setup-service only observes a completed migration and never writes settings or parses environment files. Existing drop-ins are left intact and their legacy names are announced as ignored.
+
+The pruner additionally accepts one fixed non-mutating stdin probe before its archive checks. The service runs it as the checkout owner through nested non-interactive sudo before stopping captures or moving data; an absent/altered response is a visible migration fault. No arbitrary probe argument/path is accepted, and regular deletion retains every name, link, boot and protected-directory check.

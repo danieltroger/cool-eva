@@ -26,6 +26,7 @@ ExecStart=/bin/sh ${projectDir}/scripts/can-capture/capture.sh
 Restart=on-failure
 RestartSec=5
 User=root
+UMask=0027
 
 [Install]
 WantedBy=multi-user.target
@@ -41,7 +42,8 @@ WantedBy=multi-user.target
  * capture.sh's own `DIRECTORY=` against this value, so the shell and the TypeScript cannot
  * drift apart silently.
  */
-export const CAPTURE_DIRECTORY = "/home/pi/ride-captures";
+export const CAPTURE_DIRECTORY = "/var/lib/cool-eva/captures";
+export const LEGACY_CAPTURE_DIRECTORY = "/home/pi/ride-captures";
 
 /** Where the unit is installed, and what the installer backs up before overwriting. */
 export const CAN_CAPTURE_UNIT_PATH = "/etc/systemd/system/can-capture.service";

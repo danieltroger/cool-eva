@@ -1,5 +1,6 @@
 // @ts-check
 
+import { openDestination } from "../lib/destination.js";
 import van from "../vendor/van-1.6.1.js";
 import { GOOD, MUTED, WARN } from "../lib/colors.js";
 import { chargeType, onChargeSessionEnd, writesEnabled } from "../lib/charge-write.js";
@@ -105,6 +106,11 @@ export function ChargeAutoControl() {
         div({ style: `color:${mode.val === "automatic" ? GOOD : MUTED}` }, controllerSentence())
       ),
       ToggleButton(),
+      div(
+        { class: "settings-row" },
+        div({ class: "settings-note" }, "Permission on this Pi"),
+        button({ class: "settings-button", onclick: () => openDestination("settings", "charging") }, "Settings →")
+      ),
       div({ class: "action-note", style: `color:${WARN}` }, () => failure.val)
     );
   });

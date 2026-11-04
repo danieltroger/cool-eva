@@ -128,12 +128,7 @@ Every activation failure logged on 2026-09-19, and whether NetworkManager retrie
 
 ⚠️ **Nothing is recorded when the read itself fails.** Writing `wifi_hotspot_seen = 0` because `nmcli` did not answer would assert "the hotspot is not in range" — the opposite of what a failed read means, and the one claim this whole diagnosis turns on.
 
-⚠️ **`WIFI_HOTSPOT_SSID` has no default and must be set on the Pi.** It names the network `wifi_hotspot_seen` and `wifi_network` are measured against, and it is left out of the code because a public repo is no place for somebody's network name. Put it in `/etc/default/cool-eva` and restart:
-
-```bash
-echo 'WIFI_HOTSPOT_SSID=your-hotspot-name' | sudo tee -a /etc/default/cool-eva
-sudo systemctl restart cool-eva
-```
+Set **Settings → Connections → Hotspot name used for connection checks**, then explicitly restart. This identity has no default and does not configure network credentials. The poller always records the radio's own state; the hotspot-specific signals and fault dumps need this name. For network credentials use the current [manual installation route](manual-install.md); dashboard network management follows in the next phase.
 
 ⚠️ **Unset, the hotspot half is OFF and says so** — one `console.warn` at startup naming the variable and the file, `wifi_link_state` still recorded, the second `nmcli` call skipped, and no fault dump ever written. That is deliberate: a feature whose whole purpose is catching something that quietly stopped trying must not itself quietly stop trying.
 

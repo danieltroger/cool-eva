@@ -7,14 +7,12 @@ import * as units from "../lib/units.js";
 import * as theme from "../lib/theme.js";
 import { saveWaypoint } from "../lib/waypoint.js";
 import { armed } from "../lib/arming.js";
-import { CanRestartButton, UpdateButton } from "./pi-actions.js";
-import { ServiceMode, refreshServiceMode } from "./service-mode.js";
 import { FanControl, refreshFanStatus } from "./fan.js";
 import { TripStats } from "./trip-stats.js";
 import { WaypointList, collapseWaypointList } from "./waypoints.js";
 import { blankWaypointMemory, shouldRefreshOnWaypoint } from "../lib/waypoint-list.js";
 import { download, request } from "../lib/transport.js";
-import { BleSection } from "./ble-connect.js";
+import { openDestination, destination } from "../lib/destination.js";
 
 const { button, div, h2, h3 } = van.tags;
 
@@ -50,10 +48,9 @@ export function openSheet() {
   collapseWaypointList();
   void refreshStatus();
   void refreshFanStatus();
-  refreshServiceMode(() => sheetOpen.val);
 }
 
-const status = van.state(/** @type {StatusPayload | null} */ (null));
+export const status = van.state(/** @type {StatusPayload | null} */ (null));
 const waypointMessage = van.state("");
 const saving = van.state(false);
 
@@ -71,85 +68,30 @@ export function Sheet() {
         class: "sheet-body",
         onclick: (/** @type {Event} */ event) => event.stopPropagation(),
       },
-      // `sheet-heading` for the sheet's own sections, `sheet-title` for the
-      // subsections inside one of them. See style.css.
-      //
-      // ⚠️ h2 and h3, not divs, and that is the whole of what makes the hierarchy
-      // real: everything else about it is paint, and paint reaches exactly one kind
-      // of reader. Until this change there was not a single heading element anywhere
-      // in public/, so VoiceOver's rotor listed nothing and this sheet was one flat
-      // run of text to it. Levels start at 2 because the sheet is a section of a page
-      // rather than a document of its own, and nothing renders differently — see
-      // docs/dashboard-decisions.md §"The menu sheet".
-      // The two preferences this dashboard has, at the top of the sheet where they are
-      // found first rather than buried below the stats — neither is worth reaching for at
-      // speed, but when the sheet is open they are the controls most likely wanted, and
-      // the page flips under your thumb as you tap. Persisted in lib/theme.js, lib/units.js.
-      // First on the BLE copy of the dashboard, because until it is filled in nothing else
-      // on the sheet can reach the Pi. Renders nothing on the wifi-served one.
-      BleSection(),
+      div(
+        { class: "settings-row" },
+        h2({ class: "sheet-heading" }, "Menu"),
+        button(
+          {
+            class: "settings-button",
+            onclick: () => {
+              sheetOpen.val = false;
+            },
+          },
+          "Close"
+        )
+      ),
       h2({ class: "sheet-heading" }, "Screen"),
       ThemeToggle(),
       h2({ class: "sheet-heading" }, "Units"),
       UnitsToggle(),
-      h2({ class: "sheet-heading" }, "This session"),
-      TripStats(status),
-      // h3 inside "This session", not a sixth h2: the list is what the Waypoints tile
-      // above it counts, and a top-level heading would leave "This session" meaning the
-      // stats grid alone. The levels are the accessible hierarchy, not paint — see the
-      // note at the top of this file.
-      h3({ class: "sheet-title" }, "Waypoints"),
-      WaypointList(status),
-      // No subtitle here, deliberately. Three sections carrying a one-line "what can
-      // this do to the bike" was one sentence too many for a single bit of
-      // information: all four controls in this one are in the grey tier, which says the
-      // same thing without a sentence. The two that keep a subtitle are the two
-      // either side of the read/write boundary, where the bit is not obvious. The CAN
-      // restart and Update are grey-tier too — they act on the Pi, not on the bike —
-      // and they arm anyway, which is a separate channel from the tier (./pi-actions.js).
-      h2({ class: "sheet-heading" }, "Actions"),
-      WaypointButton(),
-      DownloadButton(),
-      CanRestartButton(),
-      UpdateButton(),
-      // The cooling fan brings its own heading, so it disappears completely on a Pi
-      // without FAN_ENABLED rather than leaving a heading over nothing. It sits between
-      // the grey Actions and Service mode because that is what it is: the only control on
-      // this sheet that MOVES something physical. (Narrowed in #129's pass: the two Pi
-      // actions above it act on the Pi, but nothing on the bike or in the garage turns.)
+      MenuLink("Settings", "settings"),
       FanControl(),
-      // Last of the doing-things sections and first of the reading-things ones,
-      // because it is the only SECTION here whose controls reach the bike's bus —
-      // worth a heading of its own rather than a third entry under "Actions". It
-      // said "the only control" until #129; the scope was right and the noun was
-      // not, since the sweep, the lifetime read and the write fold are all inside it.
-      h2({ class: "sheet-heading" }, "Service mode"),
-      // ⚠️ It used to end "…the section that can change it is further down", which was
-      // prose apologising for the layout — if a sentence has to tell you where the
-      // other section is, the boundary is not doing its job. The boundary now does it:
-      // the write section has a rule in the one colour nothing else on this sheet uses
-      // for a rule, and states its own risk under its own heading.
-      div({ class: "sheet-heading-note" }, "Reads the bike. Nothing in this part changes it."),
-      ServiceMode(),
-      // No "Link" section, deliberately. A per-source liveness readout was here in
-      // two shapes and neither could be read: a grid of sixteen fractions needed the
-      // reader to know sixteen normal denominators (BATTERY 17/46 is a HEALTHY parked
-      // bike), and collapsing it to "what is dark" cried wolf instead — `security`
-      // reads dark for most of the wall clock on measured captures where 0x480 is
-      // present, and three more groups are the same shape. Every exemption is
-      // defensible and the list only grows, which is the tell.
-      //
-      // The per-group numbers stay in /status. Measurements, and what left the
-      // payload: docs/dashboard-decisions.md §"There is no Link section".
-      button(
-        {
-          class: "sheet-close",
-          onclick: () => {
-            sheetOpen.val = false;
-          },
-        },
-        "Close"
-      )
+      WaypointButton(),
+      MenuLink("This session & waypoints", "session"),
+      DownloadButton(),
+      MenuLink("Bike information", "bike-information"),
+      MenuLink("Advanced service", "advanced-service")
     )
   );
 }
@@ -204,8 +146,13 @@ function DownloadButton() {
       {
         class: "action",
         onclick: () => {
+          if (status.rawVal && !status.rawVal.log.enabled) {
+            sheetOpen.val = false;
+            openDestination("settings", "recording", openSheet);
+            return;
+          }
           downloadProgress.val = "";
-          download("/dl", "cool-eva.celog", (receivedBytes, totalBytes) => {
+          downloadCurrentRide((receivedBytes, totalBytes) => {
             downloadProgress.val =
               totalBytes === null ? bytes(receivedBytes) : `${bytes(receivedBytes)} of ${bytes(totalBytes)}`;
           }).then(
@@ -225,7 +172,7 @@ function DownloadButton() {
           return "⬇  Download ride log";
         }
         if (!current.log.enabled) {
-          return "⚠  No log — public key missing";
+          return "Ride recording unavailable — Settings";
         }
         return `⬇  Download ride log (${bytes(current.log.bytes)})`;
       }
@@ -255,7 +202,7 @@ export function hasTroubleCodes() {
  * the phone's setting otherwise; the two explicit choices are never overruled by either,
  * which is what makes this the escape hatch if the bike's flag ever reads wrong.
  */
-function ThemeToggle() {
+export function ThemeToggle() {
   return div(
     { class: "toggle-row" },
     .../** @type {const} */ (["auto", "light", "dark"]).map(preference =>
@@ -275,7 +222,7 @@ function ThemeToggle() {
  * the charge screen's heatmap uses. `.on` tracks unitSystem, so it also reflects what
  * a reload restored from localStorage.
  */
-function UnitsToggle() {
+export function UnitsToggle() {
   return div(
     { class: "toggle-row" },
     .../** @type {const} */ (["metric", "imperial"]).map(system =>
@@ -315,7 +262,7 @@ export function installWaypointRefresh() {
     // lib/store.js §peek. ⚠️ A sheet left open THROUGH a service restart keeps the previous
     // boot's rows until it is reopened, exactly as the tile above it does and for the same
     // reason — views/trip-stats.js says it there.
-    const decision = shouldRefreshOnWaypoint(memory, counters, sheetOpen.rawVal);
+    const decision = shouldRefreshOnWaypoint(memory, counters, sheetOpen.rawVal || destination.rawVal === "session");
     memory = decision.memory;
     if (decision.refresh) {
       void refreshStatus();
@@ -331,4 +278,28 @@ export async function refreshStatus() {
   } catch (error) {
     console.warn("status: could not refresh", error);
   }
+}
+
+/** @param {string} title @param {import("../lib/destination.js").Destination} name */
+function MenuLink(title, name) {
+  return button(
+    {
+      class: "menu-link",
+      onclick: () => {
+        sheetOpen.val = false;
+        openDestination(name, "", openSheet);
+      },
+    },
+    title,
+    " →"
+  );
+}
+
+/** @param {(receivedBytes: number, totalBytes: number | null) => void} onProgress */
+async function downloadCurrentRide(onProgress) {
+  const response = await request("/recording/flush", { method: "POST", headers: { "X-Cool-Eva": "recording" } });
+  if (!response.ok) {
+    throw new Error("The current recording could not be sealed for download.");
+  }
+  return download("/dl", "cool-eva.celog", onProgress);
 }

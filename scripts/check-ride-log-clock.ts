@@ -423,17 +423,15 @@ async function checkTrustReachesTheDatabase(): Promise<void> {
   await closeEncryptedLog();
 
   const outputPath = join(workDir, "decrypted.db");
-  const decrypted = await execFileAsync(
-    process.execPath,
-    [
-      "--experimental-strip-types",
-      new URL("./decrypt-log.ts", import.meta.url).pathname,
-      directory,
-      "--out",
-      outputPath,
-    ],
-    { env: { ...process.env, RIDE_LOG_PRIVATE_KEY: privateKeyPath } }
-  );
+  const decrypted = await execFileAsync(process.execPath, [
+    "--experimental-strip-types",
+    new URL("./decrypt-log.ts", import.meta.url).pathname,
+    directory,
+    "--out",
+    outputPath,
+    "--private-key",
+    privateKeyPath,
+  ]);
   check(
     "it says out loud that some readings were sealed under a clock it cannot vouch for",
     decrypted.stderr.includes("could not be trusted") && decrypted.stderr.includes("never-synced")

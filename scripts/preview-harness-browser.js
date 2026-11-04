@@ -51,7 +51,9 @@ const __previewLocation = {
   protocol: "http:",
   host: "eva.local",
   pathname: "/",
-  search: "",
+  get search() {
+    return window.location.search;
+  },
   // ⚠️ The router reads location.hash and the annotated harness never ran the
   // router — it mounted views directly — so this was missing and the whole app
   // died on startRouting with "Cannot read properties of undefined". Delegated to
@@ -64,7 +66,7 @@ const __previewLocation = {
     window.location.hash = next;
   },
   get href() {
-    return `http://eva.local/${window.location.hash}`;
+    return window.location.href;
   },
   set href(target) {
     toast(`Preview — this would download ${target} from the Pi.`);

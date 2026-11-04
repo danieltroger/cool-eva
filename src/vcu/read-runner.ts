@@ -375,12 +375,12 @@ function checkBusFreeRefusals(
   }
   const channel = context.channel();
   if (!channel) {
-    return { ok: false, reason: "CAN is switched off on this Pi (CAN_ENABLED=0) — there is no bus to read" };
+    return { ok: false, reason: "CAN is unavailable — check Settings → Connections → Bike data / CAN adapter" };
   }
   if (!context.busIsActive) {
     return {
       ok: false,
-      reason: "the bus is listen-only (OBD_ENABLED=0) — nothing can be transmitted, so every read would time out",
+      reason: "the CAN channel cannot transmit — check the adapter and bus configuration",
     };
   }
   const verdict = readGate();

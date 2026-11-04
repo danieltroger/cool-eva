@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -67,7 +67,7 @@ export interface HeadlessPage {
  *
  * ⚠️ The binary is a PARAMETER rather than resolved here, so the caller that prints which
  * browser it is measuring in prints the one that actually ran. findBrowser() called twice
- * can answer twice — $CHROME_PATH set between the two, a PATH entry appearing — and a log
+ * can answer twice — a browser argument changed between the two, a PATH entry appearing — and a log
  * line naming a browser nothing opened is the kind of evidence this repo throws away.
  */
 export async function openHeadlessPage(viewport: Viewport, browserPath: string): Promise<HeadlessPage> {
@@ -112,16 +112,20 @@ export async function openHeadlessPage(viewport: Viewport, browserPath: string):
 
 /** The browser this would use, or null when there is none. Exported so a caller can say so. */
 export async function findBrowser(): Promise<string | null> {
-  const fromEnvironment = process.env.CHROME_PATH;
-  if (fromEnvironment !== undefined && fromEnvironment !== "") {
+  const browserIndex = process.argv.indexOf("--browser");
+  const requestedBrowser = browserIndex === -1 ? undefined : process.argv[browserIndex + 1];
+  if (browserIndex !== -1 && (!requestedBrowser || requestedBrowser.startsWith("--"))) {
+    throw new Error("--browser needs an executable path.");
+  }
+  if (requestedBrowser !== undefined && requestedBrowser !== "") {
     // Named explicitly, so a broken path is an error rather than a reason to look elsewhere:
     // falling back here would measure in a browser nobody asked for.
     try {
-      await access(fromEnvironment, constants.X_OK);
+      await access(requestedBrowser, constants.X_OK);
     } catch (error) {
-      throw new Error(`CHROME_PATH names ${fromEnvironment}, which cannot be run: ${String(error)}`);
+      throw new Error(`--browser names ${requestedBrowser}, which cannot be run: ${String(error)}`);
     }
-    return fromEnvironment;
+    return requestedBrowser;
   }
   for (const candidate of BROWSER_CANDIDATES) {
     const resolved = await resolveExecutable(candidate);
@@ -157,6 +161,20 @@ export async function evaluateOnPage(page: HeadlessPage, expression: string): Pr
     throw new Error(`Runtime.evaluate answered without a result: ${JSON.stringify(reply)}`);
   }
   return (result as Record<string, unknown>).value;
+}
+
+/** A real viewport PNG for review evidence, using this runner's isolated browser. */
+export async function screenshotPage(page: HeadlessPage, path: string): Promise<void> {
+  const reply = await sendCommand(
+    page.connection,
+    "Page.captureScreenshot",
+    { format: "png", captureBeyondViewport: false },
+    page.sessionId
+  );
+  if (typeof reply.data !== "string") {
+    throw new Error("The browser returned no screenshot bytes.");
+  }
+  await writeFile(path, Buffer.from(reply.data, "base64"));
 }
 
 /**
