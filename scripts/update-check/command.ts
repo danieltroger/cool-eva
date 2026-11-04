@@ -73,7 +73,8 @@ async function download(root: string, arguments_: string[]): Promise<void> {
       });
       if (!response.ok) {
         process.exitCode = 22;
-      } else {
+      }
+      if (response.ok || arguments_.includes("--fail-with-body")) {
         process.stdout.write(await response.text());
       }
       return;

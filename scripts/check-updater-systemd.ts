@@ -119,7 +119,11 @@ export async function checkUpdaterSystemd(): Promise<void> {
       await control("start", updateService);
       assert.equal((await readState(fixture)).current, "old");
       assert.equal((await readState(fixture)).pending, null);
-      assert.match((await readUpdateStatus(join(fixture.data, "updater"))).message, /Park and try again/);
+      const refusalMessage = (await readUpdateStatus(join(fixture.data, "updater"))).message;
+      assert.match(refusalMessage, refusal === "moving" ? /Park and try again/ : /Busy: synthetic service write/);
+      if (refusal === "busy") {
+        assert(!refusalMessage.includes("Park and try again"));
+      }
       assert.equal(
         (await execFileAsync("systemctl", ["show", service, "--property=InvocationID", "--value"])).stdout,
         before

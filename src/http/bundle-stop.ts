@@ -1,5 +1,11 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { readSettingsBody, reserveSettingsRestart, type SettingsHttpContext } from "./settings.ts";
+import {
+  readSettingsBody,
+  reserveSettingsRestart,
+  validateRestartBluetoothKey,
+  type SettingsHttpContext,
+} from "./settings.ts";
+import { RestartMotionError } from "../settings/restart.ts";
 
 export async function handleBundleStop(
   request: IncomingMessage,
@@ -8,6 +14,7 @@ export async function handleBundleStop(
 ): Promise<void> {
   if (
     request.method !== "POST" ||
+    Object.hasOwn(request.headers, "x-cool-eva-tunnel") ||
     request.headers["x-cool-eva"] !== "update" ||
     !/^application\/json(?:;|$)/i.test(String(request.headers["content-type"] ?? "")) ||
     !["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(request.socket.remoteAddress ?? "")
@@ -29,17 +36,21 @@ export async function handleBundleStop(
       ? { body: body as Record<string, unknown>, bluetooth: false }
       : stopIntents.get(settings);
     if (!intent) {
-      throw new Error("Read settings and press Update again.");
+      throw new Error("The app restarted or no update was confirmed. Read settings and press Update again.");
     }
-    request.headers["x-cool-eva-tunnel"] = intent.bluetooth ? "1" : undefined;
+    validateRestartBluetoothKey(intent.body, settings, intent.bluetooth);
     if (!(await reserveSettingsRestart(request, intent.body, settings))) {
-      throw new Error("The process changed or another restart is reserved.");
+      throw new Error(
+        intent.body.expectedGeneration !== settings.restart.generation
+          ? "The app restarted. Read settings and press Update again."
+          : "Another restart is reserved. Try again when it finishes."
+      );
     }
     respond(response, 200, true, "Stop reserved until SIGTERM.");
   } catch (error) {
     const reason = error instanceof Error ? error.message : "The stop could not be reserved.";
     console.warn("update: stop refused:", reason);
-    respond(response, 409, false, `Park and try again. ${reason}`);
+    respond(response, 409, false, error instanceof RestartMotionError ? `Park and try again. ${reason}` : reason);
   }
 }
 

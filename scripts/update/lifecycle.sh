@@ -19,8 +19,8 @@ apply_update() {
     download_release
     archive_edits
     if ! reserve_stop; then
-        record_status false false 'Park and try again. No stop was requested; the downloaded release is cached.'
-        note 'Park and try again. No stop was requested; the downloaded release is cached.'
+        record_status false false "$STOP_REFUSAL No stop was requested; the downloaded release is cached."
+        note "$STOP_REFUSAL No stop was requested; the downloaded release is cached."
         return 0
     fi
     systemctl stop "$SERVICE"
@@ -49,10 +49,17 @@ apply_update() {
 }
 
 reserve_stop() {
-    curl --fail --silent --show-error --max-time 5 --request POST \
+    STOP_REFUSAL='Cannot ask the app to stop. Check its connection and try again.'
+    if curl --fail-with-body --silent --show-error --max-time 5 --request POST \
         --header 'X-Cool-Eva: update' --header 'Content-Type: application/json' \
         --data "$STOP_REQUEST" "${HEALTH_URL%/release-health}/update/reserve-stop" > "$PRIVATE/health.json" &&
-        jq -e '.ok == true' "$PRIVATE/health.json" >/dev/null
+        jq -e '.ok == true' "$PRIVATE/health.json" >/dev/null; then return 0; fi
+    if refusal_reason=$(jq -er '.message | select(type == "string" and length > 0 and length <= 1000)' "$PRIVATE/health.json" 2>/dev/null); then
+        STOP_REFUSAL=$refusal_reason
+    else
+        note 'The app did not supply a readable stop refusal; using the connection message.'
+    fi
+    return 1
 }
 
 trial_healthy() {

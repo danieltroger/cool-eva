@@ -202,22 +202,30 @@ export async function reserveSettingsRestart(
     throw new Error("Reload settings before restarting.");
   }
   if (body.expectedGeneration !== context.restart.generation) return false;
-  const view = settingsReply(context);
   const fromBluetooth =
     req.headers["x-cool-eva-tunnel"] === "1" &&
     ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress ?? "");
-  if (
-    fromBluetooth &&
-    view.saved.bluetoothCodeId !== view.active.bluetoothCodeId &&
-    (!view.saved.bluetoothCodeId || body.bluetoothCodeId !== view.saved.bluetoothCodeId)
-  ) {
-    throw new Error("Save this Pi’s pending Bluetooth key on this phone, or reconnect over Wi-Fi, before restarting.");
-  }
+  validateRestartBluetoothKey(body, context, fromBluetooth);
   return context.restart.reserve(
     body.expectedGeneration,
     body.revision === null ? null : Number(body.revision),
     operation
   );
+}
+
+export function validateRestartBluetoothKey(
+  body: Record<string, unknown>,
+  context: SettingsHttpContext,
+  fromBluetooth: boolean
+): void {
+  if (!fromBluetooth) return;
+  const view = settingsReply(context);
+  if (
+    view.saved.bluetoothCodeId !== view.active.bluetoothCodeId &&
+    (!view.saved.bluetoothCodeId || body.bluetoothCodeId !== view.saved.bluetoothCodeId)
+  ) {
+    throw new Error("Save this Pi’s pending Bluetooth key on this phone, or reconnect over Wi-Fi, before restarting.");
+  }
 }
 
 function respond(res: ServerResponse, status: number, value: unknown): void {

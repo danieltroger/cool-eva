@@ -49,9 +49,16 @@ export async function checkBundleStop(): Promise<void> {
     scanHubs: async () => [],
     drainBluetooth: async () => {},
   };
+  let stopUnavailable = false;
   const server = createServer(async (request, response) => {
     if (request.url === "/update/reserve-stop") {
+      if (stopUnavailable) {
+        response.writeHead(503).end("synthetic unavailable endpoint");
+        return;
+      }
+      const originalHeaders = { ...request.headers };
       await handleBundleStop(request, response, context);
+      assert.deepEqual(request.headers, originalHeaders, "the stop handler must not rewrite tunnel provenance");
     } else if (request.url === "/settings") {
       response.end(JSON.stringify(settingsReply(context)));
     } else {
@@ -98,6 +105,9 @@ export async function checkBundleStop(): Promise<void> {
         "a refused update must reuse its download"
       );
       assert.equal(busHeldBy(), "synthetic service write during download");
+      const refusal = (await readUpdateStatus(privateDirectory)).message;
+      assert.match(refusal, /Busy: synthetic service write during download/);
+      assert(!refusal.includes("Park and try again"));
     } finally {
       held.lease.release();
     }
@@ -117,7 +127,8 @@ export async function checkBundleStop(): Promise<void> {
     await writeFile(trace, "");
     await invokeUpdater(fixture, "update");
     assert(!/systemctl stop/.test(await readFile(trace, "utf8")), "the originally confirmed revision must still match");
-    assert.match((await readUpdateStatus(privateDirectory)).message, /Park and try again/);
+    assert.match((await readUpdateStatus(privateDirectory)).message, /Settings changed; reload before restarting/);
+    assert(!(await readUpdateStatus(privateDirectory)).message.includes("Park and try again"));
 
     const runningState = JSON.parse(await readFile(fixture.state, "utf8"));
     runningState.status.running = true;
@@ -136,9 +147,19 @@ export async function checkBundleStop(): Promise<void> {
     const missingIntent = recordingResponse();
     await handleBundleStop(stopRequest(), missingIntent.res, replacement);
     assert.equal(missingIntent.statusCode, 409);
+    assert.match(missingIntent.body, /app restarted/);
+    assert(!missingIntent.body.includes("Park and try again"));
+    context = replacement;
+    await writeFile(trace, "");
+    await invokeUpdater(fixture, "update");
+    assert.match((await readUpdateStatus(privateDirectory)).message, /app restarted/);
+    assert(!(await readUpdateStatus(privateDirectory)).message.includes("Park and try again"));
+    assert(!/systemctl stop/.test(await readFile(trace, "utf8")));
+    context = { ...replacement };
     const oldGeneration = recordingResponse();
     await handleBundleStop(stopRequest({ expectedGeneration: "old-process", revision: 1 }), oldGeneration.res, context);
     assert.equal(oldGeneration.statusCode, 409);
+    assert.match(oldGeneration.body, /app restarted/);
     assert.equal(busHeldBy(), null);
 
     // A Bluetooth-key change during download still requires acknowledgement on that phone.
@@ -148,9 +169,21 @@ export async function checkBundleStop(): Promise<void> {
     await handleBundleStop(stopRequest({}, "::ffff:127.0.0.1"), bluetooth.res, context);
     assert.equal(bluetooth.statusCode, 409);
     assert.match(bluetooth.body, /Bluetooth key/);
+    await writeFile(trace, "");
+    await invokeUpdater(fixture, "update");
+    assert.match((await readUpdateStatus(privateDirectory)).message, /pending Bluetooth key/);
+    assert(!(await readUpdateStatus(privateDirectory)).message.includes("Park and try again"));
+    assert(!/systemctl stop/.test(await readFile(trace, "utf8")));
     assert.equal(busHeldBy(), null);
 
     await queueIntent(context, privateDirectory);
+    stopUnavailable = true;
+    await writeFile(trace, "");
+    await invokeUpdater(fixture, "update");
+    assert.match((await readUpdateStatus(privateDirectory)).message, /Cannot ask the app to stop/);
+    assert(!(await readUpdateStatus(privateDirectory)).message.includes("Park and try again"));
+    assert(!/systemctl stop/.test(await readFile(trace, "utf8")));
+    stopUnavailable = false;
     // A corrupt cache is not trusted, even if its byte count still matches.
     const corrupted = await readFile(cache);
     corrupted[0] ^= 1;
@@ -217,6 +250,40 @@ async function queueIntent(context: SettingsHttpContext, directory: string, blue
 }
 
 async function checkStopGuards(context: SettingsHttpContext): Promise<void> {
+  for (const marker of ["1", "0", ""]) {
+    const request = stopRequest({
+      expectedGeneration: context.restart.generation,
+      revision: settingsReply(context).revision,
+    });
+    request.headers["x-cool-eva-tunnel"] = marker;
+    const response = recordingResponse();
+    await handleBundleStop(request, response.res, context);
+    assert.equal(
+      response.statusCode,
+      403,
+      "any tunnel marker must be rejected, even with a valid explicit confirmation"
+    );
+    assert.equal(request.headers["x-cool-eva-tunnel"], marker, "the original tunnel marker must survive rejection");
+    assert.equal(busHeldBy(), null);
+  }
+  let motionChecks = 0;
+  const racingRestart = createSettingsRestart({
+    store: context.runtime.store,
+    motionBlockers: () => (++motionChecks === 1 ? [] : ["synthetic movement during reservation"]),
+  });
+  try {
+    const moving = recordingResponse();
+    await handleBundleStop(
+      stopRequest({ expectedGeneration: racingRestart.generation, revision: settingsReply(context).revision }),
+      moving.res,
+      { ...context, restart: racingRestart }
+    );
+    assert.equal(moving.statusCode, 409);
+    assert.match(moving.body, /Park and try again/);
+    assert.equal(busHeldBy(), null);
+  } finally {
+    await racingRestart.close();
+  }
   for (const request of [
     stopRequest({}, "192.0.2.10"),
     stopRequest({}, "::ffff:192.0.2.10"),

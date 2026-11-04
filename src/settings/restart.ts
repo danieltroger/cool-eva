@@ -37,7 +37,7 @@ export function createSettingsRestart(options: RestartOptions): SettingsRestart 
       try {
         const blockers = options.motionBlockers();
         if (blockers.length > 0) {
-          throw new Error(`Wait until the motorcycle is parked: ${blockers.join("; ")}.`);
+          throw new RestartMotionError(`Wait until the motorcycle is parked: ${blockers.join("; ")}.`);
         }
         const reservation = await options.store.reserve(revision);
         releaseSettings = reservation.release;
@@ -47,7 +47,7 @@ export function createSettingsRestart(options: RestartOptions): SettingsRestart 
         }
         lease = admission.lease;
         if (options.motionBlockers().length > 0) {
-          throw new Error("The motorcycle started moving. Park it before restarting.");
+          throw new RestartMotionError("The motorcycle started moving. Park it before restarting.");
         }
         status = { state: "reserved", message: "Restart reserved. Readings and recording will pause." };
         delivering = false;
@@ -114,6 +114,10 @@ export function createSettingsRestart(options: RestartOptions): SettingsRestart 
       await release();
     },
   };
+}
+
+export class RestartMotionError extends Error {
+  name = "RestartMotionError";
 }
 
 export interface RestartOptions {
