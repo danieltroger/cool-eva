@@ -23,7 +23,7 @@ export function HotspotCheckName() {
     TITLE,
     ownership === "network"
       ? "Set by your saved Phone hotspot network"
-      : "Read saved Wi-Fi networks before editing this name.",
+      : "Open Wi-Fi networks to read saved profiles first.",
     div(
       { class: "settings-form-fields" },
       input({

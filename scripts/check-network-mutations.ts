@@ -285,5 +285,11 @@ const MUTATIONS: Mutation[] = [
     before: '["restoring", "confirming", "promoting", "identity", "retiring"].includes(phase)',
     after: "false",
   },
+  {
+    name: "faulted-live-trial-not-incomplete",
+    file: "public/lib/network-recovery.js",
+    before: '["trying", "waiting"].includes(phase) && !!current?.message',
+    after: "false",
+  },
 ];
 await checkNetworkMutations();

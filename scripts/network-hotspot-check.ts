@@ -60,7 +60,7 @@ export async function checkNetworkHotspotOwnership(): Promise<void> {
         assert.equal(listings, before, "settings readback uses existing profile observations");
         const refused = await server.save("Synthetic unknown owner");
         assert.equal(refused.status, 409);
-        assert.match(await refused.text(), /Read saved Wi-Fi networks/);
+        assert.match(await refused.text(), /Open Wi-Fi networks to read saved profiles first/);
       } finally {
         await server.close();
       }

@@ -108,7 +108,7 @@ export async function handleSettingsEndpoint(
           throw new Error("Set by your saved Phone hotspot network. Change it under Wi-Fi networks.");
         }
         if (ownership === "unknown") {
-          throw new Error("Read saved Wi-Fi networks before changing the connection-check name.");
+          throw new Error("Open Wi-Fi networks to read saved profiles first.");
         }
       }
       if (changes.dashboardBluetoothSecret && !validBleSecret(changes.dashboardBluetoothSecret)) {

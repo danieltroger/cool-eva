@@ -129,7 +129,7 @@ window.fetch = function previewFetch(input, init) {
             message:
               SETTINGS.hotspotNameOwnership === "network"
                 ? "Set by your saved Phone hotspot network. Change it under Wi-Fi networks."
-                : "Read saved Wi-Fi networks before changing the connection-check name.",
+                : "Open Wi-Fi networks to read saved profiles first.",
           },
           409
         );

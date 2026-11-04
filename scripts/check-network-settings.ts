@@ -335,7 +335,7 @@ async function checkNetworks(): Promise<void> {
   await checkNetworkRecovery();
   await checkNetworkHotspotOwnership();
   console.log(
-    "Wi-Fi network settings: 40 scenarios and 4 startup/recovery fault cases passed (no radio/device operations)."
+    "Wi-Fi network settings: 42 scenarios and 4 startup/recovery fault cases passed (no radio/device operations)."
   );
 }
 

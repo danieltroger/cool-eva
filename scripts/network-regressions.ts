@@ -16,6 +16,30 @@ import {
 } from "./network-check-fixtures.ts";
 
 export async function checkNetworkRegressions(): Promise<void> {
+  for (const phase of ["trying", "waiting"] as const) {
+    await scenario(`A fault before recovery leaves ${phase} classified incomplete`, async fixture => {
+      await fixture.networks.save(identity(fixture.networks), draft(), true);
+      if (phase === "waiting") {
+        fixture.backend.accessPoints.set("Synthetic replacement", { password: PASSWORD, readyAt: 0 });
+      }
+      await fixture.networks.trial(identity(fixture.networks));
+      await fixture.networks.tick();
+      if (phase === "waiting") {
+        await fixture.networks.tick();
+      }
+      assert.equal(fixture.networks.state().change!.phase, phase);
+      assert.equal(networkRecoveryIncomplete(await fixture.networks.view(BLE)), false);
+      fixture.journalCut = { phase: "restoring", after: false };
+      await fixture.restart(false);
+      const faulted = await fixture.networks.view(BLE);
+      assert.equal(faulted.change!.phase, phase);
+      assert.match(faulted.message, /Recovery incomplete.*next power-on is unconfirmed/);
+      assert.equal(networkRecoveryIncomplete(faulted), true);
+      await fixture.networks.previous(identity(fixture.networks));
+      assert.equal(fixture.networks.state().change!.phase, "restored");
+      assert.equal(fixture.networks.fault, "");
+    });
+  }
   await scenario("Installer repair registers the replacement hotspot identity without a trial", async fixture => {
     await fixture.networks.persist({ hotspotUuid: HOME.uuid });
     await fixture.settings.update(fixture.networks.settingsRevision()!, { phoneHotspotSsid: "Synthetic old name" });
