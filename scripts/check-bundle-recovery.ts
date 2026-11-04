@@ -184,6 +184,18 @@ async function checkTerminalFailure(fixture: UpdateFixture): Promise<void> {
   assert.equal((await readState(fixture)).current, "new");
   assert.equal((await readState(fixture)).previous, "old");
   await writeFile(join(fixture.root, "SystemState.txt"), "degraded");
+  for (const job of ["stop", "restart"]) {
+    await writeFile(join(fixture.root, "jobs.txt"), `12 synthetic-cool-eva.service ${job} running\n`);
+    assert.match(await invokeUpdater(fixture, "failure"), /stop job is pending/);
+    assert.equal((await readState(fixture)).current, "new");
+    assert.equal((await readState(fixture)).previous, "old");
+  }
+  await writeFile(join(fixture.root, "jobs.txt"), "");
+  await writeFile(join(fixture.root, "Result.txt"), "timeout");
+  assert.match(await invokeUpdater(fixture, "failure"), /forced stop/);
+  assert.equal((await readState(fixture)).current, "new", "a manual stop killed after its timeout cannot roll back");
+  assert.equal((await readState(fixture)).previous, "old");
+  await writeFile(join(fixture.root, "Result.txt"), "exit-code");
   await writeFile(join(fixture.root, "NRestarts.txt"), "0");
   assert.match(await invokeUpdater(fixture, "failure"), /Manual restart limit/);
   assert.equal((await readState(fixture)).current, "new");

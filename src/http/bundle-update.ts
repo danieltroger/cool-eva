@@ -5,6 +5,7 @@ import type { UpdateReply } from "./update.ts";
 import { isBundleRuntime, readReleaseMetadata } from "../release/metadata.ts";
 import { readUpdateStatus } from "../release/update-status.ts";
 import { reserveSettingsRestart, settingsReply, type SettingsHttpContext } from "./settings.ts";
+import { rememberBundleStop } from "./bundle-stop.ts";
 
 export async function tryBundleUpdate(
   res: ServerResponse,
@@ -56,7 +57,14 @@ export async function handleBundleUpdate(
         if (!stillReserved()) {
           throw new Error("The restart reservation expired. Read settings and try again.");
         }
-        await queue();
+        // An already running download retains its original confirmed generation and revision.
+        const undo = previous.running ? undefined : rememberBundleStop(settings, request, body);
+        try {
+          await queue();
+        } catch (error) {
+          undo?.();
+          throw error;
+        }
       });
       checkingReservation = false;
       if (!reserved) {

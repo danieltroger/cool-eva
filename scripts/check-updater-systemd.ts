@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createServer } from "node:net";
-import { mkdir, mkdtemp, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import { monotonicNow, since } from "../src/monotonic.ts";
 import { injectRecoveryFault, RECOVERY_FAULTS } from "./update-check/availability.ts";
+import { readUpdateStatus } from "../src/release/update-status.ts";
 import {
   createUpdateFixture,
   fixtureEnvironment,
@@ -54,6 +55,7 @@ export async function checkUpdaterSystemd(): Promise<void> {
       .replace("OnFailure=cool-eva-rollback.service", `OnFailure=${rollbackService}`)
       .replace("WorkingDirectory=/opt/cool-eva", `WorkingDirectory=${fixture.code}\n${unitEnvironment}`)
       .replace("RuntimeDirectory=cool-eva", `RuntimeDirectory=cool-eva-test-${process.pid}`)
+      .replace("RestartSec=5", "RestartSec=5\nTimeoutStopSec=2")
       .replace(
         "ExecStartPre=-/usr/local/libexec/cool-eva-update recover",
         `ExecStartPre=-${updaterCommand} recover --config ${fixture.configuration}`
@@ -109,6 +111,27 @@ export async function checkUpdaterSystemd(): Promise<void> {
       await rename(absentDispatcher, dispatcher);
     }
     const quietTag = await publishFixtureRelease(fixture, "quiet-release", "b".repeat(40));
+    const appUrl = `http://127.0.0.1:${port}`;
+    await fetch(`${appUrl}/test/confirm-update`);
+    for (const refusal of ["moving", "busy"]) {
+      const before = (await execFileAsync("systemctl", ["show", service, "--property=InvocationID", "--value"])).stdout;
+      await fetch(`${appUrl}/test/${refusal}`);
+      await control("start", updateService);
+      assert.equal((await readState(fixture)).current, "old");
+      assert.equal((await readState(fixture)).pending, null);
+      assert.match((await readUpdateStatus(join(fixture.data, "updater"))).message, /Park and try again/);
+      assert.equal(
+        (await execFileAsync("systemctl", ["show", service, "--property=InvocationID", "--value"])).stdout,
+        before
+      );
+      assert(await healthy(configuration.healthUrl));
+      assert((await stat(join(fixture.data, "updater/cached-bundle.tar.zst"))).size > 0);
+      await fetch(`${appUrl}/test/parked`);
+      console.log(
+        `real systemd: stop-time ${refusal} refusal left the same app running and cached the verified bundle`
+      );
+    }
+    await fetch(`${appUrl}/test/confirm-update`);
     await control("start", "--no-block", updateService);
     await waitFor(async () => (await readState(fixture)).pending !== null, 20_000, "interrupted trial intent");
     await waitFor(
@@ -124,6 +147,7 @@ export async function checkUpdaterSystemd(): Promise<void> {
     await waitFor(async () => await healthy(configuration.healthUrl), 15_000, "app after killed updater");
     await control("reset-failed", updateService);
     console.log("real systemd: killing the updater mid-trial repaired the old release without rejecting the candidate");
+    await fetch(`${appUrl}/test/confirm-update`);
     const trialStarted = monotonicNow();
     await control("start", "--no-block", updateService);
     await waitFor(async () => (await readState(fixture)).pending !== null, 20_000, "trial intent");
@@ -170,6 +194,40 @@ export async function checkUpdaterSystemd(): Promise<void> {
     console.log("real systemd: four manual restarts restarted CURRENT without consuming its rollback target");
 
     await control("reset-failed", service);
+    await fetch(`${appUrl}/test/crash-once`);
+    await waitFor(
+      async () =>
+        (await execFileAsync("systemctl", ["show", service, "--property=NRestarts", "--value"])).stdout.trim() ===
+          "1" && (await healthy(configuration.healthUrl)),
+      15_000,
+      "automatic restart before slow manual stop"
+    );
+    assert.equal(
+      (await execFileAsync("systemctl", ["show", service, "--property=NRestarts", "--value"])).stdout.trim(),
+      "1"
+    );
+    await fetch(`${appUrl}/test/hold-stop`);
+    await control("stop", "--no-block", service);
+    await waitFor(
+      async () =>
+        (await execFileAsync("systemctl", ["show", service, "--property=SubState", "--value"])).stdout.trim() ===
+        "failed",
+      10_000,
+      "manual stop SIGKILL timeout"
+    );
+    await control("start", rollbackService);
+    assert.equal((await readState(fixture)).current, promoted.current);
+    assert.equal((await readState(fixture)).previous, "old");
+    assert.equal(
+      (await execFileAsync("systemctl", ["show", service, "--property=Result", "--value"])).stdout.trim(),
+      "timeout"
+    );
+    console.log("real systemd: manual stop SIGKILL timeout did not roll back despite a previous automatic restart");
+    await control("reset-failed", service);
+    await control("start", service);
+    await waitFor(async () => await healthy(configuration.healthUrl), 15_000, "app after slow manual stop");
+
+    await control("reset-failed", service);
     const response = await fetch(`http://127.0.0.1:${port}/replay-can`, { method: "POST" });
     assert.equal(response.status, 200);
     await waitFor(async () => (await readState(fixture)).current === "old", 45_000, "CAN crash-loop rollback");
@@ -190,6 +248,7 @@ export async function checkUpdaterSystemd(): Promise<void> {
 
     // The next good update must remain possible, with the old rollback consumed.
     await publishFixtureRelease(fixture, "next-good", "c".repeat(40));
+    await fetch(`${appUrl}/test/confirm-update`);
     await control("start", "--no-block", updateService);
     await waitFor(async () => (await readState(fixture)).pending !== null, 20_000, "next update trial");
     await waitFor(

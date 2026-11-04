@@ -23,6 +23,7 @@ import { handleCanRestartEndpoint } from "./http/can-restart.ts";
 import { handleUpdateEndpoint } from "./http/update.ts";
 import { handleReleaseHealth } from "./http/release-health.ts";
 import { handleUpdateStatus } from "./http/bundle-update.ts";
+import { handleBundleStop } from "./http/bundle-stop.ts";
 import { managedCodeRoot, readReleaseMetadata } from "./release/metadata.ts";
 import { handleDtcTableEndpoint } from "./http/dtc-table.ts";
 import { handleFaultInfokeysEndpoint } from "./http/fault-infokeys.ts";
@@ -577,6 +578,10 @@ const server = createServer(async (req, res) => {
   }
   if (url.pathname === "/release-health") {
     await handleReleaseHealth(res, ROOT);
+    return;
+  }
+  if (url.pathname === "/update/reserve-stop") {
+    await handleBundleStop(req, res, settingsHttp);
     return;
   }
   if (url.pathname === "/update-status") {

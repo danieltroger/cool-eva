@@ -60,7 +60,17 @@ async function download(root: string, arguments_: string[]): Promise<void> {
   const url = arguments_.at(-1)!;
   if (url.startsWith("http://127.0.0.1")) {
     if (process.env.UPDATE_FIXTURE_REAL_HEALTH === "1") {
-      const response = await fetch(url, { signal: AbortSignal.timeout(3_000) });
+      const dataIndex = arguments_.indexOf("--data");
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(5_000),
+        ...(dataIndex >= 0
+          ? {
+              method: "POST",
+              headers: { "X-Cool-Eva": "update", "Content-Type": "application/json" },
+              body: arguments_[dataIndex + 1],
+            }
+          : {}),
+      });
       if (!response.ok) {
         process.exitCode = 22;
       } else {
@@ -68,7 +78,11 @@ async function download(root: string, arguments_: string[]): Promise<void> {
       }
       return;
     }
-    const output = await readFile(join(root, "health.txt"), "utf8");
+    const output = url.endsWith("/update/reserve-stop")
+      ? await readFile(join(root, "stop-admission.txt"), "utf8")
+      : url.endsWith("/settings")
+        ? JSON.stringify({ processGeneration: "synthetic-process", revision: 0 })
+        : await readFile(join(root, "health.txt"), "utf8");
     if (output === "fail") {
       process.exitCode = 22;
     } else {

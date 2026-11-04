@@ -61,7 +61,7 @@ export async function handleSettingsEndpoint(
     if (path === "/settings/apply") {
       const fromBluetooth =
         req.headers["x-cool-eva-tunnel"] === "1" &&
-        (req.socket.remoteAddress === "127.0.0.1" || req.socket.remoteAddress === "::1");
+        ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress ?? "");
       const reserved = await reserveSettingsRestart(req, body, context);
       let finished: () => void = () => {};
       const delivery = new Promise<void>(resolve => {
@@ -204,7 +204,8 @@ export async function reserveSettingsRestart(
   if (body.expectedGeneration !== context.restart.generation) return false;
   const view = settingsReply(context);
   const fromBluetooth =
-    req.headers["x-cool-eva-tunnel"] === "1" && ["127.0.0.1", "::1"].includes(req.socket.remoteAddress ?? "");
+    req.headers["x-cool-eva-tunnel"] === "1" &&
+    ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress ?? "");
   if (
     fromBluetooth &&
     view.saved.bluetoothCodeId !== view.active.bluetoothCodeId &&

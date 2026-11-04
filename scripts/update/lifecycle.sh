@@ -10,8 +10,19 @@ apply_update() {
     prune_edit_archives
     prune_settings_snapshots
     prune_releases
+    STOP_REQUEST='{}'
+    if [ -n "$REQUESTED_TAG" ]; then
+        # A privileged branch install confirms the running process before its download too.
+        curl --fail --silent --show-error --max-time 5 "${HEALTH_URL%/release-health}/settings" > "$PRIVATE/health.json" || fail 'Cannot read settings before the branch update.'
+        STOP_REQUEST=$(jq -ec '{expectedGeneration:.processGeneration, revision:.revision}' "$PRIVATE/health.json")
+    fi
     download_release
     archive_edits
+    if ! reserve_stop; then
+        record_status false false 'Park and try again. No stop was requested; the downloaded release is cached.'
+        note 'Park and try again. No stop was requested; the downloaded release is cached.'
+        return 0
+    fi
     systemctl stop "$SERVICE"
     snapshot_settings
     # Record intent before switching. Boot recovery always chooses this explicit rollback target.
@@ -35,6 +46,13 @@ apply_update() {
         rollback_to "$CURRENT" "$TARGET" "$SNAPSHOT" trial health-check-failed true
         fail 'The new release failed its health check. The previous release is running.'
     fi
+}
+
+reserve_stop() {
+    curl --fail --silent --show-error --max-time 5 --request POST \
+        --header 'X-Cool-Eva: update' --header 'Content-Type: application/json' \
+        --data "$STOP_REQUEST" "${HEALTH_URL%/release-health}/update/reserve-stop" > "$PRIVATE/health.json" &&
+        jq -e '.ok == true' "$PRIVATE/health.json" >/dev/null
 }
 
 trial_healthy() {
@@ -144,6 +162,17 @@ handle_failure() {
 terminal_failure_ready() {
     failure_substate=$(systemctl show "$SERVICE" --property=SubState --value) || fail 'Cannot determine the failed service state.'
     [ "$failure_substate" = failed ] || return 1
+    pending_jobs=$(systemctl list-jobs --no-legend --no-pager --plain "$SERVICE") || fail 'Cannot determine pending service jobs.'
+    if printf '%s\n' "$pending_jobs" | awk -v service="$SERVICE" '$2 == service && ($3 == "stop" || $3 == "restart") {found=1} END {exit !found}'; then
+        note 'A stop job is pending; leaving the current release selected.'
+        return 1
+    fi
+    # The stop job may already be gone when OnFailure obtains the shared update lock.
+    failure_result=$(systemctl show "$SERVICE" --property=Result --value) || fail 'Cannot determine the service failure result.'
+    if [ "$failure_result" = timeout ]; then
+        note 'The service timed out; leaving the current release selected instead of treating a forced stop as a crash loop.'
+        return 1
+    fi
     if system_state=$(systemctl is-system-running); then
         :
     else

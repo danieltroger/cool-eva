@@ -75,6 +75,11 @@ const CHECKS: SelfCheck[] = [
       "bundle queueing through the shared settings revision and bus restart reservation, busy/motion/Bluetooth handover refusal, duplicate admission and cleanup without a second app restart",
   },
   {
+    script: "scripts/check-bundle-stop.ts",
+    covers:
+      "stop-time localhost shared reservation; movement, busy bus, stale revision and Bluetooth-key refusal leave the app running; verified download reuse and reservation held through SIGTERM",
+  },
+  {
     script: "scripts/check-bundle-boundaries.ts",
     covers:
       "valid-checksum archive link/traversal refusals and configured data paths blocking release cleanup before any data deletion",

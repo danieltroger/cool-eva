@@ -59,6 +59,8 @@ export async function createUpdateFixture(parent: string): Promise<UpdateFixture
   await writeFile(join(root, "SystemState.txt"), "running");
   await writeFile(join(root, "os-packages.txt"), "bluez\t1\nsystemd\t1\n");
   await writeFile(join(root, "NRestarts.txt"), "3");
+  await writeFile(join(root, "jobs.txt"), "");
+  await writeFile(join(root, "stop-admission.txt"), JSON.stringify({ ok: true }));
   await writeFile(join(root, "clock.txt"), "10");
   await writeFile(join(root, "commands.txt"), "");
   for (const command of [
@@ -114,6 +116,7 @@ export function commandWrapper(command: string): string {
   if (command === "systemctl")
     return (
       trace +
+      'if [ "$1" = list-jobs ]; then cat "$UPDATE_FIXTURE/jobs.txt"; exit; fi\n' +
       'if [ "$1" = is-system-running ]; then state=$(cat "$UPDATE_FIXTURE/SystemState.txt"); printf "%s\\n" "$state"; [ "$state" = running ]; exit; fi\n' +
       'if [ "$1" = reset-failed ]; then\n' +
       'if [ -e "$UPDATE_FIXTURE/reset-unloaded" ]; then printf "Unit %s not loaded.\\n" "$2" >&2; exit 1; fi\n' +

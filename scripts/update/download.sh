@@ -37,16 +37,27 @@ download_release() {
     # Extraction, the previous bundle and an edit archive coexist on the same filesystem.
     available_kib=$(df -Pk "$RELEASE_ROOT" | awk 'END {print $4}')
     [ "$available_kib" -gt $((EXPECTED_BYTES / 1024 * 6 + 262144)) ] || fail 'Not enough free space; the current release is unchanged.'
-    fetch_asset "$BASE_URL/bundle.tar.zst" "$WORK/bundle.tar.zst"
-    [ "$(wc -c < "$WORK/bundle.tar.zst" | tr -d ' ')" = "$EXPECTED_BYTES" ] || fail 'The bundle download was incomplete.'
-    printf '%s  %s\n' "$EXPECTED_SHA" "$WORK/bundle.tar.zst" | sha256sum -c - >/dev/null || fail 'The bundle checksum did not match.'
+    bundle_cache="$PRIVATE/cached-bundle.tar.zst"
+    [ ! -L "$bundle_cache" ] || fail 'Unsafe bundle cache.'
+    if [ -f "$bundle_cache" ] && [ "$(wc -c < "$bundle_cache" | tr -d ' ')" = "$EXPECTED_BYTES" ] &&
+        printf '%s  %s\n' "$EXPECTED_SHA" "$bundle_cache" | sha256sum -c - >/dev/null 2>&1; then
+        note 'Reusing the verified downloaded bundle.'
+    else
+        fetch_asset "$BASE_URL/bundle.tar.zst" "$WORK/bundle.tar.zst"
+        [ "$(wc -c < "$WORK/bundle.tar.zst" | tr -d ' ')" = "$EXPECTED_BYTES" ] || fail 'The bundle download was incomplete.'
+        printf '%s  %s\n' "$EXPECTED_SHA" "$WORK/bundle.tar.zst" | sha256sum -c - >/dev/null || fail 'The bundle checksum did not match.'
+        chmod 600 "$WORK/bundle.tar.zst"
+        sync
+        mv -fT "$WORK/bundle.tar.zst" "$bundle_cache"
+        sync
+    fi
     # Our builder emits only regular files and directories: never extract links or devices as root.
-    tar --zstd -tvf "$WORK/bundle.tar.zst" > "$WORK/types.txt"
+    tar --zstd -tvf "$bundle_cache" > "$WORK/types.txt"
     awk 'substr($0,1,1) != "-" && substr($0,1,1) != "d" {exit 1}' "$WORK/types.txt" || fail 'The bundle contains a link or special file.'
-    tar --zstd -tf "$WORK/bundle.tar.zst" > "$WORK/paths.txt"
+    tar --zstd -tf "$bundle_cache" > "$WORK/paths.txt"
     awk '/^\// || /(^|\/)\.\.(\/|$)/ || /\\/ || /[[:cntrl:]]/ {exit 1}' "$WORK/paths.txt" || fail 'The bundle contains an unsafe path.'
     STAGING=$(mktemp -d "$RELEASE_ROOT/releases/trial.XXXXXX")
-    tar --zstd --no-same-owner --no-same-permissions -xf "$WORK/bundle.tar.zst" -C "$STAGING"
+    tar --zstd --no-same-owner --no-same-permissions -xf "$bundle_cache" -C "$STAGING"
     TARGET=${STAGING##*/}
     (cd "$STAGING" && sha256sum --check --strict --quiet files.sha256) || fail 'The extracted bundle failed verification.'
     jq -e --arg release "$RELEASE" --arg commit "$manifest_commit" --arg channel "$(manifest_value channel)" --arg node "$(manifest_value node)" \

@@ -9,6 +9,10 @@ on:
       - scripts/check-bundle-*.ts
       - scripts/check-updater-systemd.ts
       - src/release/**
+      - src/http/bundle-*.ts
+      - src/http/settings.ts
+      - src/settings/**
+      - src/vcu/bus-lease.ts
       - .github/workflows/updater.yml
 
 permissions:
