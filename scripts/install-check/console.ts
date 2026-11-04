@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { appendFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { monotonicNow, since } from "../../src/monotonic.ts";
+import { availableParallelism, freemem, loadavg } from "node:os";
 
 export function startConsole(executable: string, arguments_: string[], log: string): GuestConsole {
   const child = spawn(executable, arguments_, { stdio: ["pipe", "pipe", "pipe"] });
@@ -25,6 +26,21 @@ export function startConsole(executable: string, arguments_: string[], log: stri
   child.once("exit", () => {
     finished = true;
   });
+  const sampler = setInterval(() => {
+    collect(
+      Buffer.from(
+        "\nCOOL_EVA_QEMU_HOST " +
+          JSON.stringify({
+            at: new Date().toISOString(),
+            cpus: availableParallelism(),
+            freeBytes: freemem(),
+            load: loadavg(),
+          }) +
+          "\n"
+      )
+    );
+  }, 15_000);
+  sampler.unref();
   return {
     child,
     output: () => output,
@@ -44,6 +60,7 @@ export function startConsole(executable: string, arguments_: string[], log: stri
       }
     },
     stop: async () => {
+      clearInterval(sampler);
       if (!finished) {
         child.kill("SIGTERM");
       }
