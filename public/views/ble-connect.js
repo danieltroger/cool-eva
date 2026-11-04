@@ -48,10 +48,12 @@ export function BleHeaderButton(openMenu) {
   if (!BLE_MODE || !originAllowed()) {
     return span();
   }
-  return () =>
-    bleStatus.val === "connected"
-      ? span()
-      : button({ class: "ble-connect", onclick: () => connectNow(openMenu) }, "Connect");
+  return () => (bleStatus.val === "connected" ? span() : BleConnectButton(openMenu));
+}
+
+/** @param {() => void} openMenu */
+export function BleConnectButton(openMenu) {
+  return button({ class: "ble-connect", onclick: () => connectNow(openMenu) }, "Connect");
 }
 
 /** The sheet's Bluetooth section: the secret, the state of the link, and a Connect button. */

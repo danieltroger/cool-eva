@@ -63,12 +63,35 @@ export async function checkSettingsBrowser(page: HeadlessPage, previewFile: stri
   );
   await evaluateOnPage(page, "localStorage.removeItem('cool-eva.setup-seen:synthetic-pi')");
   await gotoPage(page, `file://${previewFile}?scene=parked&notice-check=1#ride`);
-  await waitOnPage(page, "!!document.querySelector('.migration-notice')", "the first-open riding notice");
+  await waitOnPage(
+    page,
+    "!!document.querySelector('.header-notice:not([hidden])')",
+    "the compact first-open riding notice"
+  );
+  assert.equal(
+    await evaluateOnPage(
+      page,
+      "document.querySelector('.view').getBoundingClientRect().top-document.querySelector('.header').getBoundingClientRect().bottom"
+    ),
+    0
+  );
+  await evaluateOnPage(page, "document.querySelector('.header-notice').click()");
+  await waitOnPage(
+    page,
+    "document.body.innerText.includes('What changed on this Pi')",
+    "the full notes on Settings root"
+  );
   await evaluateOnPage(
     page,
     "[...document.querySelectorAll('button')].find(button=>button.textContent==='Got it').click()"
   );
-  await waitOnPage(page, "!document.querySelector('.migration-notice')", "the dismissed notice's wrapper to disappear");
+  await evaluateOnPage(page, "document.querySelector('.header .menu').click()");
+  await waitOnPage(
+    page,
+    "!!document.querySelector('.view') && document.querySelector('.header-notice').hidden",
+    "return after acknowledging the notes"
+  );
+  assert.equal(await evaluateOnPage(page, "document.querySelector('.brand').textContent"), "Cool Eva");
   assert.equal(
     await evaluateOnPage(
       page,

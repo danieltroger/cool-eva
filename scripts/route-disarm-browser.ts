@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { ARM_DWELL_MS } from "../public/lib/arming.js";
+import { TABS } from "../public/lib/router.js";
 import { evaluateOnPage, gotoPage, waitOnPage, type HeadlessPage } from "./headless-page.ts";
 
 export async function checkRouteDisarmBrowser(page: HeadlessPage, previewFile: string): Promise<void> {
@@ -22,7 +24,7 @@ export async function checkRouteDisarmBrowser(page: HeadlessPage, previewFile: s
   await evaluateOnPage(page, `${STOP_BUTTON}.click()`);
   await waitOnPage(page, `${STOP_BUTTON}.textContent.includes("Tap again")`, "Stop to arm");
   // The old confirmation must have passed its dwell, or a stale arm could appear safe by timing alone.
-  await evaluateOnPage(page, "new Promise(resolve => setTimeout(resolve, 450))");
+  await evaluateOnPage(page, `new Promise(resolve => setTimeout(resolve, ${ARM_DWELL_MS + 50}))`);
   await clickTab(page, "all");
   await clickTab(page, "charge");
   await waitOnPage(page, `${STOP_BUTTON} && !${STOP_BUTTON}.disabled`, "Stop after returning to Charge");
@@ -48,7 +50,12 @@ export async function checkRouteDisarmBrowser(page: HeadlessPage, previewFile: s
 const STOP_BUTTON = `([...document.querySelectorAll(".view .tile")].find(tile => tile.querySelector(".label")?.textContent === "Stop charging")?.querySelector("button.action"))`;
 
 async function clickTab(page: HeadlessPage, name: "all" | "charge"): Promise<void> {
-  await evaluateOnPage(page, `document.querySelectorAll(".tabs .tab")[${name === "all" ? 3 : 2}].click()`);
+  const label = TABS.find(tab => tab.name === name)?.label;
+  assert.ok(label);
+  await evaluateOnPage(
+    page,
+    `[...document.querySelectorAll(".tabs .tab")].find(button => button.textContent.trim() === ${JSON.stringify(label)}).click()`
+  );
   await waitOnPage(page, `location.hash === "#${name}"`, `the ${name} route`);
   await evaluateOnPage(page, "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
 }

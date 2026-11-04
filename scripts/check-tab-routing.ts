@@ -1,11 +1,19 @@
-import { DEFAULT_TAB, TABS, canonicalHash, hashForTab, nextTabAfter, tabFromHash } from "../public/lib/router.js";
+import {
+  DEFAULT_TAB,
+  TABS,
+  ROUTES,
+  canonicalHash,
+  hashForTab,
+  nextViewAfter,
+  tabFromHash,
+} from "../public/lib/router.js";
 
 // The dashboard's tab URLs, checked without a browser.
 //
 //   node --experimental-strip-types scripts/check-tab-routing.ts
 //
 // public/lib/router.js puts the bottom tab bar in the URL, and splits itself so the
-// parts worth checking need no DOM: hashForTab, tabFromHash, nextTabAfter and
+// parts worth checking need no DOM: hashForTab, tabFromHash, nextViewAfter and
 // canonicalHash are pure, and the handful of lines that touch `history` and `location`
 // do nothing but act on what canonicalHash decided. That is the whole reason this file
 // can exist alongside the other checks — no jsdom, no headless browser, no dependency.
@@ -176,18 +184,22 @@ for (const [hash, description] of NAMES_NOTHING) {
 
 console.log("\n4. the ring the high-beam gesture rides on");
 
-let walked: (typeof TABS)[number]["name"] = TABS[0].name;
+let walked: (typeof ROUTES)[number]["name"] = ROUTES[0].name;
 const visited: string[] = [walked];
-for (let step = 1; step < TABS.length; step += 1) {
-  walked = nextTabAfter(walked);
+for (let step = 1; step < ROUTES.length; step += 1) {
+  walked = nextViewAfter(walked);
   visited.push(walked);
 }
 
 check(
-  `${TABS.length} advances from ${TABS[0].name} visit every tab exactly once`,
-  new Set(visited).size === TABS.length && visited.every((name, index) => name === TABS[index].name)
+  `${ROUTES.length} advances from ${ROUTES[0].name} visit every view exactly once`,
+  new Set(visited).size === ROUTES.length && visited.join(",") === "ride,cooling,hypermile,charge,all,faults"
 );
-check(`one more comes back to ${TABS[0].name}`, nextTabAfter(walked) === TABS[0].name);
+check(`one more comes back to ${ROUTES[0].name}`, nextViewAfter(walked) === ROUTES[0].name);
+check(
+  "Cooling has a pinned subview bookmark",
+  canonicalHash("#ride/cooling").view === "cooling" && canonicalHash("#ride/cooling").rewriteTo === null
+);
 
 console.log("");
 if (failures > 0) {

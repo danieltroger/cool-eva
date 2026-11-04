@@ -8,6 +8,7 @@ import { TABS } from "../public/lib/router.js";
 import { sceneNamesIn } from "./preview-scenes.ts";
 import { checkSettingsBrowser } from "./settings-browser-check.ts";
 import { checkRouteDisarmBrowser } from "./route-disarm-browser.ts";
+import { checkRidingBrowser } from "./riding-browser-check.ts";
 import {
   closePage,
   evaluateOnPage,
@@ -15,6 +16,7 @@ import {
   gotoPage,
   openHeadlessPage,
   waitOnPage,
+  setPageInsets,
   type HeadlessPage,
 } from "./headless-page.ts";
 
@@ -234,9 +236,11 @@ console.log(
 let page: HeadlessPage | null = null;
 try {
   page = await openHeadlessPage(PHONE, browserPath);
+  await setPageInsets(page, { top: 47, bottom: 34, left: 0, right: 0 });
   await sweep(page, previewFile);
   await checkSettingsBrowser(page, previewFile);
   await checkRouteDisarmBrowser(page, previewFile);
+  await checkRidingBrowser(page, previewFile);
 } finally {
   if (page !== null) {
     await closePage(page);

@@ -12,28 +12,21 @@ import { HypermileView } from "./views/hypermile.js";
 import { ChargeView } from "./views/charge.js";
 import { AllView } from "./views/all.js";
 import { FaultsView } from "./views/faults.js";
-import { Sheet, hasTroubleCodes, installWaypointRefresh, openSheet, refreshStatus } from "./views/sheet.js";
-import { BleHeaderButton } from "./views/ble-connect.js";
+import { Sheet, hasTroubleCodes, installWaypointRefresh, refreshStatus } from "./views/sheet.js";
+import { Header } from "./views/header.js";
+import { CoolingView } from "./views/cooling.js";
 import { monotonicNow } from "./lib/clock.js";
-import { TABS, advanceTab, currentTab, peekTab, showTab, startRouting } from "./lib/router.js";
+import { TABS, advanceTab, currentTab, currentView, peekTab, showTab, startRouting } from "./lib/router.js";
 import { Toast } from "./lib/toast.js";
 import { installHandlebarGestures } from "./lib/handlebar-gestures.js";
 import { installAnnouncements } from "./lib/announce.js";
 import { startTheming } from "./lib/theme.js";
 import { viewRules } from "./lib/view-rules.js";
-import {
-  destination,
-  destinationSection,
-  backDestinationName,
-  openDestination,
-  closeDestination,
-  startDestinationRouting,
-} from "./lib/destination.js";
-import { DestinationPage, destinationTitle } from "./views/destination-page.js";
+import { destination, openDestination, startDestinationRouting } from "./lib/destination.js";
+import { DestinationPage } from "./views/destination-page.js";
 import { settings, watchSettings } from "./lib/settings.js";
-import { MigrationSummary } from "./views/settings-summary.js";
 
-const { button, div, span } = van.tags;
+const { button, div } = van.tags;
 
 // Shell: header, the current view, the tab bar, and the rules for when the bike
 // gets to choose the view instead of you.
@@ -85,10 +78,10 @@ function App() {
   // hit-transparent, so its position in the tree costs nothing else.
   return div(
     Header(),
-    ReloadPageNotice(),
+    () => (destination.val ? ReloadPageNotice()() : div()),
     () => {
       const fault = systemStatus.val?.settingsFault ?? settings.val?.fault;
-      if (!fault || (destination.val === "settings" && fault === settings.val?.fault)) return div();
+      if (!destination.val || !fault || (destination.val === "settings" && fault === settings.val?.fault)) return div();
       return div(
         { class: "settings-page" },
         div(
@@ -98,75 +91,11 @@ function App() {
         )
       );
     },
-    MigrationSummary(true, true),
-    () => (destination.val ? DestinationPage() : VIEWS[currentTab()]()),
+    () => (destination.val ? DestinationPage() : currentView() === "cooling" ? CoolingView() : VIEWS[currentTab()]()),
     () => (destination.val ? div() : TabBar()),
     Sheet(),
     Toast()
   );
-}
-
-function Header() {
-  return div(
-    { class: () => (destination.val ? "header destination-header" : "header") },
-    button(
-      {
-        class: "menu",
-        // openSheet() rather than setting the flag here: the sheet's sections fetch
-        // when they become visible, and it owns the list of what has to be
-        // refreshed so this button cannot fall behind it.
-        onclick: () => {
-          if (destination.rawVal) {
-            closeDestination();
-          } else {
-            openSheet();
-          }
-        },
-        "aria-label": () => (destination.val ? `Back to ${backDestinationName.val}` : "Open menu"),
-      },
-      // The Faults tab carries the warning now, and it leads somewhere that names
-      // the code. Two ⚠ for one fault is how a warning stops being read.
-      () => (destination.val ? `‹ ${backDestinationName.val}` : "☰")
-    ),
-    span({ class: "brand" }, () => (destination.val ? destinationTitle() : "Cool Eva")),
-    div(
-      { class: "status" },
-      BleHeaderButton(() => openDestination("settings", "connections")),
-      button(
-        {
-          class: "can-status-link",
-          "aria-label": "CAN adapter details",
-          onclick: () => openDestination("settings", "connections"),
-        },
-        span({ class: () => `dot ${canDotState()}` }),
-        "CAN"
-      ),
-      span({ class: () => `dot ${connection.val}` }),
-      span(() => (connection.val === "live" ? "live" : connection.val === "connecting" ? "connecting" : "offline"))
-    )
-  );
-}
-
-/**
- * The CAN interface dot's state: green when can0 is up, red when it is down, grey when
- * we can't say. "Can't say" is not only "no reading yet" — while the WebSocket is not
- * live the `can_link` value is frozen at whatever last arrived, so the honest answer is
- * unknown, the same way isStale() greys every tile out. The live dot beside this one is
- * what reports the WebSocket itself.
- * @returns {"up" | "down" | "unknown"}
- */
-function canDotState() {
-  if (connection.val !== "live") {
-    return "unknown";
-  }
-  if (systemStatus.val) {
-    return systemStatus.val.can.state;
-  }
-  const reading = signalState("can_link").val;
-  if (!reading) {
-    return "unknown";
-  }
-  return reading.value === 0 ? "down" : "unknown";
 }
 
 function TabBar() {
