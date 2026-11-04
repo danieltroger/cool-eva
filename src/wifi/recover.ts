@@ -2,10 +2,11 @@ import { uptime } from "os";
 import { ageMs, freshValue, record } from "../can/signals.ts";
 import { monotonicNow, since } from "../monotonic.ts";
 import type { HoldGesture } from "../gestures/runner.ts";
-import { COMMAND_TIMEOUT_MS } from "./collect.ts";
 import { writeWifiDump } from "./dump.ts";
 import { NMCLI, runCommand } from "./nmcli.ts";
-import { WIFI_LINK_STATE, parseWifiList, parseWifiProfileNames, type WifiLinkState } from "./parse.ts";
+import { acquireWifiOperation } from "./operation.ts";
+import { hotspotProfileUuid } from "./recovery-profile.ts";
+import { WIFI_LINK_STATE, parseWifiList, type WifiLinkState } from "./parse.ts";
 import {
   HOLD_ACTION,
   REJOIN_OUTCOME,
@@ -120,6 +121,8 @@ export async function recoverWifi(
     console.log(`wifi-recover: ${trigger} ignored — a recovery is already running`);
     return REJOIN_OUTCOME.NONE;
   }
+  const releaseWifi = acquireWifiOperation("recovery");
+  if (!releaseWifi) return REJOIN_OUTCOME.NONE;
   running = true;
   try {
     return await runLadder(trigger, effects);
@@ -130,6 +133,7 @@ export async function recoverWifi(
     return REJOIN_OUTCOME.FAILED;
   } finally {
     running = false;
+    releaseWifi();
   }
 }
 
@@ -182,12 +186,12 @@ function outcomeOf(attempt: { ok: boolean; profile: string | null }): RejoinOutc
  * this must never run on the poll path, whose contract is 2 × WIFI_POLL_TIMEOUT_MS <
  * WIFI_POLL_MS.
  */
-function realEffects(context: RecoverContext): LadderEffects {
+export function realEffects(context: RecoverContext, command: typeof runCommand = runCommand): LadderEffects {
   return {
     dump: () =>
       context.dumpDirectory === null ? refusedDump() : writeWifiDump(context.dumpDirectory, context.iface, uptime()),
     scanShowsHotspot: async () => {
-      const list = await runCommand(
+      const list = await command(
         NMCLI,
         ["-t", "-f", "ACTIVE,SSID,SIGNAL", "device", "wifi", "list", "--rescan", "yes"],
         RESCAN_TIMEOUT_MS
@@ -199,15 +203,13 @@ function realEffects(context: RecoverContext): LadderEffects {
       return parseWifiList(list.stdout, context.hotspotSsid).hotspotSeen;
     },
     activate: async () => {
-      const profile = await hotspotProfileName(context.hotspotSsid);
+      const profile = await hotspotProfileUuid(context.hotspotSsid, command);
       if (profile === null) {
         console.warn("wifi-recover: no saved profile carries the configured SSID — nothing to activate");
         return { ok: false, profile: null };
       }
-      // ⚠️ BY NAME. NetworkManager's nmc_find_connection() matches uuid, id, path and
-      // filename and has no SSID arm, so `connection up <ssid>` can only answer "unknown
-      // connection" whenever the two differ — which they do on this Pi. docs/wifi.md §3.
-      const up = await runCommand(NMCLI, ["connection", "up", profile], ACTIVATE_TIMEOUT_MS);
+      // UUID keeps same-SSID candidates out of explicit recovery as well as autoconnect.
+      const up = await command(NMCLI, ["connection", "up", "uuid", profile], ACTIVATE_TIMEOUT_MS);
       if (up.exitCode !== 0) {
         console.warn(`wifi-recover: activating "${profile}" failed: ${up.stderr.trim() || up.stdout.trim()}`);
       }
@@ -219,26 +221,6 @@ function realEffects(context: RecoverContext): LadderEffects {
 /** ⚠️ Generous, because `--rescan yes` waits on real scan results. */
 const RESCAN_TIMEOUT_MS = 25_000;
 const ACTIVATE_TIMEOUT_MS = 30_000;
-
-/** Which saved profile carries the configured SSID. */
-async function hotspotProfileName(hotspotSsid: string): Promise<string | null> {
-  const listing = await runCommand(NMCLI, ["-t", "-f", "NAME,TYPE", "connection", "show"], COMMAND_TIMEOUT_MS);
-  if (listing.exitCode !== 0) {
-    console.warn(`wifi-recover: ${listing.command} exited ${listing.exitCode}: ${listing.stderr.trim()}`);
-    return null;
-  }
-  for (const name of parseWifiProfileNames(listing.stdout)) {
-    const ssid = await runCommand(
-      NMCLI,
-      ["-g", "802-11-wireless.ssid", "connection", "show", name],
-      COMMAND_TIMEOUT_MS
-    );
-    if (ssid.exitCode === 0 && ssid.stdout.trim() === hotspotSsid) {
-      return name;
-    }
-  }
-  return null;
-}
 
 /** Re-records both on every poll, so the group never reads part-dark. ./status.ts calls it. */
 export function republishRejoin(): void {
@@ -298,6 +280,8 @@ export async function performWifiHold(deps: HoldDeps): Promise<string> {
     if (running) {
       return "a recovery is already running, so this hold was ignored";
     }
+    const releaseWifi = acquireWifiOperation("recovery");
+    if (!releaseWifi) return "Wi-Fi settings are running; try again in a moment";
     running = true;
     armedAt = decision.arm ? monotonicNow() : armedAt;
     let written: string | null = null;
@@ -310,6 +294,7 @@ export async function performWifiHold(deps: HoldDeps): Promise<string> {
       rejoinSeq += 1;
     } finally {
       running = false;
+      releaseWifi();
     }
     return written === null
       ? "the link is up, so it was left alone — but the dump could not be written"

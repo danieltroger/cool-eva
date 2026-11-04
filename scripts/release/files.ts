@@ -27,6 +27,7 @@ export function selectSourcePaths(trackedPaths: string[]): string[] {
 
 export const RUNTIME_SCRIPTS = [
   "scripts/can-capture/capture.sh",
+  "scripts/configure-network-purposes.ts",
   "scripts/update/run.sh",
   "scripts/update/common.sh",
   "scripts/update/settings.sh",

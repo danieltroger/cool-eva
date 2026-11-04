@@ -17,6 +17,8 @@ import { SettingsRecovery } from "./settings-recovery.js";
 import { SettingsRestart } from "./settings-restart.js";
 import { DashboardBluetooth } from "./settings-bluetooth.js";
 import { MotorcycleConnection } from "./settings-hub.js";
+import { WifiNetworksView } from "./settings-networks.js";
+import { HotspotCheckName } from "./settings-hotspot.js";
 import { CanRestartButton, UpdateButton } from "./pi-actions.js";
 
 const { a, button, div, h2 } = van.tags;
@@ -51,13 +53,18 @@ export function SettingsPage() {
       settingsInstance.val;
       return SettingsContent(destinationSection.val);
     },
-    () => (destinationSection.val ? SettingsRestart(!["phone", "access"].includes(destinationSection.val)) : div())
+    () =>
+      destinationSection.val
+        ? SettingsRestart(!["phone", "access", "networks"].includes(destinationSection.val))
+        : div()
   );
 }
 
 /** @param {string} section */
 function SettingsContent(section) {
   switch (section) {
+    case "networks":
+      return WifiNetworksView();
     case "phone":
       return div(
         h2("This phone"),
@@ -108,22 +115,16 @@ function SettingsContent(section) {
     case "connections":
       return div(
         h2("Connections"),
-        TextSetting(
-          "phoneHotspotSsid",
-          "Hotspot name used for connection checks",
-          "This identifies the phone hotspot for monitoring. Saving a name does not configure a Wi-Fi connection."
-        ),
+        () => HotspotCheckName(),
         SettingsCard(
           "Saved Wi-Fi connections",
-          "Keep the working home network or phone hotspot. To change saved network credentials, use the installation / repair guide over a reachable connection.",
-          a(
-            {
-              class: "settings-link",
-              href: "https://github.com/danieltroger/cool-eva/blob/main/INSTALL.md",
-              target: "_blank",
-              rel: "noopener",
-            },
-            "Open installation / repair guide →"
+          "Add or change a saved Wi-Fi connection. Save keeps the old profile; a separate trial checks the new connection.",
+          div(
+            { class: "settings-actions" },
+            button(
+              { class: "settings-button", onclick: () => openDestination("settings", "networks") },
+              "Wi-Fi networks"
+            )
           )
         ),
         DashboardBluetooth(),

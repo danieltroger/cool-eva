@@ -1057,6 +1057,21 @@ const CHECKS: SelfCheck[] = [
       "and the SSH client's legacy/new-layout selection",
   },
   {
+    script: "scripts/check-network-settings.ts",
+    covers:
+      "independent NetworkManager boot/auth/checkpoint/durable-write model; both AP orderings, per-retry motion, explicit retry, no startup trial and resumable confirmation",
+  },
+  {
+    script: "scripts/check-network-http.ts",
+    covers:
+      "Wi-Fi mutation CSRF, strict bounded requests, stale generations, BLE save/readback and secret-free replies",
+  },
+  {
+    script: "scripts/check-network-dbus.ts",
+    covers:
+      "NetworkManager D-Bus flags, UUID addressing, secret-copy boundary, checkpoint scope and persistent-source selection",
+  },
+  {
     script: "scripts/check-settings-storage.ts",
     covers:
       "literal effective-environment migration, private settings modes and serial writers, " +

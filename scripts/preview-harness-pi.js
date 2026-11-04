@@ -65,7 +65,7 @@ const SETTINGS_VALUES = {
   radiatorFanEnabled: true,
   customBmsConfigurationFlashed: false,
   automaticDcChargingEnabled: true,
-  phoneHotspotSsid: "",
+  phoneHotspotSsid: new URL(window.location.href).searchParams.has("hotspot-owner") ? "Synthetic hotspot" : "",
   rideLogDirectory: "/var/lib/cool-eva/ride-logs",
   vcuParameterDirectory: "/var/lib/cool-eva/vcu-params",
   hubAddress: "02:00:00:00:00:01",
@@ -81,6 +81,12 @@ const SETTINGS = {
   processGeneration: "synthetic-process",
   instanceId: "synthetic-pi",
   revision: 0,
+  hotspotNameOwnership:
+    new URL(window.location.href).searchParams.get("hotspot-owner") === "network"
+      ? "network"
+      : new URL(window.location.href).searchParams.get("hotspot-owner") === "unknown"
+        ? "unknown"
+        : "manual",
   saved: { ...SETTINGS_VALUES },
   active: { ...SETTINGS_VALUES },
   pending: [],
@@ -104,6 +110,9 @@ window.fetch = function previewFetch(input, init) {
   const method = ((init && init.method) || "GET").toUpperCase();
   const path = url.pathname;
 
+  const networkReply = networkPreview(path, method, init);
+  if (networkReply) return networkReply;
+
   if (path === "/settings") {
     if (method === "GET" && new URL(window.location.href).searchParams.get("settings") === "unconfirmed") {
       return json({ ok: false, message: "Synthetic unavailable settings" }, 503);
@@ -113,6 +122,18 @@ window.fetch = function previewFetch(input, init) {
       if (body.revision !== SETTINGS.revision)
         return json({ ok: false, message: "Settings changed. Reload before saving." }, 409);
       const changes = { ...body.changes };
+      if (Object.hasOwn(changes, "phoneHotspotSsid") && SETTINGS.hotspotNameOwnership !== "manual") {
+        return json(
+          {
+            ok: false,
+            message:
+              SETTINGS.hotspotNameOwnership === "network"
+                ? "Set by your saved Phone hotspot network. Change it under Wi-Fi networks."
+                : "Open Wi-Fi networks to read saved profiles first.",
+          },
+          409
+        );
+      }
       if (Object.hasOwn(changes, "dashboardBluetoothSecret")) {
         SETTINGS.saved.bluetoothCodeId = changes.dashboardBluetoothSecret
           ? `synthetic-code-${SETTINGS.revision + 1}`

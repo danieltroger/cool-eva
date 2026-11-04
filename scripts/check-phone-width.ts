@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { TABS } from "../public/lib/router.js";
 import { sceneNamesIn } from "./preview-scenes.ts";
 import { checkSettingsBrowser } from "./settings-browser-check.ts";
+import { checkNetworkBrowser } from "./network-browser-check.ts";
 import {
   closePage,
   evaluateOnPage,
@@ -235,6 +236,7 @@ try {
   page = await openHeadlessPage(PHONE, browserPath);
   await sweep(page, previewFile);
   await checkSettingsBrowser(page, previewFile);
+  await checkNetworkBrowser(page, previewFile);
 } finally {
   if (page !== null) {
     await closePage(page);

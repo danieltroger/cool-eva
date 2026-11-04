@@ -52,6 +52,7 @@ export async function checkReleaseBundle(): Promise<void> {
     ...required,
     "public/app.js",
     "scripts/can-capture/capture.sh",
+    "scripts/configure-network-purposes.ts",
     "scripts/check-example.ts",
     "docs/setup.md",
     "ride-logs/trip.celog",
@@ -64,7 +65,8 @@ export async function checkReleaseBundle(): Promise<void> {
   assert(selected.includes("scripts/can-capture/capture.sh"));
   assert(!selected.includes("docs/setup.md"));
   assert(!selected.includes("scripts/check-example.ts"));
-  assert.equal(selected.length, required.length + 2);
+  assert(selected.includes("scripts/configure-network-purposes.ts"));
+  assert.equal(selected.length, required.length + 3);
   assert.throws(() => selectSourcePaths(required.filter(path => path !== "src/index.ts")));
   for (const path of [
     "../outside",
@@ -234,7 +236,12 @@ async function checkRuntimePayload(source: string, output: string): Promise<void
   await copyRuntimePayload(source, output);
   assert(!(await readdir(output)).includes("docs"));
   assert(!(await readdir(output)).includes("package-lock.json"));
-  assert.deepEqual((await readdir(join(output, "scripts"))).sort(), ["can-capture", "update"]);
+  assert.deepEqual((await readdir(join(output, "scripts"))).sort(), [
+    "can-capture",
+    "configure-network-purposes.ts",
+    "update",
+  ]);
+  assert.equal(await readFile(join(output, "scripts/configure-network-purposes.ts"), "utf8"), "runtime fixture\n");
   await symlink("../package.json", join(output, "src/link"));
   await assert.rejects(assertRuntimePayload(output), /only directories and regular files/);
   await rm(join(output, "src/link"));

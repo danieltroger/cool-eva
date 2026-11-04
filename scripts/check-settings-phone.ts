@@ -26,6 +26,7 @@ const first: SettingsReply = {
   processGeneration: "synthetic-generation-one",
   instanceId: "synthetic-pi-one",
   revision: 0,
+  hotspotNameOwnership: "manual",
   saved: {
     coolantProbesEnabled: false,
     radiatorFanEnabled: false,

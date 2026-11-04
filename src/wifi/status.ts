@@ -58,7 +58,7 @@ export interface WifiMonitor {
  */
 export function startWifiMonitor(
   iface: string,
-  hotspotSsid: string,
+  hotspotSsid: string | (() => string),
   onSustainedFault: () => void,
   intervalMs = WIFI_POLL_MS
 ): WifiMonitor {
@@ -68,7 +68,7 @@ export function startWifiMonitor(
   // freeze the fault timer or make it fire instantly. ../monotonic.ts.
   let clock = newFaultClock();
 
-  if (hotspotSsid === "") {
+  if ((typeof hotspotSsid === "function" ? hotspotSsid() : hotspotSsid) === "") {
     // ⚠️ LOUD, because the alternative is the failure this whole feature exists to catch:
     // something that quietly stops trying and tells nobody. With no SSID configured,
     // `wifi_hotspot_seen` has no meaning and the fault dump can never fire — the radio's
@@ -88,7 +88,7 @@ export function startWifiMonitor(
     }
     polling = true;
     try {
-      const reading = await pollOnce(iface, hotspotSsid, line => {
+      const reading = await pollOnce(iface, typeof hotspotSsid === "function" ? hotspotSsid() : hotspotSsid, line => {
         if (line !== lastReported) {
           console.log(`wifi: ${line}`);
           lastReported = line;

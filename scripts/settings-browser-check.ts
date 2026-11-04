@@ -82,8 +82,78 @@ export async function checkSettingsBrowser(page: HeadlessPage, previewFile: stri
   );
   assert.deepEqual(dimensions, [390, 390, 44]);
   await checkConnectionLayouts(page, previewFile);
+  await checkHotspotOwnership(page, previewFile);
   console.log(
     "  ✓ settings: unread choices, fault/CSRF distinction, zero-height dismissal, full-width connection fields, compact actions and the actual Siri repair route"
+  );
+}
+
+async function checkHotspotOwnership(page: HeadlessPage, previewFile: string): Promise<void> {
+  for (const ownership of ["network", "manual", "unknown"]) {
+    await gotoPage(
+      page,
+      `file://${previewFile}?scene=parked&panel=settings&section=connections&hotspot-owner=${ownership}`
+    );
+    await waitOnPage(
+      page,
+      `(()=>{const input=document.querySelector('input[aria-label="Hotspot name used for connection checks"]');return input?.value==='Synthetic hotspot'&&input.readOnly===${ownership !== "manual"}&&document.body.innerText.includes('Saved:')})()`,
+      "hotspot ownership readback"
+    );
+    const field = await evaluateOnPage(
+      page,
+      "(()=>{const input=document.querySelector('input[aria-label=\"Hotspot name used for connection checks\"]');return {readOnly:input.readOnly,value:input.value,save:!![...input.closest('.settings-card').querySelectorAll('button')].find(button=>button.textContent==='Save')}})()"
+    );
+    assert.deepEqual(field, {
+      readOnly: ownership !== "manual",
+      value: "Synthetic hotspot",
+      save: ownership === "manual",
+    });
+    if (ownership === "network") {
+      await waitOnPage(
+        page,
+        "document.body.innerText.includes('Set by your saved Phone hotspot network')",
+        "network-owned name explanation"
+      );
+    }
+  }
+  await gotoPage(page, `file://${previewFile}?scene=parked&panel=settings&section=connections&hotspot-owner=manual`);
+  await waitOnPage(
+    page,
+    "!!document.querySelector('input[aria-label=\"Hotspot name used for connection checks\"]')&&!document.querySelector('input[aria-label=\"Hotspot name used for connection checks\"]').readOnly",
+    "editable unowned name"
+  );
+  await evaluateOnPage(
+    page,
+    "window.hotspotDraftInput=document.querySelector('input[aria-label=\"Hotspot name used for connection checks\"]');window.hotspotDraftInput.focus();window.hotspotDraftInput.value='Synthetic unsaved draft';window.hotspotDraftInput.dispatchEvent(new Event('input',{bubbles:true}));window.hotspotSettingsReads=0;window.fetch=(original=>(input,init)=>{if(String(input)==='/settings'&&(!init?.method||init.method==='GET'))window.hotspotSettingsReads++;return original(input,init)})(window.fetch)"
+  );
+  await waitOnPage(page, "window.hotspotSettingsReads>0", "settings refresh during an unowned edit");
+  assert.equal(
+    await evaluateOnPage(
+      page,
+      "document.activeElement===window.hotspotDraftInput&&window.hotspotDraftInput.value==='Synthetic unsaved draft'"
+    ),
+    true,
+    "an unchanged manual editor must retain its focus and draft during readback"
+  );
+  await evaluateOnPage(
+    page,
+    "SETTINGS.hotspotNameOwnership='network';SETTINGS.saved.phoneHotspotSsid='Synthetic saved hotspot';SETTINGS.active.phoneHotspotSsid='Synthetic saved hotspot';SETTINGS.revision++"
+  );
+  await waitOnPage(
+    page,
+    "document.querySelector('input[aria-label=\"Hotspot name used for connection checks\"]').readOnly",
+    "another client registering a hotspot"
+  );
+  assert.equal(
+    await evaluateOnPage(
+      page,
+      "document.querySelector('input[aria-label=\"Hotspot name used for connection checks\"]').value"
+    ),
+    "Synthetic saved hotspot",
+    "a stale draft cannot be shown as the network-owned name"
+  );
+  console.log(
+    "  ✓ hotspot-check ownership: network/unknown read-only, manual editable, saved name replaces an unsaved draft when ownership changes"
   );
 }
 

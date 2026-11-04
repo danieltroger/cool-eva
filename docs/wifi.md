@@ -180,11 +180,11 @@ Measured on this Pi Zero 2 W (quad-core): ten sequential cycles of the two `nmcl
 
 **The watchdog is the fix; the gesture is the manual override.** Both run the same ladder, and `src/wifi/recover.ts` holds the in-flight flag they share, so a thumb landing inside a watchdog run cannot start a second one.
 
-| rung | what                                                       |
-| ---- | ---------------------------------------------------------- |
-| 0    | write a dump — always, on every trigger                    |
-| 1    | `nmcli device wifi list --rescan yes` — the refreshed scan |
-| 2    | `nmcli connection up "<profile>"`, **by name**             |
+| rung | what                                                                                      |
+| ---- | ----------------------------------------------------------------------------------------- |
+| 0    | write a dump — always, on every trigger                                                   |
+| 1    | `nmcli device wifi list --rescan yes` — the refreshed scan                                |
+| 2    | `nmcli connection up uuid "<profile-uuid>"`, matching SSID and excluding trial candidates |
 
 ⚠️ **`--rescan yes` is the whole of "rescan and settle".** nmcli sets the scan cutoff to now and waits until NetworkManager's results are provably newer, bounded internally — so there is no hand-rolled wait loop and no timeout constant of ours to get wrong. It is also why this must never run on the poll path, whose contract is `2 × WIFI_POLL_TIMEOUT_MS < WIFI_POLL_MS`.
 
