@@ -61,11 +61,9 @@ git checkout -- package-lock.json
 
 ### 4. Enable saved ride history — on your computer
 
-<!-- for-now: #327 -->
+Open [the recording key page](https://cool-eva-keys.cool-eva.workers.dev), generate a pair, download both named PEM files and back up the private key. After starting the service, upload **only the public key** in Settings → Ride recording. Without it, the dashboard works but no rides are saved. Existing owners can keep their current keys.
 
-For browser generation and a phone-only file handoff, see [recording key setup](docs/hosted-pages.md#make-recording-keys). Use the manual route below until the hosted page is verified.
-
-For now, follow the [computer key setup](docs/manual-install.md#4-enable-saved-ride-history--on-your-computer): run `node --experimental-strip-types scripts/generate-log-key.ts`, back up the private key, then upload only the public key in Settings → Ride recording after starting the service; without it, the dashboard works but no rides are saved.
+See [recording key setup](docs/hosted-pages.md#make-recording-keys) for the phone-only handoff and outstanding phone acceptance, or use the [manual Node 24 route](docs/manual-install.md#4-enable-saved-ride-history--on-your-computer).
 
 ### 5. Before the first service start
 

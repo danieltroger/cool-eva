@@ -8,17 +8,26 @@ import { createRig, helloFrame, KEY } from "./ble-check-rig.ts";
 
 export async function checkBleKeys(): Promise<void> {
   await startupKeys();
-  originsAndKeys();
+  await originsAndKeys();
   await productionReplay();
 }
 
-function originsAndKeys(): void {
+async function originsAndKeys(): Promise<void> {
   for (const url of [
+    "https://danieltroger.github.io/",
+    "https://danieltroger.github.io/cool-eva/",
+    "https://danieltroger.github.io/another/",
     "https://unconfigured.invalid/cool-eva/",
     "https://unconfigured.invalid/another/",
-    "https://danieltroger.github.io.evil.invalid/",
-    "https://other.github.io/",
+    "https://cool-eva-keys.cool-eva.workers.dev/",
+    "https://other.cool-eva.workers.dev/",
+    "https://preview-cool-eva-dashboard.cool-eva.workers.dev/",
+    "https://cool-eva-dashboard.cool-eva.workers.dev.evil.invalid/",
+    "http://cool-eva-dashboard.cool-eva.workers.dev/",
+    "https://cool-eva-dashboard.cool-eva.workers.dev:8443/",
     "cooleva://other/index.html",
+    "cooleva://app:8443/index.html",
+    "file:///index.html",
   ]) {
     let storageRead = 0;
     let requested = 0;
@@ -48,12 +57,14 @@ function originsAndKeys(): void {
     assert.equal(client.originAllowed(), false, `origin policy accepted ${url}`);
     assert.equal(client.storedSecret(), "");
     assert.throws(() => client.rememberSecret(KEY), /Bluetooth needs its own address/);
+    await assert.rejects(client.chooseAndConnect(), /Bluetooth needs its own address/);
     assert.equal(storageRead, 0);
     assert.equal(requested, 0);
     assert.ok(removed > 0);
   }
   for (const url of [
-    "https://danieltroger.github.io/cool-eva/",
+    "https://cool-eva-dashboard.cool-eva.workers.dev/",
+    "https://cool-eva-dashboard.cool-eva.workers.dev:443/index.html",
     "http://localhost:8172/?transport=ble",
     "cooleva://app/index.html",
   ]) {
