@@ -11,6 +11,7 @@ import {
 } from "./commands.ts";
 import { parseSettingsDocument } from "../settings/schema.ts";
 import { settingsPaths } from "../settings/paths.ts";
+import { MigrationNeedsHelpError } from "./errors.ts";
 import { verifyReleaseStorage } from "../http/release-health.ts";
 
 export async function prepareExistingService(directory: string): Promise<ServiceBackup | null> {
@@ -34,28 +35,36 @@ export async function prepareExistingService(directory: string): Promise<Service
       return backup;
     }
   }
-  const workingDirectory = await command("systemctl", ["show", source, "--property=WorkingDirectory", "--value"]);
-  if (
-    !workingDirectory.startsWith("/") ||
-    /[\r\n%]/.test(workingDirectory) ||
-    !(await exists(join(workingDirectory, "src/index.ts")))
-  ) {
-    throw new Error("The existing service's checkout could not be identified. Its unit and data are unchanged.");
+  try {
+    const workingDirectory = await command("systemctl", ["show", source, "--property=WorkingDirectory", "--value"]);
+    if (
+      !workingDirectory.startsWith("/") ||
+      /[\r\n%]/.test(workingDirectory) ||
+      !(await exists(join(workingDirectory, "src/index.ts")))
+    ) {
+      throw new Error("The existing service's checkout could not be identified. Its unit and data are unchanged.");
+    }
+    console.log(
+      "Asking the existing service to migrate its own settings and data; its environment sources stay intact."
+    );
+    const dropIn = migrationDropIn(source);
+    await selectInitialRelease(directory);
+    await writeRootFile(
+      dropIn,
+      `[Service]\nType=oneshot\nRemainAfterExit=yes\nUser=root\nGroup=root\nRestart=no\nTimeoutStartSec=1800\nExecStartPre=\nExecStartPost=\nExecStart=\nExecStart=${systemdArgument(join(directory, "runtime/bin/node"))} --no-wasm-lazy-compilation --experimental-strip-types ${systemdArgument(join(directory, "src/install/migrate-service.ts"))} ${systemdArgument(workingDirectory)} ${source}\n`
+    );
+    await command("systemctl", ["daemon-reload"]);
+    await command("systemctl", ["restart", source], 1800_000);
+    await verifyReleaseStorage(settingsPaths());
+    await command("systemctl", ["stop", source]);
+    await removeOwnFile(dropIn);
+    console.log("Existing data is ready. The checkout is retained for recovery and scratch work.");
+    return backup;
+  } catch (error) {
+    throw new MigrationNeedsHelpError("The existing service could not complete its settings/data migration.", {
+      cause: error,
+    });
   }
-  console.log("Asking the existing service to migrate its own settings and data; its environment sources stay intact.");
-  const dropIn = migrationDropIn(source);
-  await selectInitialRelease(directory);
-  await writeRootFile(
-    dropIn,
-    `[Service]\nType=oneshot\nRemainAfterExit=yes\nUser=root\nGroup=root\nRestart=no\nTimeoutStartSec=1800\nExecStartPre=\nExecStartPost=\nExecStart=\nExecStart=${systemdArgument(join(directory, "runtime/bin/node"))} --no-wasm-lazy-compilation --experimental-strip-types ${systemdArgument(join(directory, "src/install/migrate-service.ts"))} ${systemdArgument(workingDirectory)} ${source}\n`
-  );
-  await command("systemctl", ["daemon-reload"]);
-  await command("systemctl", ["restart", source], 1800_000);
-  await verifyReleaseStorage(settingsPaths());
-  await command("systemctl", ["stop", source]);
-  await removeOwnFile(dropIn);
-  console.log("Existing data is ready. The checkout is retained for recovery and scratch work.");
-  return backup;
 }
 
 export async function installBundleUnits(directory: string, channel: string): Promise<void> {

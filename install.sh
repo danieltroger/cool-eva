@@ -98,10 +98,10 @@ catch_up_os() {
 set -eu
 umask 077
 export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
-dpkg --configure -a
-apt-get -o DPkg::Lock::Timeout=300 -o Dpkg::Use-Pty=0 -o APT::Color=0 update
-apt-get -o DPkg::Lock::Timeout=300 -o Dpkg::Use-Pty=0 -o APT::Color=0 -y -o Dpkg::Options::=--force-confold full-upgrade
-apt-get -o DPkg::Lock::Timeout=300 install -y --no-install-recommends \
+dpkg --configure -a --force-confold --force-confdef
+apt-get -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef -o DPkg::Lock::Timeout=300 -o Dpkg::Use-Pty=0 -o APT::Color=0 update
+apt-get -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef -o DPkg::Lock::Timeout=300 -o Dpkg::Use-Pty=0 -o APT::Color=0 -y full-upgrade
+apt-get -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef -o DPkg::Lock::Timeout=300 install -y --no-install-recommends \
     jq curl ca-certificates tar zstd coreutils util-linux iproute2 iw rfkill \
     network-manager bluez dbus openssh-server avahi-daemon \
     libatomic1 libstdc++6 libgcc-s1 raspi-utils
@@ -116,7 +116,7 @@ if [ ! -e /etc/systemd/system/apt-daily-upgrade.service.d/50-cool-eva-power.conf
     sync
     systemctl daemon-reload
 fi
-apt-get -o DPkg::Lock::Timeout=300 -o Dpkg::Use-Pty=0 install -y unattended-upgrades
+apt-get -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef -o DPkg::Lock::Timeout=300 -o Dpkg::Use-Pty=0 install -y unattended-upgrades
 OS_CATCH_UP
     chmod 700 /var/cache/cool-eva-install/os-catch-up.sh.next
     mv -f /var/cache/cool-eva-install/os-catch-up.sh.next /var/cache/cool-eva-install/os-catch-up.sh
@@ -146,11 +146,23 @@ OS_UNIT
     # Only this journal follower belongs to SSH; apt/dpkg belong to PID 1's service.
     journalctl --unit="$os_unit" --follow --lines=10 --no-pager 9>&- &
     PROGRESS_PID=$!
+    inactive_since=
     while :; do
         os_state=$(systemctl show "$os_unit" --property=ActiveState --value)
         case "$os_state" in
             active) break ;;
-            activating|deactivating|inactive) sleep 2 ;;
+            activating|deactivating) inactive_since=; sleep 2 ;;
+            inactive)
+                os_now=$(cut -d . -f 1 /proc/uptime)
+                inactive_since=${inactive_since:-$os_now}
+                if [ "$((os_now - inactive_since))" -gt 60 ]; then
+                    os_jobs=$(systemctl list-jobs --no-legend --no-pager) || fail 'Cannot inspect the OS job. Keep power on and paste the setup line again.'
+                    if ! printf '%s\n' "$os_jobs" | awk -v unit="$os_unit" '$2 == unit {found=1} END {exit !found}'; then
+                        fail 'OS catch-up did not start. Keep power on; paste the same setup line again to resume.'
+                    fi
+                fi
+                sleep 2
+                ;;
             *) fail 'OS catch-up failed. Keep power on; paste the same setup line again to resume.' ;;
         esac
     done

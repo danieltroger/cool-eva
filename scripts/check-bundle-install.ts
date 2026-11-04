@@ -20,7 +20,8 @@ import { checkBootstrap } from "./install-check/bootstrap-check.ts";
 import { checkStartupHealth } from "./install-check/health-check.ts";
 import { checkOsUpdateCondition } from "./install-check/os-condition-check.ts";
 import { checkRecoveryAssertion } from "./install-check/recovery-check.ts";
-import { installationFailureAdvice, MigrationNeedsHelpError } from "../src/install/main.ts";
+import { installationFailureAdvice, MigrationNeedsHelpError } from "../src/install/errors.ts";
+import { checkMigrationFailures } from "./install-check/migration-check.ts";
 import { checkBundleLauncher } from "./install-check/launch-check.ts";
 
 export async function checkBundleInstall(): Promise<void> {
@@ -79,6 +80,7 @@ export async function checkBundleInstall(): Promise<void> {
     assert(!installationFailureAdvice(new MigrationNeedsHelpError("conflict")).includes("paste"));
     assert.match(installationFailureAdvice(new Error("network")), /paste the same/);
     await checkRecoveryAssertion(directory);
+    await checkMigrationFailures(directory, root);
     checkPowerGate();
     checkLoopbackRoute();
     const profile = networkProfile(

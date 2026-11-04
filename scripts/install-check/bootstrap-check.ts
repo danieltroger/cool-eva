@@ -10,7 +10,8 @@ import { renderInstaller } from "../release/installer.ts";
 import { hashFile, writeFileInventory } from "../release/files.ts";
 import { runInTerminal } from "./terminal.ts";
 
-export async function checkBootstrap(directory: string, repository: string): Promise<void> {
+export async function checkBootstrap(directory: string, repository: string, only?: string): Promise<void> {
+  let selected = 0;
   for (const variant of [
     "valid",
     "rerun",
@@ -21,7 +22,15 @@ export async function checkBootstrap(directory: string, repository: string): Pro
     "pending-update",
     "cancel",
     "apt-failure",
+    "activating",
+    "failed",
+    "inactive-no-job",
+    "inactive-pending-job",
   ] as const) {
+    if (only && only !== variant) {
+      continue;
+    }
+    selected++;
     const root = join(directory, variant);
     const payload = join(root, "payload");
     const metadata = createReleaseMetadata(await readBundleInputs(repository), {
@@ -43,7 +52,7 @@ export async function checkBootstrap(directory: string, repository: string): Pro
       await mkdir(path, { recursive: true });
     }
     await writeFile(join(root, "commands.txt"), "");
-    for (const command of ["id", "mv", "curl", "realpath", "sha256sum", "flock", "sync"]) {
+    for (const command of ["id", "mv", "curl", "realpath", "sha256sum", "flock", "sync", "cut", "sleep"]) {
       await writeFile(join(commands, command), commandWrapper(command), { mode: 0o755 });
     }
     for (const command of ["apt-get", "apt-mark", "journalctl", "git", "npm"]) {
@@ -53,7 +62,22 @@ export async function checkBootstrap(directory: string, repository: string): Pro
         { mode: 0o755 }
       );
     }
-    await writeFile(join(root, "os-state"), "inactive");
+    await writeFile(
+      join(root, "os-state"),
+      variant === "activating" ? "activating" : variant === "failed" ? "failed" : "inactive"
+    );
+    await writeFile(join(root, "starts"), variant === "activating" ? "1" : "0");
+    await writeFile(join(root, "clock.txt"), "100");
+    await writeFile(join(root, "shows"), "0");
+    await writeFile(join(root, "sleeps"), "0");
+    await writeFile(
+      join(commands, "sleep"),
+      `#!/bin/sh
+count=$(cat "$UPDATE_FIXTURE/sleeps"); count=$((count+1)); echo "$count" > "$UPDATE_FIXTURE/sleeps"
+if [ "$count" -gt 10 ]; then echo 'Fixture wait budget exhausted' >&2; exit 89; fi
+`,
+      { mode: 0o755 }
+    );
     await writeFile(
       join(commands, "systemctl"),
       `#!/bin/sh
@@ -61,12 +85,30 @@ printf 'systemctl %s\\n' "$*" >> "$UPDATE_FIXTURE/commands.txt"
 case "$1" in
   reset-failed)
     if [ "$(cat "$UPDATE_FIXTURE/os-state")" != failed ]; then echo 'Unit not loaded' >&2; exit 1; fi
+    echo inactive > "$UPDATE_FIXTURE/os-state"
     ;;
-  show) cat "$UPDATE_FIXTURE/os-state" ;;
+  show)
+    shows=$(cat "$UPDATE_FIXTURE/shows"); shows=$((shows+1)); echo "$shows" > "$UPDATE_FIXTURE/shows"
+    if [ '${variant}' = activating ] && [ "$shows" -ge 4 ]; then echo active > "$UPDATE_FIXTURE/os-state"; fi
+    cat "$UPDATE_FIXTURE/os-state"
+    ;;
+  list-jobs)
+    if [ '${variant}' = inactive-pending-job ]; then
+      echo '42 cool-eva-install-os.service start waiting'
+      echo active > "$UPDATE_FIXTURE/os-state"
+    else
+      echo '43 unrelated.service start running'
+    fi
+    ;;
   start)
+    starts=$(cat "$UPDATE_FIXTURE/starts"); echo "$((starts+1))" > "$UPDATE_FIXTURE/starts"
+    case '${variant}' in
+      inactive-no-job|inactive-pending-job) exit 0 ;;
+    esac
     if /bin/sh "$UPDATE_FIXTURE/cache/os-catch-up.sh"; then echo active; else echo failed; fi > "$UPDATE_FIXTURE/os-state"
     ;;
   stop) echo inactive > "$UPDATE_FIXTURE/os-state" ;;
+
 esac
 `,
       { mode: 0o755 }
@@ -134,15 +176,52 @@ esac
     );
     const calls = await readFile(join(root, "commands.txt"), "utf8");
     const nodeCalls = calls.split("\n").filter(line => line.startsWith("node "));
-    if (variant === "valid" || variant === "rerun") {
+    if (
+      variant === "valid" ||
+      variant === "rerun" ||
+      variant === "activating" ||
+      variant === "failed" ||
+      variant === "inactive-pending-job"
+    ) {
       assert.equal(result.code, 0, result.output);
-      assert.equal(nodeCalls.length, variant === "valid" ? 2 : 1);
+      assert.equal(nodeCalls.length, variant === "rerun" ? 1 : 2);
       for (const call of nodeCalls) {
         assert(call.startsWith("node --no-wasm-lazy-compilation --experimental-strip-types "));
       }
-      assert(calls.includes("apt-mark manual jq"));
-      assert(calls.includes("systemctl start --no-block cool-eva-install-os.service"));
-      assert(calls.indexOf("apt-mark manual jq") < calls.indexOf("src/install/main.ts"));
+      const startCalls = calls
+        .split("\n")
+        .filter(line => line === "systemctl start --no-block cool-eva-install-os.service");
+      const resetIndex = calls.indexOf("systemctl reset-failed cool-eva-install-os.service");
+      assert.equal(
+        (await readFile(join(root, "starts"), "utf8")).trim(),
+        "1",
+        "Exactly one job starts across original/attached setup"
+      );
+      assert.equal(startCalls.length, variant === "activating" ? 0 : 1);
+      if (variant === "failed") {
+        assert(resetIndex >= 0 && resetIndex < calls.indexOf(startCalls[0]));
+      } else {
+        assert.equal(resetIndex, -1);
+      }
+      if (variant !== "activating" && variant !== "inactive-pending-job") {
+        assert(calls.includes("apt-mark manual jq"));
+        assert(calls.indexOf("apt-mark manual jq") < calls.indexOf("src/install/main.ts"));
+        const packageCalls = calls
+          .split("\n")
+          .filter(
+            line =>
+              line.startsWith("apt-get ") || (line.startsWith("dpkg ") && !line.startsWith("dpkg --print-architecture"))
+          );
+        assert.equal(packageCalls.length, 5);
+        for (const call of packageCalls) {
+          const prefix = call.startsWith("apt-get ") ? "-o Dpkg::Options::=" : "";
+          assert(call.includes(prefix + "--force-confold"), call);
+          assert(call.includes(prefix + "--force-confdef"), call);
+        }
+      }
+      if (variant === "inactive-pending-job") {
+        assert(calls.includes("systemctl list-jobs --no-legend --no-pager"));
+      }
       const unit = await readFile(join(root, "systemd/cool-eva-install-os.service"), "utf8");
       assert(unit.includes("Type=oneshot\nRemainAfterExit=yes\n"));
       assert(unit.includes(`ExecStart=/bin/sh ${root}/cache/os-catch-up.sh`));
@@ -160,12 +239,24 @@ esac
         "wrong-architecture": /64-bit userspace/,
         "pending-update": /release changed while setup was starting/,
         cancel: /cancelled before any system change/,
+        "inactive-no-job": /OS catch-up did not start[\s\S]*paste the same setup line/i,
         "apt-failure": /setup stopped: OS catch-up failed[\s\S]*paste the same setup line/i,
-      }[variant];
+      }[
+        variant as
+          | "bad-sha"
+          | "linked-file"
+          | "wrong-identity"
+          | "wrong-architecture"
+          | "pending-update"
+          | "cancel"
+          | "apt-failure"
+          | "inactive-no-job"
+      ];
       assert.match(result.output, reason);
       if (variant === "cancel") {
         assert(!calls.includes("apt-get"));
       }
     }
   }
+  assert(selected > 0, "Unknown bootstrap fixture selection");
 }

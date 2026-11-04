@@ -3,7 +3,7 @@ FROM ${BUILDER_IMAGE}
 
 ARG APT_SNAPSHOT
 RUN printf 'Types: deb\nURIs: http://snapshot.debian.org/archive/debian/%s/\nSuites: trixie trixie-updates\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\nCheck-Valid-Until: no\n' "$APT_SNAPSHOT" > /etc/apt/sources.list.d/debian.sources
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl xz-utils zstd python3 make g++ libc6-dev binutils
+RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends ca-certificates curl xz-utils zstd python3 make g++ libc6-dev binutils
 
 ARG NODE_VERSION
 ARG NODE_SHA256
