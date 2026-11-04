@@ -7,6 +7,9 @@ import { handleWaypointEndpoint } from "./http/waypoint.ts";
 import { handleStatusEndpoint } from "./http/status.ts";
 import { handleCanRestartEndpoint } from "./http/can-restart.ts";
 import { handleUpdateEndpoint } from "./http/update.ts";
+import { handleReleaseHealth } from "./http/release-health.ts";
+import { handleUpdateStatus } from "./http/bundle-update.ts";
+import { readReleaseMetadata } from "./release/metadata.ts";
 import { handleDtcTableEndpoint } from "./http/dtc-table.ts";
 import { handleFaultInfokeysEndpoint } from "./http/fault-infokeys.ts";
 import { handleStoredDtcsEndpoint } from "./http/stored-dtcs.ts";
@@ -72,10 +75,9 @@ const ROOT = join(__dirname, "..");
 const PORT = 80;
 const CAN_IFACE = "can0";
 
-// Where the menu's "Update" button runs `git pull`: this checkout, wherever it is.
-// ROOT is derived from the running file's own path, so it is the right directory
-// whatever the checkout is named or wherever it was moved to.
-const UPDATE_DIR = process.env.UPDATE_DIR ?? ROOT;
+// A bundle must never pull a retained checkout named by a legacy UPDATE_DIR.
+// Checkouts keep their old override until the installer performs the storage cutover.
+const UPDATE_DIR = (await readReleaseMetadata(ROOT)) ? ROOT : (process.env.UPDATE_DIR ?? ROOT);
 
 // Config (env overrides). docs/configuration.md is the full table; this indexes it:
 //   COOLANT_ENABLED=0 → skip the MAX31865 probes (a bike with no watercooling loop)
@@ -531,6 +533,14 @@ const server = createServer(async (req, res) => {
   // service so the new code takes effect.
   if (url.pathname === "/update") {
     await handleUpdateEndpoint(req, res, UPDATE_DIR);
+    return;
+  }
+  if (url.pathname === "/release-health") {
+    await handleReleaseHealth(res, ROOT);
+    return;
+  }
+  if (url.pathname === "/update-status") {
+    await handleUpdateStatus(res);
     return;
   }
   // Duty and mode for the cooling fan. The Pi's own GPIO and PWM; it cannot reach the

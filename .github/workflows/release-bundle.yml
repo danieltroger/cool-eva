@@ -7,6 +7,8 @@ on:
       - .github/workflows/release-bundle.yml
       - scripts/release/**
       - scripts/check-release-bundle.ts
+      - scripts/update/**
+      - src/release/**
   workflow_dispatch:
     inputs:
       channel:

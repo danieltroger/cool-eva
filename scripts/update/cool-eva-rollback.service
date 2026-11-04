@@ -1,0 +1,9 @@
+[Unit]
+Description=Recover a failing Cool Eva release
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/cool-eva-update failure
+TimeoutStartSec=40min
+User=root
+UMask=0077

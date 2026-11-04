@@ -1,0 +1,25 @@
+[Unit]
+Description=Cool Eva telemetry
+After=network.target bluetooth.service
+Wants=bluetooth.service
+StartLimitIntervalSec=120
+StartLimitBurst=3
+OnFailure=cool-eva-rollback.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/cool-eva
+EnvironmentFile=-/etc/default/cool-eva
+ExecStartPre=/usr/local/libexec/cool-eva-update recover
+ExecStart=/usr/local/libexec/cool-eva-launch
+Restart=on-failure
+RestartMode=normal
+RestartSec=5
+User=root
+UMask=0027
+RuntimeDirectory=cool-eva
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+
+[Install]
+WantedBy=multi-user.target

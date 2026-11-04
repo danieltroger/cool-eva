@@ -1,0 +1,31 @@
+name: Bundle updater recovery
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/update/**
+      - scripts/update-check/**
+      - scripts/check-bundle-*.ts
+      - scripts/check-updater-systemd.ts
+      - src/release/**
+      - .github/workflows/updater.yml
+
+permissions:
+  contents: read
+
+jobs:
+  systemd:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.22.2
+      - run: sudo apt-get update && sudo apt-get install -y jq zstd
+      - run: npm ci
+      - name: Actual start limiter and OnFailure, with a synthetic CAN replay
+        run: sudo env PATH="$PATH" GITHUB_ACTIONS=true node --experimental-strip-types scripts/check-updater-systemd.ts

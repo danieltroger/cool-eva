@@ -4,6 +4,8 @@ import { promisify } from "util";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { asOwnerCommand } from "./http/update.ts";
+import { readReleaseMetadata } from "./release/metadata.ts";
+import { readBundleNotices, readBundleVersion } from "./release/version.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -15,14 +17,14 @@ const execFileAsync = promisify(execFile);
 // deploy is not a code change — and nothing on the bike could say which commit it was running, so
 // the feature looked broken rather than old. docs/can-0x121-charge-command.md.
 //
-// Deploy is `git pull` in a checkout (INSTALL.md), so git is the source of truth: there is no build
-// step to stamp a version into and `package.json` has said 1.0.0 since the beginning.
+// Checkouts use Git, since package.json's 1.0.0 identifies no commit. Bundles carry their
+// identity and file inventory; their OS/rollback notices refresh separately. docs/bundle-updater.md.
 
 /** The running commit, or why it could not be read. A null `commit` is never fatal. */
 export interface RunningVersion {
   /** Short SHA, e.g. `09c3b84`. Null when git could not answer. */
   commit: string | null;
-  /** True when tracked files differ from that commit — the running code is not the committed code. */
+  /** True when tracked checkout files or inventoried release files differ from their recorded commit. */
   dirty: boolean;
   /**
    * ⚠️ False when git could not say whether the tree is clean, NOT when it said it is dirty. The
@@ -30,7 +32,7 @@ export interface RunningVersion {
    * not to call clean is not then rendered as clean.
    */
   trustworthy: boolean;
-  /** Already phrased: `09c3b84`, `09c3b84+dirty`, `09c3b84+unverified`, or `unknown`. */
+  /** Commit/branch, edit or verification suffix, and plain bundle notices when applicable. */
   label: string;
 }
 
@@ -47,12 +49,26 @@ export interface RunningVersion {
  */
 export function readRunningVersion(directory?: string): Promise<RunningVersion> {
   cached ??= readVersion(directory ?? join(dirname(fileURLToPath(import.meta.url)), ".."));
-  return cached;
+  return cached.then(async version => {
+    if (bundleDirectory === null) return version;
+    return { ...version, label: [version.label, ...(await readBundleNotices(bundleDirectory))].join(" · ") };
+  });
 }
 
 let cached: Promise<RunningVersion> | null = null;
+let bundleDirectory: string | null = null;
 
 async function readVersion(directory: string): Promise<RunningVersion> {
+  try {
+    const metadata = await readReleaseMetadata(directory);
+    if (metadata) {
+      bundleDirectory = directory;
+      return readBundleVersion(directory, metadata);
+    }
+  } catch (error) {
+    console.warn("version: could not read release metadata:", error);
+    return { commit: null, dirty: false, trustworthy: false, label: "unknown+unverified" };
+  }
   // ⚠️ Run as the checkout's OWNER, exactly as the Update button's pull does. The service is
   // `User=root` (scripts/setup-service.ts) over a `pi`-owned checkout, and git refuses to operate on
   // a repository it considers someone else's — so a plain `git -C` here answers nothing and this

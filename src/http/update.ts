@@ -5,11 +5,12 @@ import { join } from "path";
 import { promisify } from "util";
 import { monotonicNow, since } from "../monotonic.ts";
 import { syncFilesystems } from "../storage/durable.ts";
+import { tryBundleUpdate } from "./bundle-update.ts";
 
 const execFileAsync = promisify(execFile);
 
-// POST /update — `git pull` the checkout on the Pi, then restart the service so the new
-// code takes effect. The menu's "Update" button.
+// POST /update keeps owner-run Git deployment for checkouts. Bundle installs queue the
+// independent shell updater in bundle-update.ts: docs/bundle-updater.md.
 //
 // Returns git's own output so the rider sees exactly what moved — or why nothing did. On
 // a successful pull it restarts cool-eva; the service IS this process, so the restart can
@@ -33,6 +34,7 @@ const execFileAsync = promisify(execFile);
 export interface UpdateReply {
   ok: boolean;
   message: string;
+  sequence?: number;
 }
 
 /** git pull can hang on bad garage wifi; don't leave the button spinning forever. */
@@ -68,6 +70,7 @@ export async function handleUpdateEndpoint(
     res.end(`pulling and restarting needs the ${UPDATE_HEADER}: ${UPDATE_HEADER_VALUE} header\n`);
     return;
   }
+  if (await tryBundleUpdate(res, directory)) return;
   const startedAt = monotonicNow();
   // Falls back to our own uid only so a failing stat() still has something to name in the
   // reply; the pull itself never runs on that guess.

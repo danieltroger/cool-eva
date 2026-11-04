@@ -3,6 +3,7 @@
 import van from "../vendor/van-1.6.1.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 import { request } from "../lib/transport.js";
+import { followUpdate } from "../lib/update-progress.js";
 
 const { button, div } = van.tags;
 
@@ -81,11 +82,9 @@ const updateFailed = van.state(false);
 const updating = van.state(false);
 
 /**
- * Pulls the latest code on the Pi. POSTs to /update, which runs `git pull` and returns
- * git's own output verbatim — that is the useful thing to show, since "Already up to
- * date." and a summary of what changed are both worth reading. It then restarts the
- * service so the new code takes effect, which drops this WebSocket; the store reconnects
- * on its own once the service is back.
+ * Checkouts return Git's own output. Bundle installs return a queued job sequence,
+ * then report download/trial/rollback results through update-progress.js. A queued
+ * job is not a successful update; the store reconnects after the service restarts.
  *
  * The note is styled from `ok`, not just filled from `message`: a failed pull used to
  * render in the same grey as a successful one, which is the bug style.css argues against
@@ -110,7 +109,7 @@ export function UpdateButton() {
           void performUpdate();
         },
       },
-      () => (armed.val === UPDATE_KEY ? "⚠️  Tap again — pulls new code and restarts the service" : "⬆  Update")
+      () => (armed.val === UPDATE_KEY ? "⚠️  Tap again — installs the update and restarts the service" : "⬆  Update")
     ),
     () =>
       updateMessage.val
@@ -156,6 +155,12 @@ async function performUpdate() {
     const reply = /** @type {UpdateReply} */ (await response.json());
     updateMessage.val = reply.message;
     updateFailed.val = !reply.ok;
+    if (reply.ok && reply.sequence !== undefined) {
+      await followUpdate(reply.sequence, status => {
+        updateMessage.val = status.message;
+        updateFailed.val = !status.ok;
+      });
+    }
   } catch (error) {
     console.warn("update: request failed", error);
     updateMessage.val = "Update request failed — is the Pi reachable?";
