@@ -5,6 +5,7 @@ import { join } from "path";
 import { promisify } from "util";
 import { monotonicNow, since } from "../monotonic.ts";
 import { syncFilesystems } from "../storage/durable.ts";
+import { tryBundleUpdate } from "./bundle-update.ts";
 import { readSettingsBody, reserveSettingsRestart, settingsReply, type SettingsHttpContext } from "./settings.ts";
 import type { SettingsReply } from "../settings/view.ts";
 import { record } from "../settings/schema.ts";
@@ -25,6 +26,7 @@ export interface UpdateReply {
   settings?: SettingsReply;
   ok: boolean;
   message: string;
+  sequence?: number;
 }
 
 /** git pull can hang on bad garage wifi; don't leave the button spinning forever. */
@@ -86,6 +88,14 @@ export async function handleUpdateEndpoint(
         respond(res, 200, { ok: true, message: "The process already changed. Read settings before another update." });
         return;
       }
+    }
+    if (
+      await tryBundleUpdate(res, directory, {
+        statusDirectory: settings?.runtime.paths.updaterDirectory,
+        reservation: settings && body ? { request: req, body, settings } : undefined,
+      })
+    ) {
+      return;
     }
     const pull = await pullCommandFor(directory, currentUid);
     ownerUid = pull.ownerUid;

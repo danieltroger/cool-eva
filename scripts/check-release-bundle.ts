@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { link, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { copyBundleArtifacts } from "./release/build.ts";
 import { NPM_CI_ARGUMENTS } from "./release/assemble.ts";
-import { hashFile, selectSourcePaths, validateArchivePath, writeFileInventory } from "./release/files.ts";
+import {
+  hashFile,
+  selectSourcePaths,
+  validateArchivePath,
+  writeFileInventory,
+  RUNTIME_SCRIPTS,
+} from "./release/files.ts";
 import { parseBundleInputs, readBundleInputs, validateBuildIdentity } from "./release/inputs.ts";
 import { createReleaseMetadata, renderReleaseManifest } from "./release/manifest.ts";
 import { assertUsocketUnavailable, selectNativeBinaries, validateArm64Elf } from "./release/native.ts";
@@ -219,9 +225,10 @@ async function checkRuntimePayload(source: string, output: string): Promise<void
       await writeFile(join(source, path), "runtime fixture\n");
     }
   }
-  await mkdir(join(source, "scripts/can-capture"), { recursive: true });
-  await writeFile(join(source, "scripts/can-capture/capture.sh"), "exit 0\n");
-  await writeFile(join(source, "scripts/configure-network-purposes.ts"), "export {};\n");
+  for (const script of RUNTIME_SCRIPTS) {
+    await mkdir(dirname(join(source, script)), { recursive: true });
+    await writeFile(join(source, script), "runtime fixture\n");
+  }
   await writeFile(join(source, "scripts/check-example.ts"), "throw new Error('not a runtime script');\n");
   await mkdir(join(source, "docs"));
   await writeFile(join(source, "docs/developer.md"), "developer fixture\n");
@@ -229,8 +236,18 @@ async function checkRuntimePayload(source: string, output: string): Promise<void
   await copyRuntimePayload(source, output);
   assert(!(await readdir(output)).includes("docs"));
   assert(!(await readdir(output)).includes("package-lock.json"));
-  assert.deepEqual((await readdir(join(output, "scripts"))).sort(), ["can-capture", "configure-network-purposes.ts"]);
-  assert.equal(await readFile(join(output, "scripts/configure-network-purposes.ts"), "utf8"), "export {};\n");
+  assert.deepEqual((await readdir(join(output, "scripts"))).sort(), [
+    "can-capture",
+    "configure-network-purposes.ts",
+    "update",
+  ]);
+  assert.equal(await readFile(join(output, "scripts/configure-network-purposes.ts"), "utf8"), "runtime fixture\n");
+  await symlink("../package.json", join(output, "src/link"));
+  await assert.rejects(assertRuntimePayload(output), /only directories and regular files/);
+  await rm(join(output, "src/link"));
+  await link(join(output, "package.json"), join(output, "src/hard-link"));
+  await assert.rejects(assertRuntimePayload(output), /only directories and regular files/);
+  await rm(join(output, "src/hard-link"));
   await writeFile(join(output, "scripts/check-example.ts"), "not allowed\n");
   await assert.rejects(assertRuntimePayload(output), /Non-runtime script/);
   await rm(join(output, "scripts/check-example.ts"));

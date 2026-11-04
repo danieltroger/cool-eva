@@ -2,8 +2,8 @@ import { spawn } from "child_process";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
-// `npm test` — runs every self-check that needs nothing but Node, in order, and exits
-// non-zero if any of them does.
+// `npm test` runs the self-checks without hardware, in order. Bundle shell fixtures
+// also need POSIX sh, jq and tar/zstd; systemd recovery has a separate disposable CI job.
 //
 // A runner, not a framework: the checks predate it and are top-level
 // scripts that report failure with `process.exit(1)`, so each gets its OWN PROCESS.
@@ -68,6 +68,36 @@ const CHECKS: SelfCheck[] = [
       "and a whole sweep against the simulated micros: the poller parked for those 25 rows and none of the other " +
       "277, a refused park ending the block after one attempt with nothing on the wire, and a gate that closes " +
       "while the poller parks stopping the read",
+  },
+  {
+    script: "scripts/check-bundle-admission.ts",
+    covers:
+      "bundle queueing through the shared settings revision and bus restart reservation, busy/motion/Bluetooth handover refusal, duplicate admission and cleanup without a second app restart",
+  },
+  {
+    script: "scripts/check-bundle-stop.ts",
+    covers:
+      "stop-time localhost shared reservation; movement, busy bus, stale revision and Bluetooth-key refusal leave the app running; verified download reuse and reservation held through SIGTERM",
+  },
+  {
+    script: "scripts/check-bundle-boundaries.ts",
+    covers:
+      "valid-checksum archive link/traversal refusals and configured data paths blocking release cleanup before any data deletion",
+  },
+  {
+    script: "scripts/check-bundle-recovery.ts",
+    covers:
+      "shell updater interrupted trials, explicit rollback targets, restart causes, late settings compatibility, repeat recovery and locally edited releases; real systemd behavior has its own Linux CI lane",
+  },
+  {
+    script: "scripts/check-bundle-update.ts",
+    covers:
+      "bundle download and checksum gate, promotion, failed trial, next update, edit archive, migration gate and helper replacement without Git or npm; commands are fixture adapters and the archive is real",
+  },
+  {
+    script: "scripts/check-bundle-runtime.ts",
+    covers:
+      "release metadata, service-owned migration health, CSRF guards, fixed updater unit, OS drift text and dashboard polling through a release restart",
   },
   {
     script: "scripts/check-can-adapter-rebind.ts",

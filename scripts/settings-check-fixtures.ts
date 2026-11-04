@@ -7,8 +7,8 @@ import type { DataMoveOptions } from "../src/settings/data-move.ts";
 import { openSettingsStore } from "../src/settings/store.ts";
 import { acquireSettingsWriterLock, type LockCommand } from "../src/settings/writer-lock.ts";
 
-export async function settingsFixture(): Promise<SettingsFixture> {
-  const directory = await mkdtemp(join(tmpdir(), "cool-eva-settings-check-"));
+export async function settingsFixture(parentDirectory = tmpdir()): Promise<SettingsFixture> {
+  const directory = await mkdtemp(join(parentDirectory, "cool-eva-settings-check-"));
   const command = await testLockCommand(directory);
   const lock = await acquireSettingsWriterLock(join(directory, "locks", "settings.lock"), command);
   const paths = settingsPaths(join(directory, "data"));
