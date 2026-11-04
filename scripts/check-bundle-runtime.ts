@@ -5,13 +5,20 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { promisify } from "node:util";
 import { join } from "node:path";
 import { isBundleRuntime, readReleaseMetadata } from "../src/release/metadata.ts";
-import { osPackagesChanged, rollbackNotice } from "../src/release/version.ts";
+import { osPackagesChanged, readBundleNotices, rollbackNotice } from "../src/release/version.ts";
 import { readUpdateStatus } from "../src/release/update-status.ts";
 import { handleBundleUpdate, tryBundleUpdate } from "../src/http/bundle-update.ts";
 import { handleUpdateEndpoint } from "../src/http/update.ts";
 import { handleReleaseHealth, verifyReleaseStorage } from "../src/http/release-health.ts";
 import { settingsPaths } from "../src/settings/paths.ts";
-import { createUpdateFixture, fixtureEnvironment, REPOSITORY } from "./update-check/fixture.ts";
+import {
+  createUpdateFixture,
+  fixtureEnvironment,
+  readState,
+  saveState,
+  REPOSITORY,
+  type UpdateFixture,
+} from "./update-check/fixture.ts";
 import { followUpdate } from "../public/lib/update-progress.js";
 import { createVirtualClock } from "./virtual-clock.ts";
 
@@ -32,7 +39,7 @@ export async function checkBundleRuntime(): Promise<void> {
       "RestartSec=5",
       "RestartMode=normal",
       "OnFailure=cool-eva-rollback.service",
-      "ExecStartPre=/usr/local/libexec/cool-eva-update recover",
+      "ExecStartPre=-/usr/local/libexec/cool-eva-update recover",
       "RuntimeDirectoryMode=0700",
       "RuntimeDirectoryPreserve=yes",
     ]) {
@@ -113,11 +120,12 @@ export async function checkBundleRuntime(): Promise<void> {
       "libstdc++6",
       "systemd",
     ]) {
-      assert.equal(osPackagesChanged(`ii  ${name} 1 arm64\n`, `${name}\t1\n`), false);
-      assert.equal(osPackagesChanged(`ii  ${name} 1 arm64\n`, `${name}\t2\n`), true);
-      assert.equal(osPackagesChanged(`ii  ${name}:arm64 1 arm64\n`, `${name}:arm64\t1\n`), false);
-      assert.equal(osPackagesChanged(`ii  ${name}:arm64 1 arm64\n`, `${name}:arm64\t2\n`), true);
+      assert.equal(osPackagesChanged(`${name}\t1\n`, `${name}\t1\n`), false);
+      assert.equal(osPackagesChanged(`${name}\t1\n`, `${name}\t2\n`), true);
+      assert.equal(osPackagesChanged(`${name}:arm64\t1\n`, `${name}:arm64\t1\n`), false);
+      assert.equal(osPackagesChanged(`${name}:arm64\t1\n`, `${name}:arm64\t2\n`), true);
     }
+    await checkPromotionBaseline(fixture);
     assert.match(
       rollbackNotice({ lastRollback: { from: "test-release", reason: "interrupted" } })!,
       /interrupted.*Update again/
@@ -140,6 +148,41 @@ export async function checkBundleRuntime(): Promise<void> {
       }
     }
     await rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function checkPromotionBaseline(fixture: UpdateFixture): Promise<void> {
+  const directory = join(fixture.code, "releases/old");
+  const privateDirectory = join(fixture.data, "updater");
+  await writeFile(join(directory, "tested-os-packages.txt"), "ii  bluez 999 arm64\n");
+  assert.deepEqual(
+    await readBundleNotices(directory, privateDirectory),
+    [],
+    "the original image must not cause a permanent OS-drift notice after catch-up"
+  );
+  const savedNow = Object.getOwnPropertyDescriptor(performance, "now");
+  const started = performance.now();
+  try {
+    await writeFile(join(fixture.root, "os-packages.txt"), "bluez\t2\nsystemd\t1\n");
+    Object.defineProperty(performance, "now", { configurable: true, value: () => started + 61_000 });
+    assert.deepEqual(await readBundleNotices(directory, privateDirectory), [
+      "OS updated since this release was tested",
+    ]);
+    const state = await readState(fixture);
+    state.osPackages = { old: "bluez\t2\nsystemd\t1" };
+    await saveState(fixture, state);
+    Object.defineProperty(performance, "now", { configurable: true, value: () => started + 122_000 });
+    assert.deepEqual(
+      await readBundleNotices(directory, privateDirectory),
+      [],
+      "a successful promotion records the new local baseline"
+    );
+  } finally {
+    if (savedNow) {
+      Object.defineProperty(performance, "now", savedNow);
+    } else {
+      Reflect.deleteProperty(performance, "now");
+    }
   }
 }
 

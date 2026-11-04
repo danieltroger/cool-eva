@@ -70,6 +70,11 @@ const CHECKS: SelfCheck[] = [
       "while the poller parks stopping the read",
   },
   {
+    script: "scripts/check-bundle-admission.ts",
+    covers:
+      "bundle queueing through the shared settings revision and bus restart reservation, busy/motion/Bluetooth handover refusal, duplicate admission and cleanup without a second app restart",
+  },
+  {
     script: "scripts/check-bundle-boundaries.ts",
     covers:
       "valid-checksum archive link/traversal refusals and configured data paths blocking release cleanup before any data deletion",
@@ -1052,6 +1057,44 @@ const CHECKS: SelfCheck[] = [
       "literal effective-environment migration, private settings modes and serial writers, " +
       "learned hub state without pending/revision churn, untouched future/corrupt settings, " +
       "additive-field preservation, concurrent atomic replacements and selective orphan cleanup",
+  },
+  {
+    script: "scripts/check-settings-first-boot.ts",
+    covers:
+      "injected Pi first-boot privileges/probe/order, partial recording pause, refusal archive modes, field-level migration and marker recovery",
+  },
+  {
+    script: "scripts/check-mutation-guard.ts",
+    covers: "the real HTTP CSRF guard, cached-dashboard reload instruction and non-mutating spoken Siri compatibility",
+  },
+  {
+    script: "scripts/check-settings-cutover.ts",
+    covers: "legacy instruction removal, unit cutover ordering, CSRF waypoint client and GPS command seams",
+  },
+  {
+    script: "scripts/check-settings-discovery.ts",
+    covers:
+      "bounded read-only candidate scanning, handshake/single-flight refusal and cleanup without pairing or resets",
+  },
+  {
+    script: "scripts/check-settings-http.ts",
+    covers:
+      "settings redaction, strict HTTP mutations, pending/active state, canonical public keys and Bluetooth key handover",
+  },
+  {
+    script: "scripts/check-settings-phone.ts",
+    covers:
+      "phone drafts scoped to the confirmed Pi, stale edit CAS, active/learned revision semantics and disarm on process changes",
+  },
+  {
+    script: "scripts/check-settings-restart.ts",
+    covers:
+      "revision/bus reservation, bounded BLE drain and restart expiry, generation idempotence and existing motion rules",
+  },
+  {
+    script: "scripts/check-settings-runtime.ts",
+    covers:
+      "fresh and migrated service starts, durable pre-move capture, interrupted startup, degraded faults, M8 and M12",
   },
   {
     script: "scripts/check-settings-data-move.ts",

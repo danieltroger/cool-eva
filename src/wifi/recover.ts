@@ -96,7 +96,7 @@ export interface LadderEffects {
 export interface RecoverContext {
   iface: string;
   hotspotSsid: string;
-  dumpDirectory: string;
+  dumpDirectory: string | null;
 }
 
 let running = false;
@@ -184,7 +184,8 @@ function outcomeOf(attempt: { ok: boolean; profile: string | null }): RejoinOutc
  */
 function realEffects(context: RecoverContext): LadderEffects {
   return {
-    dump: () => writeWifiDump(context.dumpDirectory, context.iface, uptime()),
+    dump: () =>
+      context.dumpDirectory === null ? refusedDump() : writeWifiDump(context.dumpDirectory, context.iface, uptime()),
     scanShowsHotspot: async () => {
       const list = await runCommand(
         NMCLI,
@@ -275,7 +276,8 @@ function realHoldDeps(context: RecoverContext): HoldDeps {
     speedKmh: () => freshValue("speed_can_kmh", WIFI_SPEED_MAX_AGE_MS),
     speedAgeMs: () => ageMs("speed_can_kmh"),
     linkState: currentLinkState,
-    dump: () => writeWifiDump(context.dumpDirectory, context.iface, uptime()),
+    dump: () =>
+      context.dumpDirectory === null ? refusedDump() : writeWifiDump(context.dumpDirectory, context.iface, uptime()),
     recover: () => recoverWifi(context, RECOVER_TRIGGER.GESTURE),
   };
 }
@@ -353,4 +355,9 @@ function describeOutcome(outcome: RejoinOutcome): string {
     return "a recovery was already running, so this hold was ignored";
   }
   return "the rejoin did not take; the dump is on the Pi";
+}
+
+async function refusedDump(): Promise<null> {
+  console.warn("wifi-diag: archive writes are paused until the Settings migration fault is repaired.");
+  return null;
 }

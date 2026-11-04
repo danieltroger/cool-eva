@@ -118,7 +118,9 @@ export function resolvePackTemperatures(id: number, data: Buffer, decoded: Decod
     return decoded;
   }
   for (const { key, value } of decoded) {
-    if (key === "batt_temp_hi_vcu") lastVcuTemperatureHigh = value;
+    if (key === "batt_temp_hi_vcu") {
+      lastVcuTemperatureHigh = value;
+    }
   }
   const trueTemperatures = collectTrueTemperatureCandidates(decoded);
   if (trueTemperatures.length === 0) return decoded;
@@ -311,13 +313,13 @@ function notePackThermalFrame(frameLength: number): void {
   // anyway, since the flag is wrong and only the operator can fix it.
   warnedThermalFrameUnexpected = true;
   console.error(
-    "bms: *** CUSTOM_BMS_CONFIG is not set, but extended 0x660 frames " +
+    "bms: *** the stock BMS option is selected, but extended 0x660 frames " +
       `(DLC >= ${OFFSET_CONFIG_MIN_DLC}) are arriving. *** The custom BMS config IS flashed, so ` +
       "0x200's temperature bytes are the VCU's LOWERED view, not the truth. Taking " +
       `batt_temp_lo/batt_temp_hi from 0x660. If 0x200 had already been flowing for ` +
       `${THERMAL_FRAME_WAIT_MS} ms when this frame arrived, the keys were briefly fed from 0x200 ` +
       "and those rows are cold by whatever the live config subtracts — up to 19 °C under the " +
-      "bounded clamp, at a true 54 °C. Set CUSTOM_BMS_CONFIG=1 and restart."
+      "bounded clamp, at a true 54 °C. Select the custom BMS configuration in Settings → Bike setup and restart."
   );
 }
 
@@ -333,10 +335,9 @@ function noteShortThermalFrame(): void {
   if (!customBmsConfigExpected || warnedThermalFrameShort) return;
   warnedThermalFrameShort = true;
   console.warn(
-    `bms: CUSTOM_BMS_CONFIG is set, but 0x660 arrives in its short form (DLC < ${OFFSET_CONFIG_MIN_DLC}) ` +
+    `bms: the custom BMS configuration is selected, but 0x660 arrives in its short form (DLC < ${OFFSET_CONFIG_MIN_DLC}) ` +
       "— that is the extended config WITHOUT the VCU temperature offset. Taking " +
-      "batt_temp_lo/batt_temp_hi from 0x200, which is correct for that config. Unset " +
-      "CUSTOM_BMS_CONFIG to silence this."
+      "batt_temp_lo/batt_temp_hi from 0x200, which is correct for that config. Select the stock BMS option in Settings → Bike setup to silence this."
   );
 }
 
@@ -355,11 +356,11 @@ function resolveVcuFrameOwnership(waitStartedAtMonotonicMs: number): boolean {
     if (warnedThermalFrameMissing) return false;
     warnedThermalFrameMissing = true;
     console.warn(
-      `bms: CUSTOM_BMS_CONFIG is set but ${describeMissingThermalFrame()}, ` +
+      `bms: Custom BMS configuration is selected in Settings → Bike setup, but ${describeMissingThermalFrame()}, ` +
         "so nothing on the bus carries the true pack temperature. " +
         "batt_temp_lo/batt_temp_hi stay UNLOGGED until a 0x660 turns up — under this config 0x200's " +
         "bytes are the VCU's lowered view, not the truth. batt_temp_lo_vcu/batt_temp_hi_vcu " +
-        "keep logging throughout. If this pack is in fact stock, unset CUSTOM_BMS_CONFIG and the " +
+        "keep logging throughout. If this pack is in fact stock, choose the stock BMS option in Settings → Bike setup and the " +
         "true keys resume from 0x200."
     );
     return false;

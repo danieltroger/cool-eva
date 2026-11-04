@@ -1,4 +1,5 @@
-import { mkdir, readFile } from "fs/promises";
+import { ensureArchiveDirectory } from "../storage/archive-access.ts";
+import { readFile } from "fs/promises";
 import { join } from "path";
 import { readRunningVersion } from "../version.ts";
 import { appendDurably } from "../storage/durable.ts";
@@ -107,7 +108,7 @@ export async function appendAuditRecord(directory: string, record: AuditRecord):
   // anything can be written") that a script or a reordered startup could silently break.
   const stamped: AuditRecord = { ...record, runningVersion: (await readRunningVersion()).label };
   try {
-    await mkdir(directory, { recursive: true });
+    await ensureArchiveDirectory(directory);
     // Flushed before it counts as recorded, and the directory too on the first record
     // ever written here — an unflushed append comes back as NULs after a power cut, which
     // is how a 1710-NUL line got into this file on 2026-09-08. docs/power-cuts.md.

@@ -36,8 +36,8 @@ console.log(`Public key  → ${publicKeyPath}`);
 console.log("");
 console.log("Next:");
 console.log("  1. Copy the private key into your password manager, then verify you can paste it back.");
-console.log("  2. Put the PUBLIC key on the Pi (it is safe to commit, and safe on a stolen bike):");
-console.log("       scp ride-log-key.public.pem pi@cool-eva.local:/home/pi/cool-eva/");
-console.log("  3. Restart the service. It will log `ride-log: encrypting to …` when it picks the key up.");
+console.log("  2. Open Settings → Ride recording on the dashboard and choose the PUBLIC key file.");
+
+console.log("  3. Save, explicitly Restart, then check the active fingerprint and recording status.");
 console.log("");
 console.log("The Pi never sees the private key, so from then on it can append history it cannot read back.");

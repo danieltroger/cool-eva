@@ -24,6 +24,18 @@ const failures: string[] = [];
 const scriptPath = fileURLToPath(CAPTURE_SCRIPT);
 
 const healthy = await runCaptureScriptWithStubs(scriptPath);
+if (healthy.captureFileModes.some(mode => mode !== 0o644)) {
+  failures.push("legacy/refusal capture files must retain main's 0644 SSH readability");
+}
+const managed = await runCaptureScriptWithStubs(scriptPath, { managedArchive: true });
+if (
+  managed.exitCode !== 0 ||
+  managed.captureFiles.length !== 1 ||
+  managed.captureFileModes.some(mode => mode !== 0o640)
+) {
+  failures.push("managed capture files must use 0640 without changing legacy capture access");
+}
+
 if (healthy.exitCode !== 0) {
   failures.push(`capture.sh does not run to completion under stubs: exit ${healthy.exitCode}\n${healthy.output}`);
 }

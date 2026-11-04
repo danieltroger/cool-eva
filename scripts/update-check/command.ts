@@ -83,6 +83,16 @@ async function download(root: string, arguments_: string[]): Promise<void> {
 }
 
 async function verifyChecksums(arguments_: string[]): Promise<void> {
+  if (!arguments_.some(argument => argument === "-c" || argument === "--check")) {
+    for (const filename of arguments_) {
+      console.log(
+        `${createHash("sha256")
+          .update(await readFile(filename))
+          .digest("hex")}  ${filename}`
+      );
+    }
+    return;
+  }
   const inventory = arguments_.at(-1) === "-" ? await standardInput() : await readFile(arguments_.at(-1)!, "utf8");
   for (const line of inventory.trim().split("\n")) {
     const match = /^([a-f0-9]{64})  (.+)$/.exec(line);
@@ -95,9 +105,11 @@ async function verifyChecksums(arguments_: string[]): Promise<void> {
         .update(await readFile(match[2]))
         .digest("hex");
       if (digest !== match[1]) {
+        console.log(`${match[2]}: FAILED`);
         process.exitCode = 1;
       }
     } catch (error) {
+      console.log(`${match[2]}: FAILED open or read`);
       console.warn("fixture checksum could not read:", error);
       process.exitCode = 1;
     }

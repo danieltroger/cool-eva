@@ -6,7 +6,7 @@ The watercooling loop's radiator fan, driven from the Pi over hardware PWM. This
 
 **Phase 3: with the bike parked, the throttle can drive the fan.** A third mode, offered only while `go` is clear and the bike is stationary, and dropped the instant either stops being true. §4 "Fun mode" is the gate, the mapping and the measurements behind both.
 
-Off by default: nothing here happens unless `FAN_ENABLED=1`. See §7.
+Off by default: nothing here happens unless the installed radiator fan is enabled in Settings → Bike setup. See §7.
 
 ## 1. Hardware
 
@@ -135,7 +135,7 @@ Measure the rail at the IBT-2's 12 V terminal under load, then set the cap to `1
 
 One straight line, from the 30 % floor at 35 °C to 100 % at 48 °C, with `batt_temp_hi` as its input — and, on a DC session, no line at all. `src/fan/curve.ts` is the arithmetic and it is pure, so `scripts/check-fan-curve.ts` replays every point of it with no bike.
 
-⚠️ **Both temperatures in the curve row below are a considered choice and neither is a measurement.** 35 and 48 have never been checked against how much air this radiator needs at a given pack temperature — §8 says so, and this is the table a reader takes the numbers from, so it says so here too. The datum that would settle them is one hot DC session logged with `FAN_ENABLED=1`. The same marker as §1's locked-rotor row, for the same reason. The DC row is the one line here with no number to argue about.
+⚠️ **Both temperatures in the curve row below are a considered choice and neither is a measurement.** 35 and 48 have never been checked against how much air this radiator needs at a given pack temperature — §8 says so, and this is the table a reader takes the numbers from, so it says so here too. The datum that would settle them is one hot DC session logged with the installed fan enabled. The same marker as §1's locked-rotor row, for the same reason. The DC row is the one line here with no number to argue about.
 
 | Condition | The fan runs when | Duty |
 | --- | --- | --- |
@@ -583,7 +583,7 @@ If `pinctrl` is missing the driver says so by name (`sudo apt install raspi-util
 
 `POST /fan?duty=N` commands a duty in whole percent **and switches the fan to manual**; `POST /fan?mode=auto` hands it back to the curve, `POST /fan?mode=manual` freezes it where it is, and `POST /fan?mode=fun` (or `mode=play`) puts the rider's throttle on it. Passing both `duty` and `mode` is a 400 rather than a guess about which was meant. A fun-mode request the gate refuses answers **503** with the reason in `message` — the same status an unusable driver gets, and deliberately so: "the request was fine, the bike is in Go, ask again when it is parked" is the same shape of answer. Every POST must carry **`X-Cool-Eva: fan`**. POST rather than GET for the reason `/can-restart` is a POST: this one spins a fan blade, and a prefetch or a crawler must not be able to do that by following a link. The header is there because POST alone is not enough — this server sends no `Access-Control-*` headers and has no auth, so a plain cross-origin `<form method="POST" action="http://cool-eva.local/fan?duty=100">` on any page the rider's phone opens is a _simple_ request that reaches the endpoint. CORS would only stop the attacker reading the reply. A custom header name is what forces a preflight this server never answers. Its value is `fan`, not `/vcu-write`'s `service-write`, so a caller built for that endpoint cannot reach this one.
 
-Both are routed only when `FAN_ENABLED=1`. On any other Pi `/fan` is a 404, which is what `public/views/fan.js` reads to hide the whole section.
+Both are routed only when the installed fan is enabled at startup. On any other Pi `/fan` is a 404, which is what `public/views/fan.js` reads to hide the whole section.
 
 The slider and the Auto/Manual toggle live in the menu sheet, on one row because they are one control: the toggle says who is moving the thumb, and moving the thumb changes the toggle. **The Fun button is a third control on that row and it is bound to `fan_fun_available` — the live signal, not the last `/fan` reply — so it appears and vanishes with the gate rather than at the next time somebody reloads.** It is hidden while fun mode is running, because the mode toggle then reads "🎢 Fun" and is how you leave. The page cannot _enter_ the mode, only ask: the Pi re-reads the gate off the bus before it agrees, so the button appearing is a display of permission and never the permission itself. ⚠️ There is **no arming** in front of either, unlike every other actuating control on this dashboard — §4 "The slider" is the argument. The mode is **in memory only and automatic on every start**; it is deliberately never written to disk, because the Pi loses power with the bike's 12 V rail, so "manual until the bike is switched off" is what not persisting it already means.
 
@@ -723,14 +723,9 @@ Daniel, 2026-09-10: _"sometimes long pressing mode never goes into the off setti
 
 ## 7. Running it
 
-```sh
-sudo systemctl edit cool-eva
-# [Service]
-# Environment=FAN_ENABLED=1
-sudo systemctl restart cool-eva
-```
+After installing the wiring and PWM overlay, open **Settings → Bike setup → Radiator fan installed**, choose On, Save and explicitly Restart. Automatic control can start after that restart.
 
-`FAN_ENABLED` is **opt in** — `=== "1"`, deliberately the opposite of `COOLANT_ENABLED` and `OBD_ENABLED`, which are opt out. Almost no Eva has this fan, so the default has to be a Pi that never opens `/sys/class/pwm`, never spawns `pinctrl` and never serves `/fan`.
+The installed-fan choice is OFF by default. Almost no Eva has this fan, so an unconfigured Pi never opens `/sys/class/pwm`, never spawns `pinctrl` and never serves `/fan`. The old `FAN_ENABLED` flag used the strict `=== "1"` test; migration preserves explicitly enabled installations, while later changes use Settings.
 
 A healthy start logs:
 
@@ -740,10 +735,10 @@ fan: duty control ready — 30…100 %, 1500 ms kick-start from rest, POST /fan?
 fan: automatic on 2000 ms ticks — batt_temp_hi drives the curve, speed_can_kmh gates it, charge_manager_state 0x23 pins it at 100 % for the whole session
 ```
 
-Without the variable it logs one line and does nothing else:
+With the installed-fan choice off it logs one line and does nothing else:
 
 ```
-fan: disabled (set FAN_ENABLED=1 on a bike with the IBT-2 fan driver wired up)
+fan: disabled — enable an installed radiator fan in Settings → Bike setup
 ```
 
 Bring-up failures do not kill the service — the fan is not what the rest of this process is for — so a missing overlay or a missing `pinctrl` becomes the `fault` string that `/fan` and the sheet report.

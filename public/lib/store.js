@@ -44,6 +44,7 @@ export const chartTick = van.state(0);
 
 /** Server clock from the last message, so staleness is judged the same way it is logged. */
 export const serverTime = van.state(0);
+export const systemStatus = van.state(/** @type {import("../../src/ws.ts").DashboardSystemStatus | null} */ (null));
 
 /** @type {Map<string, import("../vendor/van-1.6.1.js").State<LiveValue | null>>} */
 const states = new Map();
@@ -309,6 +310,9 @@ const CHART_TICK_MS = 500;
  */
 export function apply(message) {
   serverTime.val = message.ts;
+  if (message.system) {
+    systemStatus.val = message.system;
+  }
   let added = false;
   // Readings that survive the plausibility gate below, offered to the pack-resistance
   // buffer as one frame. It pairs pack_v with pack_a only when both are in here, which

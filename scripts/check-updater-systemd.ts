@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createServer } from "node:net";
-import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import { monotonicNow, since } from "../src/monotonic.ts";
+import { injectRecoveryFault, RECOVERY_FAULTS } from "./update-check/availability.ts";
 import {
   createUpdateFixture,
   fixtureEnvironment,
@@ -30,7 +31,7 @@ export async function checkUpdaterSystemd(): Promise<void> {
   const port = await freePort();
   const units: string[] = [];
   try {
-    for (const command of ["systemctl", "journalctl", "cut", "sleep", "sync", "stat", "id"]) {
+    for (const command of ["systemctl", "dpkg-query", "cut", "sleep", "sync", "stat", "id"]) {
       await unlink(join(fixture.commandDirectory, command));
     }
     const configuration = JSON.parse(await readFile(fixture.configuration, "utf8"));
@@ -51,12 +52,11 @@ export async function checkUpdaterSystemd(): Promise<void> {
     const replayFile = join(fixture.root, "replay-can.txt");
     const unit = (await readFile(join(REPOSITORY, "scripts/update/cool-eva.service"), "utf8"))
       .replace("OnFailure=cool-eva-rollback.service", `OnFailure=${rollbackService}`)
-      .replace("WorkingDirectory=/opt/cool-eva", `WorkingDirectory=${fixture.code}`)
+      .replace("WorkingDirectory=/opt/cool-eva", `WorkingDirectory=${fixture.code}\n${unitEnvironment}`)
       .replace("RuntimeDirectory=cool-eva", `RuntimeDirectory=cool-eva-test-${process.pid}`)
-      .replace("EnvironmentFile=-/etc/default/cool-eva", unitEnvironment)
       .replace(
-        "ExecStartPre=/usr/local/libexec/cool-eva-update recover",
-        `ExecStartPre=${updaterCommand} recover --config ${fixture.configuration}`
+        "ExecStartPre=-/usr/local/libexec/cool-eva-update recover",
+        `ExecStartPre=-${updaterCommand} recover --config ${fixture.configuration}`
       )
       .replace(
         "ExecStart=/usr/local/libexec/cool-eva-launch",
@@ -83,6 +83,31 @@ export async function checkUpdaterSystemd(): Promise<void> {
     await control("daemon-reload");
     await control("start", service);
     await waitFor(async () => await healthy(configuration.healthUrl), 15_000, "initial app HTTP");
+    for (const fault of RECOVERY_FAULTS) {
+      await control("reset-failed", service);
+      await control("stop", service);
+      const restore = await injectRecoveryFault(fixture, fault);
+      try {
+        await control("start", service);
+        await waitFor(async () => await healthy(configuration.healthUrl), 15_000, `app HTTP with ${fault}`);
+        const journal = await execFileAsync("journalctl", ["-u", service, "--no-pager", "-n", "50"]);
+        assert.match(journal.stdout, /RECOVERY FAILED; starting the complete current release/);
+        console.log(`real systemd: app still starts with ${fault}`);
+      } finally {
+        await restore();
+      }
+    }
+    await control("reset-failed", service);
+    await control("stop", service);
+    const absentDispatcher = join(fixture.root, "dispatch.unavailable");
+    await rename(dispatcher, absentDispatcher);
+    try {
+      await control("start", service);
+      await waitFor(async () => await healthy(configuration.healthUrl), 15_000, "app HTTP without its dispatcher");
+      console.log("real systemd: app still starts when its dispatcher is unavailable");
+    } finally {
+      await rename(absentDispatcher, dispatcher);
+    }
     const quietTag = await publishFixtureRelease(fixture, "quiet-release", "b".repeat(40));
     await control("start", "--no-block", updateService);
     await waitFor(async () => (await readState(fixture)).pending !== null, 20_000, "interrupted trial intent");
@@ -127,6 +152,11 @@ export async function checkUpdaterSystemd(): Promise<void> {
 
     // Four manual/app restarts exhaust the same limiter, without automatic crash evidence.
     await control("reset-failed", service);
+    await writeFile(
+      join(fixture.commandDirectory, "journalctl"),
+      "#!/bin/sh\nprintf 'synthetic unavailable journal\\n' >&2\nexit 1\n",
+      { mode: 0o755 }
+    );
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
         await control("restart", service);

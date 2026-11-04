@@ -53,8 +53,10 @@ initialise() {
     initial_target=$(basename "$(readlink -f "$RELEASE_ROOT/current")")
     valid_release_directory "$initial_target" || fail 'Invalid initial release.'
     verify_storage
+    read_os_packages
     initial_state=$(mktemp "$PRIVATE/state.XXXXXX")
-    jq -n --arg current "$initial_target" '{format:1,current:$current,previous:null,snapshot:null,pending:null,rejected:[],lastRollback:null}' > "$initial_state"
+    jq -n --arg current "$initial_target" --arg os "$OS_PACKAGES" \
+        '{format:1,current:$current,previous:null,snapshot:null,pending:null,rejected:[],lastRollback:null,osPackages:{($current):$os}}' > "$initial_state"
     chmod 600 "$initial_state"
     sync
     mv -fT "$initial_state" "$STATE"

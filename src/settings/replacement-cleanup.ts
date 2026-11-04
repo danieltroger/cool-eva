@@ -4,7 +4,11 @@ import { sweepReplacementFiles } from "../storage/replacement-files.ts";
 import type { SettingsPaths } from "./paths.ts";
 import { assertSettingsWriterLock, type SettingsWriterLock } from "./writer-lock.ts";
 
-export async function sweepArchiveReplacementFiles(paths: SettingsPaths, lock: SettingsWriterLock): Promise<void> {
+export async function sweepArchiveReplacementFiles(
+  paths: SettingsPaths,
+  lock: SettingsWriterLock,
+  additional: string[] = []
+): Promise<void> {
   assertSettingsWriterLock(lock);
   const existing = new Set((await readdir(paths.dataRoot)).map(name => join(paths.dataRoot, name)));
   for (const directory of [
@@ -12,8 +16,9 @@ export async function sweepArchiveReplacementFiles(paths: SettingsPaths, lock: S
     paths.vcuParameterDirectory,
     paths.wifiDiagnosticDirectory,
     paths.captureDirectory,
+    ...additional,
   ]) {
-    if (existing.has(directory)) {
+    if (existing.has(directory) || (additional.includes(directory) && (await directoryExists(directory)))) {
       await sweepArchiveDirectory(directory, lock);
     }
   }
@@ -30,5 +35,15 @@ async function sweepArchiveDirectory(directory: string, lock: SettingsWriterLock
     if (entry.isDirectory()) {
       await sweepArchiveDirectory(join(directory, entry.name), lock);
     }
+  }
+}
+
+async function directoryExists(directory: string): Promise<boolean> {
+  try {
+    await lstat(directory);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
   }
 }

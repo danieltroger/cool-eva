@@ -59,7 +59,9 @@ export async function handleChargeAutoEndpoint(
   // what the Pi will actually do rather than what it was asked for.
   const state = automatic.state();
   const refused =
-    state.mode !== mode ? "The env var CHARGE_AUTO_ENABLED is 0 on this Pi, so the controller stays off." : null;
+    state.mode !== mode
+      ? "Automatic current reduction is not allowed. Enable it in Settings → Charging, then restart."
+      : null;
   respond(res, 200, state, refused);
 }
 

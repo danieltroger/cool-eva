@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
-import type { ServerResponse } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { promisify } from "node:util";
 import type { UpdateReply } from "./update.ts";
 import { isBundleRuntime, readReleaseMetadata } from "../release/metadata.ts";
 import { readUpdateStatus } from "../release/update-status.ts";
+import { reserveSettingsRestart, settingsReply, type SettingsHttpContext } from "./settings.ts";
 
 export async function tryBundleUpdate(
   res: ServerResponse,
@@ -11,9 +12,13 @@ export async function tryBundleUpdate(
   context: BundleUpdateContext = {}
 ): Promise<boolean> {
   try {
-    if (!isBundleRuntime(directory, context.executable) && !(await readReleaseMetadata(directory, context.executable)))
+    if (
+      !isBundleRuntime(directory, context.executable) &&
+      !(await readReleaseMetadata(directory, context.executable))
+    ) {
       return false;
-    await handleBundleUpdate(res, context.statusDirectory);
+    }
+    await handleBundleUpdate(res, context.statusDirectory, context);
   } catch (error) {
     console.warn("update: cannot read bundle identity:", error);
     respond(res, 500, { ok: false, message: "Cannot verify this release. Check its release.json before updating." });
@@ -21,24 +26,65 @@ export async function tryBundleUpdate(
   return true;
 }
 
-export interface BundleUpdateContext {
+export interface BundleUpdateContext extends BundleUpdateAdmission {
   executable?: string;
   statusDirectory?: string;
 }
 
-export async function handleBundleUpdate(res: ServerResponse, statusDirectory?: string): Promise<void> {
+export interface BundleUpdateAdmission {
+  reservation?: { request: IncomingMessage; body: Record<string, unknown>; settings: SettingsHttpContext };
+  queue?: () => Promise<void>;
+}
+
+export async function handleBundleUpdate(
+  res: ServerResponse,
+  statusDirectory?: string,
+  admission: BundleUpdateAdmission = {}
+): Promise<void> {
+  let queuing = false;
+  let checkingReservation = false;
   try {
     const previous = await readUpdateStatus(statusDirectory);
-    // A separate unit survives stopping this app's cgroup during the trial.
-    await execFileAsync("systemctl", ["start", "--no-block", "cool-eva-update.service"], { timeout: 10_000 });
+    const queue = async (): Promise<void> => {
+      queuing = true;
+      await (admission.queue ?? queueBundleUpdate)();
+    };
+    if (admission.reservation) {
+      checkingReservation = true;
+      const { request, body, settings } = admission.reservation;
+      const reserved = await reserveSettingsRestart(request, body, settings, async stillReserved => {
+        if (!stillReserved()) {
+          throw new Error("The restart reservation expired. Read settings and try again.");
+        }
+        await queue();
+      });
+      checkingReservation = false;
+      if (!reserved) {
+        respond(res, 409, {
+          ok: false,
+          message: "Read settings again before updating; another restart may be reserved.",
+        });
+        return;
+      }
+    } else {
+      await queue();
+    }
     respond(res, 202, {
       ok: true,
       message: "Checking for an update. The dashboard will reconnect after the release is checked.",
       sequence: previous.running ? previous.sequence : previous.sequence + 1,
+      ...(admission.reservation ? { settings: settingsReply(admission.reservation.settings) } : {}),
     });
   } catch (error) {
     console.warn("update: could not start the bundle updater:", error);
-    respond(res, 500, { ok: false, message: "Could not start the update. Check the service log and try again." });
+    const refused = checkingReservation && !queuing;
+    respond(res, refused ? 409 : 500, {
+      ok: false,
+      message:
+        refused && error instanceof Error
+          ? error.message
+          : "Could not start the update. Check the service log and try again.",
+    });
   }
 }
 
@@ -54,6 +100,11 @@ export async function handleUpdateStatus(res: ServerResponse): Promise<void> {
 }
 
 const execFileAsync = promisify(execFile);
+
+async function queueBundleUpdate(): Promise<void> {
+  // A separate unit survives stopping this app's cgroup during the trial.
+  await execFileAsync("systemctl", ["start", "--no-block", "cool-eva-update.service"], { timeout: 5_000 });
+}
 
 function respond(res: ServerResponse, status: number, body: UpdateReply): void {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });

@@ -56,3 +56,27 @@ settings_readable_by() {
     "$reader_directory/runtime/bin/node" --experimental-strip-types \
         "$reader_directory/src/release/preflight.ts" settings "$SETTINGS"
 }
+
+prune_settings_snapshots() {
+    protected_snapshot=$(jq -r '.snapshot // empty' "$STATE")
+    protected_pending=$(jq -r '.pending.snapshot // empty' "$STATE")
+    set -- "$PRIVATE/"settings.*
+    [ -e "$1" ] || return 0
+    snapshot_candidates=$(ls -1t -- "$@") || fail 'Cannot list settings snapshots.'
+    retained_snapshots=0
+    for settings_snapshot in "$protected_snapshot" "$protected_pending"; do
+        if [ -n "$settings_snapshot" ] && [ -f "$settings_snapshot" ]; then
+            if [ "$settings_snapshot" = "$protected_pending" ] && [ "$protected_pending" = "$protected_snapshot" ] && [ "$retained_snapshots" != 0 ]; then continue; fi
+            retained_snapshots=$((retained_snapshots + 1))
+        fi
+    done
+    for settings_snapshot in $snapshot_candidates; do
+        [ -f "$settings_snapshot" ] && [ ! -L "$settings_snapshot" ] || fail 'Unsafe settings snapshot cleanup target.'
+        [ "$settings_snapshot" != "$protected_snapshot" ] && [ "$settings_snapshot" != "$protected_pending" ] || continue
+        if [ "$retained_snapshots" -ge 3 ]; then
+            unlink "$settings_snapshot"
+        else
+            retained_snapshots=$((retained_snapshots + 1))
+        fi
+    done
+}

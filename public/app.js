@@ -1,7 +1,8 @@
+import { ReloadPageNotice } from "./views/reload-page.js";
 // @ts-check
 
 import van from "./vendor/van-1.6.1.js";
-import { chartTick, connect, connection, isStaleSampled, peek, signalState } from "./lib/store.js";
+import { chartTick, connect, connection, systemStatus, isStaleSampled, peek, signalState } from "./lib/store.js";
 import { headroomMvSampled } from "./lib/derive.js";
 import { chargeMode } from "./lib/charge-mode.js";
 import { updateDwell } from "./lib/dwell.js";
@@ -20,6 +21,17 @@ import { installHandlebarGestures } from "./lib/handlebar-gestures.js";
 import { installAnnouncements } from "./lib/announce.js";
 import { startTheming } from "./lib/theme.js";
 import { viewRules } from "./lib/view-rules.js";
+import {
+  destination,
+  destinationSection,
+  backDestinationName,
+  openDestination,
+  closeDestination,
+  startDestinationRouting,
+} from "./lib/destination.js";
+import { DestinationPage, destinationTitle } from "./views/destination-page.js";
+import { settings, watchSettings } from "./lib/settings.js";
+import { MigrationSummary } from "./views/settings-summary.js";
 
 const { button, div, span } = van.tags;
 
@@ -55,6 +67,7 @@ const VIEWS = {
 // render draws the screen a link named rather than drawing Ride and swapping it a frame
 // later. It answers whether the URL named a tab at all, which the rules below need.
 const arrivedByDeepLink = startRouting();
+startDestinationRouting();
 
 /** SOC at or below which the hypermiling screen takes over, as requested. */
 const HYPERMILE_SOC = 5;
@@ -70,30 +83,64 @@ const HYPERMILE_HEADROOM_MV = 150;
 function App() {
   // Toast last, so it paints over the header it covers. It is fixed and
   // hit-transparent, so its position in the tree costs nothing else.
-  return div(Header(), () => VIEWS[currentTab()](), TabBar(), Sheet(), Toast());
+  return div(
+    Header(),
+    ReloadPageNotice(),
+    () => {
+      const fault = systemStatus.val?.settingsFault ?? settings.val?.fault;
+      if (!fault || (destination.val === "settings" && fault === settings.val?.fault)) return div();
+      return div(
+        { class: "settings-page" },
+        div(
+          { class: "settings-card settings-row" },
+          div("Settings need attention", div({ class: "settings-note" }, fault)),
+          button({ class: "settings-button", onclick: () => openDestination("settings") }, "Open Settings")
+        )
+      );
+    },
+    MigrationSummary(true, true),
+    () => (destination.val ? DestinationPage() : VIEWS[currentTab()]()),
+    () => (destination.val ? div() : TabBar()),
+    Sheet(),
+    Toast()
+  );
 }
 
 function Header() {
   return div(
-    { class: "header" },
+    { class: () => (destination.val ? "header destination-header" : "header") },
     button(
       {
         class: "menu",
         // openSheet() rather than setting the flag here: the sheet's sections fetch
         // when they become visible, and it owns the list of what has to be
         // refreshed so this button cannot fall behind it.
-        onclick: () => openSheet(),
+        onclick: () => {
+          if (destination.rawVal) {
+            closeDestination();
+          } else {
+            openSheet();
+          }
+        },
+        "aria-label": () => (destination.val ? `Back to ${backDestinationName.val}` : "Open menu"),
       },
       // The Faults tab carries the warning now, and it leads somewhere that names
       // the code. Two ⚠ for one fault is how a warning stops being read.
-      "☰"
+      () => (destination.val ? `‹ ${backDestinationName.val}` : "☰")
     ),
-    span({ class: "brand" }, "Cool Eva"),
+    span({ class: "brand" }, () => (destination.val ? destinationTitle() : "Cool Eva")),
     div(
       { class: "status" },
-      BleHeaderButton(openSheet),
-      span({ class: () => `dot ${canDotState()}` }),
-      span("CAN"),
+      BleHeaderButton(() => openDestination("settings", "connections")),
+      button(
+        {
+          class: "can-status-link",
+          "aria-label": "CAN adapter details",
+          onclick: () => openDestination("settings", "connections"),
+        },
+        span({ class: () => `dot ${canDotState()}` }),
+        "CAN"
+      ),
       span({ class: () => `dot ${connection.val}` }),
       span(() => (connection.val === "live" ? "live" : connection.val === "connecting" ? "connecting" : "offline"))
     )
@@ -112,11 +159,14 @@ function canDotState() {
   if (connection.val !== "live") {
     return "unknown";
   }
+  if (systemStatus.val) {
+    return systemStatus.val.can.state;
+  }
   const reading = signalState("can_link").val;
   if (!reading) {
     return "unknown";
   }
-  return reading.value === 1 ? "up" : "down";
+  return reading.value === 0 ? "down" : "unknown";
 }
 
 function TabBar() {
@@ -185,7 +235,9 @@ function autoFocus() {
   // peekTab(), not currentTab(): subscribing this timer to the tab would re-pace it on
   // every tab change.
   for (const tab of viewRules(viewRuleMemory, bike, peekTab())) {
-    showTab(tab);
+    if (!destination.rawVal) {
+      showTab(tab);
+    }
   }
 }
 
@@ -216,7 +268,9 @@ function detectHighBeamGesture() {
     flashEdges = [...flashEdges, now].filter(edge => now - edge <= FLASH_WINDOW_MS);
     if (flashEdges.length >= FLASH_COUNT) {
       flashEdges = [];
-      advanceTab();
+      if (!destination.rawVal) {
+        advanceTab();
+      }
     }
   }
   previousHighBeam = current;
@@ -264,7 +318,13 @@ van.add(document.body, App());
 // router's business alone: it is the same call the high-beam flash makes, and it is
 // what keeps the URL and the screen in step. A gesture that set the tab itself would
 // be the second answer to a question that must only have one.
-installHandlebarGestures({ onNextTab: advanceTab });
+installHandlebarGestures({
+  onNextTab: () => {
+    if (!destination.rawVal) {
+      advanceTab();
+    }
+  },
+});
 // The other half of the same story, and the reason the list above is shorter than it was:
 // the fan cycle and the waypoint hold are recognised on the Pi now, so this page finds out
 // about them the way it finds out about anything else on the bus, and says so.
@@ -277,3 +337,5 @@ installWaypointRefresh();
 startTheming();
 connect();
 void refreshStatus();
+
+watchSettings();

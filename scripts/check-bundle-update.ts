@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, readdir, readlink, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { checkUpdaterRetention } from "./update-check/retention.ts";
 import {
   createUpdateFixture,
   invokeUpdater,
@@ -89,6 +90,7 @@ export async function checkBundleUpdate(): Promise<void> {
     await assert.rejects(invokeUpdater(fixture, "update"), /migration is incomplete/);
     assert(!/systemctl stop/.test(await readFile(join(fixture.root, "commands.txt"), "utf8")));
     assert(newTag.startsWith("cool-eva-main-"));
+    await checkUpdaterRetention(directory);
     console.log(
       "bundle update: promotion, checksum refusal, trial rollback, rejection, next update, edit archive and migration gate passed"
     );

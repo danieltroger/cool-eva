@@ -40,6 +40,7 @@ const ROOT = join(HERE, "..");
  * docs/diagnostics-and-checks.md §11.7 says so where a reader of the ✓ will see it.
  */
 const FIXTURES = [
+  { constant: "SETTINGS", type: "SettingsReply", from: "src/settings/view.ts" },
   { constant: "WRITE_STATUS", type: "VcuWriteStatus", from: "src/vcu/write-runner.ts" },
   // ⚠️ The five FULL summaries the `detail=` branch serves out of. Named here rather than left
   // inline for the reason the header gives: a reply built inside the stubbed fetch is what this
@@ -312,6 +313,7 @@ async function checkFixtureTypes(source: ts.SourceFile, label: string, mountsThe
       "--moduleResolution",
       "bundler",
       "--allowImportingTsExtensions",
+      "--allowJs",
       "--skipLibCheck",
       "--lib",
       "esnext,dom",

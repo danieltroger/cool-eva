@@ -49,6 +49,11 @@ export function isBundleRuntime(directory: string, executable = process.execPath
   return resolve(executable) === resolve(directory, "runtime/bin/node");
 }
 
+export function managedCodeRoot(directory: string, release: RuntimeRelease | null): string {
+  // Saved data paths must survive cleanup of every retained bundle, including inactive ones.
+  return release ? resolve(directory, "../..") : resolve(directory);
+}
+
 export interface RuntimeRelease {
   release: string;
   commit: string;

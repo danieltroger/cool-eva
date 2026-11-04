@@ -98,7 +98,7 @@ export async function handleVcuReadEndpoint(
       if (!options.enabled) {
         // 403 rather than 404: the endpoint exists and is answering, it is the
         // action that is switched off, and the page says which switch.
-        await respond(res, 403, options, "service mode is switched off on this Pi (SERVICE_MODE_ENABLED=0)");
+        await respond(res, 403, options, "Service data is unavailable. Resolve the Settings fault before reading.");
         return;
       }
       // The gate lives in the runner rather than here, so that the check a POST

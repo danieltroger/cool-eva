@@ -73,17 +73,6 @@ release_unedited() {
     (cd "$RELEASE_ROOT/releases/$1" && sha256sum --check --strict --quiet files.sha256 >/dev/null 2>&1)
 }
 
-archive_edits() {
-    archive_target=${1:-$CURRENT}
-    if ! release_unedited "$archive_target"; then
-        edit_archive=$(mktemp "$PRIVATE/edits.XXXXXX.tar")
-        tar -cf "$edit_archive" -C "$RELEASE_ROOT/releases/$archive_target" .
-        chmod 600 "$edit_archive"
-        sync
-        note 'Saved local release edits in the private updater directory.'
-    fi
-}
-
 prune_releases() {
     retained_previous=$(jq -r '.previous // empty' "$STATE")
     for candidate_path in "$RELEASE_ROOT/releases/"*; do
@@ -104,8 +93,80 @@ clean_download() {
 }
 
 prune_downloads() {
-    for stale_download in "$PRIVATE/"download.*; do
+    for stale_download in "$PRIVATE/"download.* "$PRIVATE/"edit-cache.*; do
         [ -d "$stale_download" ] && [ ! -L "$stale_download" ] || continue
         find -P "$stale_download" -xdev -depth -delete
+    done
+}
+
+archive_edits() {
+    archive_target=${1:-$CURRENT}
+    if release_unedited "$archive_target"; then return 0; fi
+    archive_directory="$RELEASE_ROOT/releases/$archive_target"
+    archive_identity=$(jq -r '.release // empty' "$archive_directory/release.json") || archive_identity=$archive_target
+    case "$archive_identity" in ''|*[!a-zA-Z0-9.-]*) archive_identity=$archive_target ;; esac
+    edit_archive="$PRIVATE/edits.$archive_identity.tar"
+    [ ! -L "$edit_archive" ] || fail 'Unsafe local-edit archive.'
+    edit_work=$(mktemp -d "$PRIVATE/edit-cache.XXXXXX")
+    mkdir "$edit_work/files"
+    if (cd "$archive_directory" && LC_ALL=C sha256sum --check --strict --quiet files.sha256) > "$edit_work/report.txt"; then
+        find -P "$edit_work" -xdev -depth -delete
+        return 0
+    fi
+    awk '/: FAILED$/ {sub(/: FAILED$/, ""); print; next}
+        /: FAILED open or read$/ {sub(/: FAILED open or read$/, ""); print}' "$edit_work/report.txt" > "$edit_work/paths.txt"
+    [ -s "$edit_work/paths.txt" ] || fail 'Cannot identify the locally changed files; the release is unchanged.'
+    printf 'release=%s\n' "$archive_identity" > "$edit_work/changes.txt"
+    edit_bytes=0
+    while IFS= read -r edit_path; do
+        case "$edit_path" in ''|/*|..|../*|*/../*|*/..|*\\*) fail 'Unsafe local-edit path.' ;; esac
+        edit_source="$archive_directory/$edit_path"
+        if [ ! -e "$edit_source" ] && [ ! -L "$edit_source" ]; then
+            printf 'deleted  %s\n' "$edit_path" >> "$edit_work/changes.txt"
+            continue
+        fi
+        [ -f "$edit_source" ] && [ ! -L "$edit_source" ] && \
+            [ "$(realpath "$edit_source")" = "$edit_source" ] || fail 'Local edits contain a link or special file.'
+        edit_size=$(wc -c < "$edit_source")
+        [ $((edit_bytes + edit_size)) -le 8388608 ] || fail 'Local edits exceed 8 MiB. Save or revert them over SSH before updating.'
+        edit_destination="$edit_work/files/$edit_path"
+        mkdir -p "$(dirname "$edit_destination")"
+        # Refuse a file that grows after its size check instead of filling the data filesystem.
+        head -c 8388609 "$edit_source" > "$edit_destination" || fail 'Cannot read a changed file for the local-edit backup.'
+        copied_size=$(wc -c < "$edit_destination")
+        edit_bytes=$((edit_bytes + copied_size))
+        [ "$edit_bytes" -le 8388608 ] || fail 'Local edits grew beyond the 8 MiB backup limit.'
+        edit_checksum=$(sha256sum "$edit_destination")
+        printf '%s  %s\n' "${edit_checksum%% *}" "$edit_path" >> "$edit_work/changes.txt"
+    done < "$edit_work/paths.txt"
+    if [ -f "$edit_archive" ] && tar -xOf "$edit_archive" changes.txt | cmp -s - "$edit_work/changes.txt"; then
+        find -P "$edit_work" -xdev -depth -delete
+        note 'Local release edits are already archived.'
+        return 0
+    fi
+    # A large number of tiny edits must not bypass the changed-byte bound through tar headers.
+    (ulimit -f 32768; tar -cf "$edit_work/archive.tar" -C "$edit_work" changes.txt files) || fail 'Cannot save the bounded local-edit archive.'
+    [ "$(wc -c < "$edit_work/archive.tar")" -le 16777216 ] || fail 'The local-edit archive exceeds 16 MiB.'
+    chmod 600 "$edit_work/archive.tar"
+    sync
+    mv -fT "$edit_work/archive.tar" "$edit_archive"
+    sync
+    find -P "$edit_work" -xdev -depth -delete
+    prune_edit_archives
+    note 'Saved only changed release files in the private updater directory.'
+}
+
+prune_edit_archives() {
+    set -- "$PRIVATE/"edits.*.tar
+    [ -e "$1" ] || return 0
+    edit_candidates=$(ls -1t -- "$@") || fail 'Cannot list local-edit archives.'
+    retained_edits=0
+    for edit_candidate in $edit_candidates; do
+        [ -f "$edit_candidate" ] && [ ! -L "$edit_candidate" ] || fail 'Unsafe local-edit archive cleanup target.'
+        if [ "$(wc -c < "$edit_candidate")" -gt 16777216 ] || [ "$retained_edits" -ge 3 ]; then
+            unlink "$edit_candidate"
+        else
+            retained_edits=$((retained_edits + 1))
+        fi
     done
 }

@@ -34,3 +34,10 @@ ensure_helpers() {
         fi
     done
 }
+
+read_os_packages() {
+    installed_packages=$(dpkg-query -W '-f=${binary:Package}\t${Version}\n') || fail 'Cannot record the installed OS package versions.'
+    OS_PACKAGES=$(printf '%s\n' "$installed_packages" | awk -F '\t' '
+        {sub(/:arm64$/, "", $1)}
+        $1 ~ /^(bluez|network-manager|raspi-firmware|linux-image-rpi-v8|libc6|libstdc\+\+6|systemd)$/ {print $1 "\t" $2}')
+}

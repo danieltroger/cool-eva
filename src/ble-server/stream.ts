@@ -1,5 +1,5 @@
 import { onChange, snapshot, type LiveValue } from "../can/signals.ts";
-import { HEARTBEAT_MS, type DashboardMessage } from "../ws.ts";
+import { HEARTBEAT_MS, type DashboardMessage, type DashboardSystemStatus } from "../ws.ts";
 
 // The live telemetry over BLE: the same DashboardMessage snapshots and patches ws.ts
 // sends, with two differences the radio forces. Patches are coalesced per window rather
@@ -20,6 +20,7 @@ export const MAX_BLE_BACKLOG_BYTES = 16 * 1024;
 export interface StreamContext {
   send: (message: DashboardMessage) => void;
   bufferedBytes: () => number;
+  system?: () => DashboardSystemStatus;
 }
 
 export interface TelemetryStream {
@@ -30,7 +31,12 @@ export function startTelemetryStream(context: StreamContext, heartbeatMs = HEART
   let pending: Record<string, LiveValue> = {};
   let pendingCount = 0;
 
-  context.send({ type: "snapshot", ts: Date.now(), signals: snapshot() });
+  context.send({
+    type: "snapshot",
+    ts: Date.now(),
+    signals: snapshot(),
+    ...(context.system ? { system: context.system() } : {}),
+  });
 
   const unsubscribe = onChange(changed => {
     for (const [key, value] of Object.entries(changed)) {
@@ -49,7 +55,12 @@ export function startTelemetryStream(context: StreamContext, heartbeatMs = HEART
   }, PATCH_WINDOW_MS);
 
   const heartbeatTimer = setInterval(() => {
-    context.send({ type: "snapshot", ts: Date.now(), signals: snapshot() });
+    context.send({
+      type: "snapshot",
+      ts: Date.now(),
+      signals: snapshot(),
+      ...(context.system ? { system: context.system() } : {}),
+    });
   }, heartbeatMs);
 
   return {

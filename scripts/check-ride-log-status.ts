@@ -306,6 +306,7 @@ async function checkTheCaptionSaysWhatIsCounted(): Promise<void> {
     return;
   }
   const code = withoutComments(body);
+  const delivery = withoutComments(downloadButtonBody(source, "downloadCurrentRide") ?? "");
 
   // Canary. Every other assertion in this section fires on the PRESENCE of
   // something wrong, so an over-eager withoutComments() that returned "" would
@@ -314,9 +315,9 @@ async function checkTheCaptionSaysWhatIsCounted(): Promise<void> {
   // rest on the `log.files` assertion firing on absence; removing the caption
   // removed the canary with it, silently. So assert the stripper left real code
   // behind, against something structural rather than anything to do with the
-  // caption: DownloadButton exists to start the download, and if that line is
-  // gone the input was not this function.
-  if (!code.includes("/dl")) {
+  // caption: the button must call the sealing/download helper, and that helper must
+  // still target /dl. Losing either side must fail this check.
+  if (!code.includes("downloadCurrentRide(") || !delivery.includes('download("/dl"')) {
     failures.push(
       `withoutComments() left no recognisable code in DownloadButton() from ${path} — the download target "/dl" ` +
         `is missing, so the stripper has eaten the function and every check below it would pass on an empty string`
@@ -780,8 +781,8 @@ async function totalSize(directory: string): Promise<number> {
  * function in public/ closes that way, and a parser here would be a dependency this
  * repo deliberately does not have.
  */
-function downloadButtonBody(source: string): string | null {
-  const start = source.indexOf("function DownloadButton()");
+function downloadButtonBody(source: string, name = "DownloadButton"): string | null {
+  const start = source.indexOf(`function ${name}(`);
   if (start < 0) {
     return null;
   }

@@ -44,6 +44,7 @@ export interface GattApplication {
   notify: (frame: Bytes) => void;
   isDeviceConnected: (device: string) => Promise<boolean>;
   stop: () => Promise<void>;
+  ready?: () => boolean;
 }
 
 export async function startGattApplication(
@@ -115,6 +116,7 @@ export async function startGattApplication(
   }, REREGISTER_INTERVAL_MS);
 
   return {
+    ready: () => context.registered,
     notify: frame => tx.sendNotification(frame),
     isDeviceConnected: device => readConnected(bus, device),
     stop: async () => {

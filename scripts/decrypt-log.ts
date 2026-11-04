@@ -12,7 +12,7 @@ import type { SignalSource } from "../src/db.ts";
 // with the private key and rebuilds an ordinary SQLite file, so Grafana and the
 // existing dashboards work against it unchanged.
 //
-//   node --experimental-strip-types scripts/decrypt-log.ts <dir-or-file…> [--out rides.db] [--force]
+//   node --experimental-strip-types scripts/decrypt-log.ts <dir-or-file…> [--out rides.db] [--private-key key.pem] [--force]
 //
 // Accepts either the ride-logs/ directory off the Pi or a single blob from
 // GET /dl (which is every day file concatenated — segments are self-framing, so
@@ -66,9 +66,9 @@ interface FileResult {
 const UNRECORDED = "unrecorded";
 
 async function main(): Promise<void> {
-  const { inputs, outputPath, force } = parseArgs(process.argv.slice(2));
+  const { inputs, outputPath, force, privateKeyPath } = parseArgs(process.argv.slice(2));
 
-  const keyPath = resolve(process.env.RIDE_LOG_PRIVATE_KEY ?? "ride-log-key.private.pem");
+  const keyPath = resolve(privateKeyPath);
   let privateKey: KeyObject;
   try {
     privateKey = createPrivateKey(await readFile(keyPath, "utf-8"));
@@ -143,15 +143,23 @@ async function main(): Promise<void> {
   }
 }
 
-function parseArgs(args: string[]): { inputs: string[]; outputPath: string; force: boolean } {
+function parseArgs(args: string[]): { inputs: string[]; outputPath: string; force: boolean; privateKeyPath: string } {
   const inputs: string[] = [];
   let outputPath = "rides.db";
+  let privateKeyPath = "ride-log-key.private.pem";
   let force = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--force") {
       force = true;
+    } else if (arg === "--private-key") {
+      const next = args[index + 1];
+      if (next === undefined || next.startsWith("--")) {
+        fail("--private-key needs a filename");
+      }
+      privateKeyPath = next;
+      index += 1;
     } else if (arg === "--out") {
       const next = args[index + 1];
       if (next === undefined || next.startsWith("--")) {
@@ -167,9 +175,9 @@ function parseArgs(args: string[]): { inputs: string[]; outputPath: string; forc
   }
 
   if (inputs.length === 0) {
-    fail("usage: decrypt-log.ts <dir-or-file…> [--out rides.db] [--force]");
+    fail("usage: decrypt-log.ts <dir-or-file…> [--out rides.db] [--private-key key.pem] [--force]");
   }
-  return { inputs, outputPath, force };
+  return { inputs, outputPath, force, privateKeyPath };
 }
 
 function fail(message: string): never {

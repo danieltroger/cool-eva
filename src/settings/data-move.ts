@@ -1,5 +1,5 @@
 import { lstat, readFile, readlink, realpath, rename, symlink } from "fs/promises";
-import { dirname, join, resolve } from "path";
+import { basename, dirname, join, resolve } from "path";
 import { replaceFileDurably, syncDirectory } from "../storage/durable.ts";
 import { assertSettingsWriterLock, type SettingsWriterLock } from "./writer-lock.ts";
 import { record } from "./schema.ts";
@@ -38,6 +38,7 @@ export interface DataMoveOptions {
   archiveGroupId: number;
   lock: SettingsWriterLock;
   flushPermissions?: () => Promise<void>;
+  destinationDevice?: (directory: string) => Promise<bigint>;
   /** Throws to replay a power cut at a persisted boundary, without touching real archives. */
   checkpoint?: (step: DataMoveCheckpoint) => Promise<void>;
 }
@@ -103,12 +104,21 @@ async function planMoves(options: DataMoveOptions): Promise<MoveJournal> {
     captureDirectory: "captures",
   } as const;
   for (const key of Object.keys(names) as (keyof typeof names)[]) {
-    const source = resolve(directories[key]);
+    let source = resolve(directories[key]);
     const oldDefault =
       key === "captureDirectory" ? options.legacyCaptureDirectory : join(options.codeDirectory, names[key]);
-    if (source !== oldDefault) {
-      directories[key] = await retainedDirectory(source);
-      continue;
+    const explicit = source !== oldDefault;
+    if (explicit) {
+      const retained = await retainedDirectory(source);
+      const code = await realpath(options.codeDirectory);
+      if (retained === code || retained.startsWith(`${code}/`)) {
+        throw new Error(
+          "An explicitly configured archive remains inside code. Choose an external directory in Settings → Advanced; release cleanup is blocked."
+        );
+      }
+      directories[key] = retained;
+      // Older history can remain in the unused default folder; release cleanup must not erase it.
+      source = oldDefault;
     }
     const destination = options.paths[key];
     const metadata = await optionalMetadata(source);
@@ -117,21 +127,27 @@ async function planMoves(options: DataMoveOptions): Promise<MoveJournal> {
       if (target === resolve(options.codeDirectory) || target.startsWith(`${resolve(options.codeDirectory)}/`)) {
         throw new Error("A legacy data link still points into the code directory; choose an external data location.");
       }
-      directories[key] = target;
+      if (!explicit) {
+        directories[key] = target;
+      }
       continue;
     }
     if (await optionalMetadata(destination)) {
       throw new Error("A data destination already exists without a matching move journal; no data was overwritten.");
     }
     if (metadata === null) {
-      directories[key] = destination;
+      if (!explicit) {
+        directories[key] = destination;
+      }
       continue;
     }
     if (!metadata.isDirectory()) {
       throw new Error("A legacy data location is not a directory; no data was moved.");
     }
-    const destinationParent = await lstat(dirname(destination), { bigint: true });
-    if (metadata.dev !== destinationParent.dev) {
+    const destinationDevice = options.destinationDevice
+      ? await options.destinationDevice(dirname(destination))
+      : (await lstat(dirname(destination), { bigint: true })).dev;
+    if (metadata.dev !== destinationDevice) {
       throw new CrossFilesystemDataMoveError();
     }
     journal.moves.push({
@@ -141,7 +157,9 @@ async function planMoves(options: DataMoveOptions): Promise<MoveJournal> {
       inode: metadata.ino.toString(),
       state: "planned",
     });
-    directories[key] = destination;
+    if (!explicit) {
+      directories[key] = destination;
+    }
   }
   return journal;
 }
@@ -260,7 +278,10 @@ async function retainedDirectory(path: string): Promise<string> {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       console.warn("settings: an explicit archive directory is absent; its configured path is retained");
-      return path;
+      if (dirname(path) === path) {
+        throw error;
+      }
+      return join(await retainedDirectory(dirname(path)), basename(path));
     }
     throw error;
   }

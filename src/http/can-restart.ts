@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "http";
+import { acquireBus } from "../vcu/bus-lease.ts";
 import { restartCanLink } from "../can/restart.ts";
 
 // POST /can-restart — re-up can0 after the link has dropped.
@@ -33,7 +34,8 @@ export const CAN_RESTART_HEADER_VALUE = "can-restart";
 export async function handleCanRestartEndpoint(
   req: IncomingMessage,
   res: ServerResponse,
-  iface: string
+  iface: string,
+  restart: typeof restartCanLink = restartCanLink
 ): Promise<void> {
   if (req.method !== "POST") {
     res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8", "Allow": "POST" });
@@ -47,13 +49,20 @@ export async function handleCanRestartEndpoint(
     res.end(`restarting the CAN link needs the ${CAN_RESTART_HEADER}: ${CAN_RESTART_HEADER_VALUE} header\n`);
     return;
   }
+  const admission = acquireBus("a CAN link restart");
+  if (!admission.ok) {
+    respond(res, 409, { ok: false, message: `Busy: ${admission.heldBy}.` });
+    return;
+  }
   try {
-    await restartCanLink(iface);
+    await restart(iface);
     respond(res, 200, { ok: true, message: `${iface} restarted at 500 kbit/s.` });
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     console.warn(`can-restart: ${iface} restart failed:`, detail);
     respond(res, 500, { ok: false, message: `Restart failed: ${detail}` });
+  } finally {
+    admission.lease.release();
   }
 }
 

@@ -7,6 +7,8 @@ apply_update() {
     save_state '.sequence = ((.sequence // 0) + 1) | .status = {running:true,ok:true,message:"Downloading and checking the release…"}'
     verify_storage
     prune_downloads
+    prune_edit_archives
+    prune_settings_snapshots
     prune_releases
     download_release
     archive_edits
@@ -15,12 +17,17 @@ apply_update() {
     # Record intent before switching. Boot recovery always chooses this explicit rollback target.
     save_state --arg target "$TARGET" --arg rollback "$CURRENT" --arg snapshot "$SNAPSHOT" \
         '.pending = {target:$target, rollback:$rollback, snapshot:$snapshot, phase:"trial"}'
+    prune_settings_snapshots
     set_current "$TARGET"
     record_status true true 'Trying the new release for 60 seconds…'
     start_current
     if trial_healthy; then
-        save_state '.previous = .pending.rollback | .snapshot = .pending.snapshot |
-            .current = .pending.target | .pending = null | .lastRollback = null'
+        read_os_packages
+        save_state --arg os "$OS_PACKAGES" '.previous = .pending.rollback | .snapshot = .pending.snapshot |
+            .current = .pending.target | .pending = null | .lastRollback = null |
+            . as $state | .osPackages = ((.osPackages // {}) + {(.current):$os} |
+                with_entries(select(.key == $state.current or .key == $state.previous)))'
+        prune_settings_snapshots
         install_helpers "$TARGET"
         record_status false true "Update installed: $RELEASE."
         note "Update installed: $RELEASE."
@@ -103,6 +110,7 @@ rollback_to() {
         --argjson reject "$reject_release" '.current = .pending.rollback | .previous = null |
         .rejected = (if $reject then (.rejected + [$from] | unique) else .rejected end) |
         .pending = null | .lastRollback = {from:$from, reason:$reason, settingsRestored:$restored}'
+    prune_settings_snapshots
     if [ "$ACTION" != recover ]; then start_current; fi
     if [ "$rollback_reason" = interrupted ]; then
         record_status false false 'Update interrupted — press Update again.'
@@ -116,7 +124,7 @@ handle_failure() {
     read_state
     # Once this lock is acquired, a pending trial's former owner has exited or been killed.
     if jq -e '.pending != null' "$STATE" >/dev/null; then repair_pending; return 0; fi
-    start_limit_reached || return 0
+    terminal_failure_ready || return 0
     automatic_restarts=$(systemctl show "$SERVICE" --property=NRestarts --value)
     case "$automatic_restarts" in ''|*[!0-9]*) fail 'Cannot determine the service restart cause.' ;; esac
     if [ "$automatic_restarts" = 0 ]; then
@@ -133,26 +141,17 @@ handle_failure() {
     rollback_to "$previous_target" "$CURRENT" "$saved_snapshot" late start-limit-hit true
 }
 
-start_limit_reached() {
+terminal_failure_ready() {
     failure_substate=$(systemctl show "$SERVICE" --property=SubState --value) || fail 'Cannot determine the failed service state.'
     [ "$failure_substate" = failed ] || return 1
-    failure_result=$(systemctl show "$SERVICE" --property=Result --value) || fail 'Cannot determine the service failure result.'
-    [ "$failure_result" != start-limit-hit ] || return 0
-    # systemd preserves a preceding exit-code/signal result when the limiter refuses a restart.
-    failure_invocation=$(systemctl show "$SERVICE" --property=InvocationID --value) || fail 'Cannot determine the failed service invocation.'
-    [ "${#failure_invocation}" = 32 ] || fail 'Cannot determine the failed service invocation.'
-    case "$failure_invocation" in *[!a-f0-9]*) fail 'Invalid failed service invocation.' ;; esac
-    journal_attempt=0
-    while [ "$journal_attempt" -lt 5 ]; do
-        limit_events=$(journalctl --boot --no-pager --output=json --lines=16 \
-            _PID=1 "UNIT=$SERVICE" "INVOCATION_ID=$failure_invocation") || fail 'Cannot read the service start-limit journal.'
-        limit_recorded=$(printf '%s\n' "$limit_events" | jq -r -s --arg service "$SERVICE" --arg invocation "$failure_invocation" \
-            'any(.[]; ._PID == "1" and .UNIT == $service and .INVOCATION_ID == $invocation and
-                (.MESSAGE | strings | endswith("Start request repeated too quickly.")))') || fail 'Cannot parse the service start-limit journal.'
-        [ "$limit_recorded" != true ] || return 0
-        journal_attempt=$((journal_attempt + 1))
-        sleep 0.2
-    done
-    note 'No start-limit event for the failed invocation; leaving the current release selected.'
-    return 1
+    if system_state=$(systemctl is-system-running); then
+        :
+    else
+        case "$system_state" in degraded|maintenance|initializing|starting|stopping) ;; *) fail 'Cannot determine whether the OS is shutting down.' ;; esac
+    fi
+    if [ "$system_state" = stopping ]; then
+        note 'The OS is shutting down; leaving the current release selected.'
+        return 1
+    fi
+    return 0
 }

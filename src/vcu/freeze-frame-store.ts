@@ -1,4 +1,5 @@
-import { mkdir, readFile } from "node:fs/promises";
+import { ensureArchiveDirectory } from "../storage/archive-access.ts";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { replaceFileDurably } from "../storage/durable.ts";
 import { decodeFreezeFrameResponse, type FreezeFrameResponse } from "../diagnostics/freeze-frame.ts";
@@ -104,7 +105,7 @@ export async function writeFreezeFrameRead(
 ): Promise<{ stored: boolean; reason: string; answered: number }> {
   const answered = answeredCount(read.replies);
   const path = join(directory, LATEST_FILE);
-  await mkdir(directory, { recursive: true });
+  await ensureArchiveDirectory(directory);
   // Every run leaves a trace, refused or not — ./snapshot-store.ts rule 1. Rule 5 without
   // rule 1 is how a reading that cost a service stop ends up in terminal scrollback only.
   // ⚠️ Serialised ONCE for both files. `archive()` and the durable write below were each

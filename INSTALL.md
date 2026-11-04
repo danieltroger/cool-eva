@@ -13,7 +13,7 @@ For a first installation, follow the [README Setup](README.md#setup), including 
   - `coolant_in` -> `/dev/spidev0.0` (CE0, inlet)
   - `coolant_out` -> `/dev/spidev0.1` (CE1, outlet)
   - Board reference resistor is 430 ohm (Adafruit); PT100 nominal 100 ohm.
-- (Optional) Radiator fan: SPAL VA69A-A101-87S on an IBT-2 / BTS7960 half-bridge, driven from hardware PWM0. Off unless `FAN_ENABLED=1`. Pin map, the `config.txt` lines and the udev rule are in §1 below; the wiring reasoning (why VCC is 3.3 V and not 5 V, why idling pulls both enables low) is in `docs/fan-control.md`.
+- (Optional) Radiator fan: SPAL VA69A-A101-87S on an IBT-2 / BTS7960 half-bridge, driven from hardware PWM0. Off unless enabled in Settings → Bike setup. Pin map, the `config.txt` lines and the udev rule are in §1 below; the wiring reasoning (why VCC is 3.3 V and not 5 V, why idling pulls both enables low) is in `docs/fan-control.md`.
 - 8devices Korlan USB2CAN into the bike's OBD port. Uses the in-kernel `usb_8dev` driver — no driver install. 500 kbit, 11-bit. It presents as can0.
   - ⚠️ **`sudo apt install can-utils`** if you want the raw capture (`can-capture.service`, installed by the setup script). It is not a default package; without it the installer refuses to enable the unit and says so. The capture is what every decode finding in `docs/` was derived from — see [`docs/can-capture.md`](docs/can-capture.md).
 - (Optional) Energica Connectivity Hub reached over BLE for torque/power, odometer, vehicle state. The Pi's onboard Bluetooth is fine.
@@ -154,13 +154,17 @@ node --experimental-strip-types scripts/generate-log-key.ts # writes both keys
 scp ride-log-key.public.pem pi@cool-eva.local:/home/pi/cool-eva/
 ```
 
-The service looks for `ride-log-key.public.pem` in the project dir by default (or set `RIDE_LOG_PUBKEY`). Without it, the live dashboard works but **nothing is persisted**. See the [ride-log guide](docs/ride-log.md#encrypted-ride-log).
+Upload the public half in Settings → Ride recording. The legacy filename is imported once on an existing installation. Without it, the live dashboard works but **nothing is persisted**. See the [ride-log guide](docs/ride-log.md#encrypted-ride-log).
 
-## 6. Configuration (environment variables — optional)
+## 6. Settings
 
-Use the [configuration reference](docs/configuration.md) for the current environment-variable table and the [README](README.md#what-can-change-the-bike) for the manual/automatic actions that can change the bike. The interface is being simplified; do not copy an old example that turns on bike writes as part of a stock installation.
+Use the [dashboard settings reference](docs/configuration.md). On a fresh Pi, initialise fresh settings with JSON on stdin before installing the unit:
 
-The installer already reads the optional `/etc/default/cool-eva` file. Keep configuration there, not in the generated service unit, which the installer rewrites. For custom BMS temperature handling, see [the signal reference](docs/signals.md#custom_bms_config--set-this-only-if-you-flashed-the-custom-config).
+```sh
+printf '{}\n' | sudo "$(command -v node)" --experimental-strip-types scripts/configure-settings.ts
+```
+
+On an existing installation, leave its unit, environment file and drop-ins intact until the migration-capable service has captured their effective values. The setup script waits for that migration before replacing the unit. A settings fault must be repaired before release cleanup.
 
 ## 7. Install and start the service
 
@@ -217,7 +221,7 @@ sudo nmcli connection modify "<ssid>" connection.autoconnect yes   # once you're
 
 `wpa-psk` is WPA2; a WPA3-only network wants `sae`. See [`docs/pi-install-prerequisites.md`](docs/pi-install-prerequisites.md) §3.
 
-Endpoints: `/dl` (sealed ride-log download), `/waypoint` (Siri shortcut), `/status`, `/vcu-params` + `/params.html` (last VCU-param snapshot, never touches bus), `/fan` (cooling-fan duty and mode — only with `FAN_ENABLED=1`, otherwise a 404; a POST needs `X-Cool-Eva: fan`).
+Endpoints: `/dl` (sealed ride-log download), `/waypoint` (Siri shortcut), `/status`, `/vcu-params` + `/params.html` (last VCU-param snapshot, never touches bus), `/fan` (cooling-fan duty and mode — only with an installed fan enabled in Settings, otherwise a 404; a POST needs `X-Cool-Eva: fan`).
 
 ## 9. Deploying updates later
 
@@ -242,9 +246,9 @@ Notes:
 - The Connectivity Hub accepts one BLE connection at a time and the service holds it. Stop the service before running a scratch BLE probe.
 - There's no reception in the garage; the Pi is only reachable when parked in wifi range.
 
-## 10. Setting up config file for cool-eva
+## 10. Changing settings later
 
-The setup script supplies `EnvironmentFile=-/etc/default/cool-eva` itself. Do not edit the unit by hand or use an example that enables writes. Follow the [configuration reference](docs/configuration.md#configuration) for the supported file and the [first-start instructions](README.md#5-before-the-first-service-start) for pairing and automatic actions.
+Open Menu → Settings. Pi choices apply after an explicit confirmed restart; Screen and Units are immediate on this phone. Do not edit the generated unit. Existing environment sources are imported once, then ignored; keep them for rollback. See [configuration](docs/configuration.md) and [recovery](docs/settings.md).
 
 ## 11. Quick tips on bringing CAN back online
 

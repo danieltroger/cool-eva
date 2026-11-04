@@ -6,25 +6,15 @@ import { promisify } from "util";
 import { monotonicNow, since } from "../monotonic.ts";
 import { syncFilesystems } from "../storage/durable.ts";
 import { tryBundleUpdate } from "./bundle-update.ts";
+import { readSettingsBody, reserveSettingsRestart, settingsReply, type SettingsHttpContext } from "./settings.ts";
+import type { SettingsReply } from "../settings/view.ts";
+import { record } from "../settings/schema.ts";
 
 const execFileAsync = promisify(execFile);
 
-// POST /update keeps owner-run Git deployment for checkouts. Bundle installs queue the
-// independent shell updater in bundle-update.ts: docs/bundle-updater.md.
-//
-// Returns git's own output so the rider sees exactly what moved — or why nothing did. On
-// a successful pull it restarts cool-eva; the service IS this process, so the restart can
-// only fire AFTER the reply has flushed (the response's "finish" event), otherwise the
-// button hangs on a killed connection. See scheduleServiceRestart for why it is detached.
-//
-// ⚠️ The pull runs as the checkout's OWNER, never as root, and is --ff-only. A root pull
-// poisons .git with root-owned files and the next pull as the owner then fails silently.
-// That incident, and why this shape deletes safe.directory and GIT_SSH_COMMAND rather
-// than adding to them, is docs/deploy.md.
-//
-// ⚠️ The new objects are flushed to the card before the restart is fired, because this Pi
-// loses power with the bike and a pull that only reached the page cache is #57's corrupted
-// repo. flushThenRestart() does both, in that order. docs/power-cuts.md.
+// Pull as the checkout owner, then reserve the shared settings/bus restart through reply delivery.
+// A lost reply still restarts; readback reconciles by process generation. Ownership and writeback
+// constraints, including the earlier detached fallback, are in docs/deploy.md and docs/power-cuts.md.
 
 /**
  * What the endpoint says, for the caller that acts on it. A named type imported through
@@ -32,6 +22,7 @@ const execFileAsync = promisify(execFile);
  * stops the two ends drifting, the same as DashboardMessage in CLAUDE.md.
  */
 export interface UpdateReply {
+  settings?: SettingsReply;
   ok: boolean;
   message: string;
   sequence?: number;
@@ -56,7 +47,8 @@ export const UPDATE_HEADER_VALUE = "update";
 export async function handleUpdateEndpoint(
   req: IncomingMessage,
   res: ServerResponse,
-  directory: string
+  directory: string,
+  settings?: SettingsHttpContext
 ): Promise<void> {
   if (req.method !== "POST") {
     res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8", "Allow": "POST" });
@@ -70,28 +62,84 @@ export async function handleUpdateEndpoint(
     res.end(`pulling and restarting needs the ${UPDATE_HEADER}: ${UPDATE_HEADER_VALUE} header\n`);
     return;
   }
-  if (await tryBundleUpdate(res, directory)) return;
   const startedAt = monotonicNow();
   // Falls back to our own uid only so a failing stat() still has something to name in the
   // reply; the pull itself never runs on that guess.
   const currentUid = process.getuid?.() ?? 0;
   let ownerUid = currentUid;
+  let pulledSummary: string | null = null;
   try {
+    const body = settings ? record(await readSettingsBody(req), "restart request") : null;
+    if (settings && body) {
+      if (
+        typeof body.expectedGeneration !== "string" ||
+        (body.revision !== null && !Number.isSafeInteger(body.revision)) ||
+        Object.keys(body).some(key => !["expectedGeneration", "revision", "bluetoothCodeId"].includes(key))
+      ) {
+        throw new Error("Read settings again before updating.");
+      }
+      if (body.expectedGeneration !== settings.restart.generation) {
+        respond(res, 200, { ok: true, message: "The process already changed. Read settings before another update." });
+        return;
+      }
+    }
+    if (
+      await tryBundleUpdate(res, directory, {
+        statusDirectory: settings?.runtime.paths.updaterDirectory,
+        reservation: settings && body ? { request: req, body, settings } : undefined,
+      })
+    ) {
+      return;
+    }
     const pull = await pullCommandFor(directory, currentUid);
     ownerUid = pull.ownerUid;
     const { stdout, stderr } = await execFileAsync(pull.command, pull.args, { timeout: PULL_TIMEOUT_MS });
     const output = `${stdout}${stderr}`.trim();
     console.log(`update: git pull in ${directory}:\n${output}`);
     const summary = output || "Already up to date.";
-    respond(res, 200, { ok: true, message: `${summary}\n\nRestarting cool-eva…` });
-    // The restart kills this process, so wait for the reply to leave the socket first.
-    res.once("finish", () => void flushThenRestart());
+    pulledSummary = summary;
+    if (settings && body) {
+      const reserved = await reserveSettingsRestart(req, body, settings);
+      if (!reserved) {
+        respond(res, 409, { ok: false, message: `${summary}\n\nRead settings before restarting.` });
+        return;
+      }
+      const delivery = new Promise<void>(resolve => {
+        res.once("finish", resolve);
+        res.once("close", resolve);
+      });
+      respond(res, 200, { ok: true, message: `${summary}\n\nRestarting Cool Eva…`, settings: settingsReply(settings) });
+      void settings.restart.deliverAndSchedule(
+        async () => {
+          await delivery;
+          if (req.headers["x-cool-eva-tunnel"] === "1") {
+            await settings.drainBluetooth();
+          }
+        },
+        async () => {
+          try {
+            const failure = await syncFilesystems();
+            if (failure) {
+              console.warn(`update: ${failure}`);
+            }
+          } catch (error) {
+            console.warn("update: checkout sync failed; still restarting", error);
+          }
+        }
+      );
+    } else {
+      res.once("finish", () => void flushThenRestart());
+      respond(res, 200, { ok: true, message: `${summary}\n\nRestarting cool-eva…` });
+    }
   } catch (err) {
     // A non-zero git exit (merge conflict, no network, detached head) lands here with
     // its output carried on the error; surface that rather than a bare "failed".
     const detail = describePullFailure(err, since(startedAt), { directory, ownerUid });
     console.warn(`update: git pull in ${directory} failed:\n${detail}`);
-    respond(res, 500, { ok: false, message: detail });
+    respond(res, 500, {
+      ok: false,
+      message: pulledSummary ? `${pulledSummary}\n\nCode pulled, but the service was not restarted: ${detail}` : detail,
+    });
   }
 }
 

@@ -9,8 +9,7 @@ OnFailure=cool-eva-rollback.service
 [Service]
 Type=simple
 WorkingDirectory=/opt/cool-eva
-EnvironmentFile=-/etc/default/cool-eva
-ExecStartPre=/usr/local/libexec/cool-eva-update recover
+ExecStartPre=-/usr/local/libexec/cool-eva-update recover
 ExecStart=/usr/local/libexec/cool-eva-launch
 Restart=on-failure
 RestartMode=normal

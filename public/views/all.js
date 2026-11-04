@@ -99,9 +99,10 @@ export function AllView() {
  * anything and these rows narrow with the rest, and the block disappears when none of
  * them match. docs/dashboard-decisions.md § "The lifetime block".
  */
-function LifetimeBlock() {
+/** @param {boolean} [showAll] */
+export function LifetimeBlock(showAll = false) {
   return () => {
-    const needle = filter.val;
+    const needle = showAll ? "" : filter.val;
     const response = lifetimeStats.val;
     if (!response) {
       const failure = lifetimeError.val;

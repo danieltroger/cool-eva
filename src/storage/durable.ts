@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import { open, rename, rm, stat } from "fs/promises";
 import { dirname, join } from "path";
 import type { FileHandle } from "fs/promises";
+import { managedArchiveFileMode } from "./archive-access.ts";
 
 // Getting bytes onto the SD card, on a Pi that loses power with the bike every time.
 //
@@ -109,7 +110,9 @@ export async function replaceFileDurably(path: string, data: string, options: Re
         await handle.chown(userId, groupId);
       }
       // The handle mode also fixes replacements of existing files; open's mode only affects creation.
-      await handle.chmod(options.mode ?? (existing ? existing.mode & 0o777 : 0o666 & ~process.umask()));
+      await handle.chmod(
+        options.mode ?? managedArchiveFileMode(path) ?? (existing ? existing.mode & 0o777 : 0o666 & ~process.umask())
+      );
       await handle.writeFile(data);
       await flush(handle, temporaryPath);
     } finally {
@@ -248,11 +251,14 @@ async function openForAppend(path: string): Promise<FileHandle> {
     handle = await open(path, "a");
     created = false;
   }
-  if (!created) {
-    return handle;
-  }
   try {
-    await syncDirectory(dirname(path));
+    const mode = managedArchiveFileMode(path);
+    if (mode !== undefined) {
+      await handle.chmod(mode);
+    }
+    if (created) {
+      await syncDirectory(dirname(path));
+    }
   } catch (error) {
     await closeReportingOnly(handle, path);
     throw error;
