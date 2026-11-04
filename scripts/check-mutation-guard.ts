@@ -24,17 +24,22 @@ try {
   for (const headers of rejectedHeaders) {
     const response = await fetch(base + "/service-action", { method: "POST", headers });
     assert.equal(response.status, 403);
-    assert.match(await response.text(), /Reload the page/);
+    const reply = (await response.json()) as { csrfRefusal: boolean; message: string };
+    assert.equal(reply.csrfRefusal, true);
+    assert.match(reply.message, /Reload the page/);
     assert.equal(effects, 0, "Either missing barrier must refuse before a side effect.");
   }
   const siri = await fetch(base + "/waypoint");
   assert.equal(siri.status, 200);
-  assert.match(await siri.text(), /shortcut needs updating.*No waypoint was saved/);
+  const spoken = await siri.text();
+  assert.match(spoken, /^No waypoint was saved\. Your Siri shortcut needs updating\./);
+  assert.match(spoken, /Open Cool Eva, then Settings, Advanced, Update Siri shortcut\./);
+  assert.doesNotMatch(spoken, /\bPOST\b|\bheader\b/);
   const cached = await fetch(base + "/waypoint", { headers: { Accept: "application/json" } });
   assert.equal(cached.status, 200);
   const cachedReply = (await cached.json()) as { saved: boolean; message: string };
   assert.equal(cachedReply.saved, false);
-  assert.match(cachedReply.message, /Reload the page/);
+  assert.equal(cachedReply.message, spoken);
   assert.equal(effects, 0);
   const allowed = await fetch(base + "/waypoint", {
     method: "POST",

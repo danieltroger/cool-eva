@@ -3,9 +3,9 @@ import type { IncomingMessage, ServerResponse } from "http";
 export function handleMutationGuard(req: IncomingMessage, res: ServerResponse, path: string): boolean {
   if (path === "/waypoint" && req.method === "GET") {
     const message =
-      "This shortcut needs updating. Use POST and the Cool Eva header; see the dashboard. No waypoint was saved.";
+      "No waypoint was saved. Your Siri shortcut needs updating. Open Cool Eva, then Settings, Advanced, Update Siri shortcut.";
     if (String(req.headers.accept ?? "").includes("application/json")) {
-      const reply: LegacyWaypointReply = { saved: false, message: `Reload the page. ${message}` };
+      const reply: LegacyWaypointReply = { saved: false, message };
       res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
       res.end(JSON.stringify(reply));
     } else {
@@ -19,7 +19,7 @@ export function handleMutationGuard(req: IncomingMessage, res: ServerResponse, p
     (!req.headers["x-cool-eva"] || !/^application\/json(?:;|$)/i.test(String(req.headers["content-type"] ?? "")))
   ) {
     const message = "Reload the page before trying this action again.";
-    const reply: MutationRefusal = { ok: false, message, reason: message };
+    const reply = csrfRefusal(message);
     res.writeHead(403, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
     res.end(JSON.stringify(reply));
     return true;
@@ -32,8 +32,13 @@ export function handleMutationGuard(req: IncomingMessage, res: ServerResponse, p
   return false;
 }
 
-interface MutationRefusal {
+export function csrfRefusal(message: string): CsrfRefusal {
+  return { ok: false, csrfRefusal: true, message, reason: message };
+}
+
+export interface CsrfRefusal {
   ok: false;
+  csrfRefusal: true;
   message: string;
   reason: string;
 }

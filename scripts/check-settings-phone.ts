@@ -15,6 +15,8 @@ import type { SettingsReply, SettingsActionReply } from "../src/settings/view.ts
 import { settingsStateLines, pendingChoiceDescriptions } from "../public/lib/settings-state.js";
 import { retiredLegacyChoices } from "../src/settings/legacy.ts";
 import { requireCurrentPage, pageReloadRequired } from "../public/lib/page-reload.js";
+import { request } from "../public/lib/transport.js";
+import { csrfRefusal } from "../src/http/mutation-guard.ts";
 
 const first: SettingsReply = {
   ok: true,
@@ -89,9 +91,13 @@ assert.deepEqual(retiredLegacyChoices(["retired:WIFI_IFACE", "retired:OBD_ENABLE
   { name: "WIFI_IFACE", behavior: "Wi-Fi monitoring and recovery now use wlan0." },
   { name: "OBD_ENABLED", behavior: "OBD polling is now always enabled." },
 ]);
-assert.throws(() => requireCurrentPage({ status: 403 }), /Reload the page/);
+await assert.rejects(
+  requireCurrentPage({ status: 403, json: async () => csrfRefusal("Reload the page.") }),
+  /Reload the page/
+);
 assert.equal(pageReloadRequired.rawVal, true);
 pageReloadRequired.val = false;
+await checkReloadRefusals();
 const coolant = settingDraft("coolantProbesEnabled", "false");
 settingsMessages.val = { coolantProbesEnabled: "Saved. Applies after restart." };
 editSetting("coolantProbesEnabled", "true");
@@ -186,3 +192,35 @@ try {
 console.log(
   "settings phone checks passed: dirty edits survive readback, stale revisions and unknown connections cannot save, learned hubs keep arming, generation/choice changes disarm, and drafts stay with their Pi"
 );
+
+async function checkReloadRefusals(): Promise<void> {
+  const originalFetch = globalThis.fetch;
+  try {
+    const message = "Service data is unavailable. Resolve the Settings fault before reading.";
+    for (const path of ["/lifetime-read", "/freeze-frame-read", "/vcu-probe", "/vcu-read"]) {
+      const payload = { message };
+      globalThis.fetch = async () => new Response(JSON.stringify(payload), { status: 403 });
+      const response = await request(path, { method: "POST", headers: { "X-Cool-Eva": "service-mode" } });
+      assert.equal(response.status, 403);
+      assert.deepEqual(await response.json(), payload, `${path} must retain its real refusal and readable body.`);
+      assert.equal(pageReloadRequired.rawVal, false, `${path} needs settings repair, not a page reload.`);
+    }
+    globalThis.fetch = async () => new Response("Read permission is unavailable.", { status: 403 });
+    const plain = await request("/synthetic-refusal");
+    assert.equal(await plain.text(), "Read permission is unavailable.");
+    assert.equal(pageReloadRequired.rawVal, false);
+    for (const csrfRefusal of [false, "true"]) {
+      globalThis.fetch = async () =>
+        new Response(JSON.stringify({ csrfRefusal, message: "Reload the page" }), { status: 403 });
+      assert.equal((await request("/synthetic-refusal")).status, 403);
+      assert.equal(pageReloadRequired.rawVal, false, "Only the explicit guard marker triggers a reload.");
+    }
+    globalThis.fetch = async () => new Response(JSON.stringify(csrfRefusal("Reload the page.")), { status: 403 });
+    await assert.rejects(request("/settings", { method: "PATCH" }), /Reload the page/);
+    assert.equal(pageReloadRequired.rawVal, true);
+  } finally {
+    pageReloadRequired.val = false;
+    globalThis.fetch = originalFetch;
+  }
+  console.log("  only marked CSRF refusals request reload; all four service-data 403s retain their repair message");
+}

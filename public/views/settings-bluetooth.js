@@ -43,41 +43,43 @@ export function DashboardBluetooth() {
           `${settingsConfirmed.val && !settingsError.val ? "Active" : "Unconfirmed — last contact"}: ${settings.val?.readiness.bluetooth ?? "Not read"}`
         ),
       div(
-        { class: "settings-row" },
-        div(
-          () =>
-            generatedCode.val && preparedFor.val === settings.val?.instanceId
-              ? input({
-                  "aria-label": "New Bluetooth key",
-                  type: showCode.val ? "text" : "password",
-                  readonly: true,
-                  value: generatedCode.val,
-                  autocomplete: "new-password",
-                })
-              : div(
-                  !settingsConfirmed.val || settingsError.val
-                    ? "Pi unconfirmed. Read the saved key state before changing it."
-                    : settings.val?.saved.bluetoothCodeId
-                      ? "A shared key is already saved."
-                      : "No key saved."
-                ),
-          label(
-            { class: "settings-note settings-check" },
-            input({
-              type: "checkbox",
-              checked: () => copied.val && preparedFor.val === settings.val?.instanceId,
-              disabled: () => !generatedCode.val || preparedFor.val !== settings.val?.instanceId || !settings.val?.ok,
-              onchange: event => {
-                copied.val = /** @type {HTMLInputElement} */ (event.target).checked;
-              },
-            }),
-            " I saved a recoverable copy of the new key."
-          ),
-          PendingLabel(
-            "dashboardBluetoothSecret",
-            () => !!generatedCode.val && preparedFor.val === settings.val?.instanceId
-          )
+        { class: "settings-form-fields" },
+        () =>
+          generatedCode.val && preparedFor.val === settings.val?.instanceId
+            ? input({
+                "aria-label": "New Bluetooth key",
+                type: showCode.val ? "text" : "password",
+                readonly: true,
+                value: generatedCode.val,
+                autocomplete: "new-password",
+              })
+            : div(
+                !settingsConfirmed.val || settingsError.val
+                  ? "Pi unconfirmed. Read the saved key state before changing it."
+                  : settings.val?.saved.bluetoothCodeId
+                    ? "A shared key is already saved."
+                    : "No key saved."
+              ),
+        label(
+          { class: "settings-note settings-check" },
+          input({
+            type: "checkbox",
+            checked: () => copied.val && preparedFor.val === settings.val?.instanceId,
+            disabled: () => !generatedCode.val || preparedFor.val !== settings.val?.instanceId || !settings.val?.ok,
+            onchange: event => {
+              copied.val = /** @type {HTMLInputElement} */ (event.target).checked;
+            },
+          }),
+          " I saved a recoverable copy of the new key."
         ),
+        PendingLabel(
+          "dashboardBluetoothSecret",
+          () => !!generatedCode.val && preparedFor.val === settings.val?.instanceId
+        )
+      ),
+      SaveResult("dashboardBluetoothSecret"),
+      div(
+        { class: "settings-actions" },
         () =>
           generatedCode.val && preparedFor.val === settings.val?.instanceId
             ? button(
@@ -89,7 +91,7 @@ export function DashboardBluetooth() {
                 },
                 "Copy"
               )
-            : div(),
+            : div({ hidden: true }),
         () =>
           manualCopyNeeded.val && generatedCode.val && preparedFor.val === settings.val?.instanceId
             ? button(
@@ -101,7 +103,7 @@ export function DashboardBluetooth() {
                 },
                 showCode.val ? "Hide key" : "Show key"
               )
-            : div(),
+            : div({ hidden: true }),
         button(
           {
             class: "settings-button",
@@ -116,8 +118,7 @@ export function DashboardBluetooth() {
           },
           () => (generatedCode.val && preparedFor.val === settings.val?.instanceId ? "Save" : "New key")
         )
-      ),
-      SaveResult("dashboardBluetoothSecret")
+      )
     ),
     SettingsCard(
       "Turn dashboard Bluetooth off",

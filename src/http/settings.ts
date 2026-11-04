@@ -7,6 +7,7 @@ import { validateSettingsPatch } from "../settings/validation.ts";
 import { publicSettings, type SettingsReply, type HubCandidate } from "../settings/view.ts";
 import type { SettingsRestart } from "../settings/restart.ts";
 import { retiredLegacyChoices } from "../settings/legacy.ts";
+import { csrfRefusal } from "./mutation-guard.ts";
 
 export async function handleSettingsEndpoint(
   req: IncomingMessage,
@@ -28,7 +29,7 @@ export async function handleSettingsEndpoint(
       req.headers["x-cool-eva"] !== "settings" ||
       !/^application\/json(?:;|$)/i.test(String(req.headers["content-type"] ?? ""))
     ) {
-      respond(res, 403, { ok: false, message: "Reload the page before changing settings." });
+      respond(res, 403, csrfRefusal("Reload the page before changing settings."));
       return;
     }
     const body = record(await readSettingsBody(req), "request");

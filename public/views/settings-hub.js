@@ -26,48 +26,51 @@ export function MotorcycleConnection() {
       "Cool Eva ↔ motorcycle hub. Connecting Cool Eva may replace this motorcycle’s existing Bluetooth pairing. Saving or forgetting takes effect after restart.",
       () => div({ class: "settings-note" }, `Connection: ${settings.val?.readiness.hub ?? "Unconfirmed"}`),
       div(
-        { class: "settings-row" },
-        div(
-          () =>
-            candidates.val.length && scannedFor.val === settings.val?.instanceId
-              ? select(
-                  {
-                    "aria-label": "Choose your motorcycle",
-                    value: () => selected.val,
-                    onchange: event => {
-                      if (!selected.rawVal) {
-                        selectionRevision.val = settings.rawVal?.revision ?? null;
-                      }
-                      selected.val = /** @type {HTMLSelectElement} */ (event.target).value;
-                      armed.val = "";
-                      settingsMessages.val = { ...settingsMessages.rawVal, hub: "" };
-                    },
+        { class: "settings-form-fields" },
+        () =>
+          candidates.val.length && scannedFor.val === settings.val?.instanceId
+            ? select(
+                {
+                  "aria-label": "Choose your motorcycle",
+                  value: () => selected.val,
+                  onchange: event => {
+                    if (!selected.rawVal) {
+                      selectionRevision.val = settings.rawVal?.revision ?? null;
+                    }
+                    selected.val = /** @type {HTMLSelectElement} */ (event.target).value;
+                    armed.val = "";
+                    settingsMessages.val = { ...settingsMessages.rawVal, hub: "" };
                   },
-                  option({ value: "", selected: () => !selected.val }, "Choose motorcycle…"),
-                  ...candidates.val.map(candidate =>
-                    option(
-                      { value: candidate.address, selected: () => selected.val === candidate.address },
-                      `${candidate.name} · ${candidate.address}`
-                    )
+                },
+                option({ value: "", selected: () => !selected.val }, "Choose motorcycle…"),
+                ...candidates.val.map(candidate =>
+                  option(
+                    { value: candidate.address, selected: () => selected.val === candidate.address },
+                    `${candidate.name} · ${candidate.address}`
                   )
                 )
-              : div("Wake the motorcycle before scanning."),
-          () =>
-            selected.val && scannedFor.val === settings.val?.instanceId
-              ? div(
-                  { class: "settings-note" },
-                  `Draft motorcycle: ${selected.val}. A name and address do not prove it is your bike; check nearby motorcycles before saving.`
-                )
-              : div(),
-          PendingLabel("hubAddress", () => !!selected.val && scannedFor.val === settings.val?.instanceId)
-        ),
+              )
+            : div("Wake the motorcycle before scanning."),
+        () =>
+          selected.val && scannedFor.val === settings.val?.instanceId
+            ? div(
+                { class: "settings-note" },
+                `Draft motorcycle: ${candidates.val.find(candidate => candidate.address === selected.val)?.name ?? "Unnamed motorcycle"} · ${selected.val}. A name and address do not prove it is your bike; check nearby motorcycles before saving.`
+              )
+            : div(),
+        PendingLabel("hubAddress", () => !!selected.val && scannedFor.val === settings.val?.instanceId)
+      ),
+      () => div({ class: "settings-note", role: "status" }, scanMessage.val),
+      SaveResult("hub"),
+      div(
+        { class: "settings-actions" },
         CompactButton("Scan", () => {
           void scan();
         }),
         () =>
           selected.val && scannedFor.val === settings.val?.instanceId
             ? button({ class: "settings-button", onclick: cancelSelection }, "Cancel")
-            : div(),
+            : div({ hidden: true }),
         button(
           {
             class: "settings-button",
@@ -84,9 +87,7 @@ export function MotorcycleConnection() {
           },
           "Save"
         )
-      ),
-      () => div({ class: "settings-note", role: "status" }, scanMessage.val),
-      SaveResult("hub")
+      )
     ),
     SettingsCard(
       "Forget saved motorcycle",

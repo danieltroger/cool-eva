@@ -11,7 +11,7 @@ import {
 import { destinationSection, openDestination } from "../lib/destination.js";
 import { ThemeToggle, UnitsToggle } from "./sheet.js";
 import { SettingsCard, BooleanSetting, TextSetting, RecordingKeySetting } from "./settings-fields.js";
-import { MigrationSummary } from "./settings-summary.js";
+import { MigrationSummary, SiriShortcutLink } from "./settings-summary.js";
 import { AccessExplanation } from "./settings-access.js";
 import { SettingsRecovery } from "./settings-recovery.js";
 import { SettingsRestart } from "./settings-restart.js";
@@ -184,6 +184,11 @@ function SettingsContent(section) {
         ),
         SettingsCard("CAN capture location", "", () =>
           div({ class: "settings-note" }, settings.val?.locations.captures ?? "Unconfirmed")
+        ),
+        SettingsCard(
+          "Update Siri shortcut",
+          "Older Siri shortcuts no longer save waypoints. Follow the guide to update yours.",
+          SiriShortcutLink()
         ),
         MigrationSummary(false)
       );

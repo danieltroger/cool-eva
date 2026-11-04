@@ -77,6 +77,7 @@ try {
       body: JSON.stringify({ revision: 0, changes: { radiatorFanEnabled: true } }),
     });
     assert.equal(response.status, 403);
+    assert.equal(((await response.json()) as { csrfRefusal: boolean }).csrfRefusal, true);
     assert.equal((await read()).revision, 0);
   }
   assert.equal((await fetch(base + "/settings/hub-candidates")).status, 405);
