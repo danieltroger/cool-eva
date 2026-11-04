@@ -1153,6 +1153,10 @@ const CHECKS: SelfCheck[] = [
       "the dashboard's tab URLs — that each tab still lives at the address every bookmark holds, that a fragment naming no tab (empty, unknown, malformed, or a path) lands on the riding screen instead of throwing before the first render, and that the tab ring the high-beam gesture advances through closes",
   },
   {
+    script: "scripts/check-route-disarm.ts",
+    covers: "tab taps, gesture navigation and URL/history restoration discard an armed action's old confirmation",
+  },
+  {
     script: "scripts/check-update-endpoint.ts",
     covers:
       "the menu's Update button against real git repos and no Pi: that it pulls AS THE CHECKOUT'S OWNER rather " +

@@ -143,7 +143,7 @@ Only re-run `npm install` on the Pi when a dependency actually changed; a plain 
 
 ## 5. Encrypted ride log key (do this on the laptop)
 
-For browser generation and the phone-only file handoff, see [recording key setup](docs/hosted-pages.md#make-recording-keys). Until its hosted address is published, use the laptop route below.
+You can generate the same PEM pair at [the recording key page](https://cool-eva-keys.cool-eva.workers.dev). See [recording key setup](docs/hosted-pages.md#make-recording-keys) for backup and the phone-only handoff; phone acceptance remains outstanding. The manual laptop route below remains available.
 
 The Pi is given a PUBLIC key only, so a stolen SD card yields ciphertext. On the laptop:
 

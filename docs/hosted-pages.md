@@ -2,13 +2,13 @@
 
 Two static Cloudflare Workers serve this repository: `cool-eva-keys` serves `workers/keys/public/`; `cool-eva-dashboard` serves `public/` directly. They have separate origins. Neither runs server-side application code or holds a key, database or storage binding. Dashboard traffic goes between the phone and Pi through the existing Bluetooth tunnel.
 
-This is the first hosting stage of [#327](https://github.com/danieltroger/cool-eva/issues/327). The selected addresses are [the key page](https://cool-eva-keys.cool-eva.workers.dev) and [the dashboard](https://cool-eva-dashboard.cool-eva.workers.dev); the coordinator will verify their first main deployment. Until the cutover is complete, the existing README/INSTALL instructions and Pages deployment remain in place. Do not interpret this document as evidence of a successful deployment or phone test.
+The addresses are [the key page](https://cool-eva-keys.cool-eva.workers.dev) and [the dashboard](https://cool-eva-dashboard.cool-eva.workers.dev). For [#327](https://github.com/danieltroger/cool-eva/issues/327), the coordinator verified the first deployment of [#330](https://github.com/danieltroger/cool-eva/pull/330), SHA `849ad29`: both pages returned 200, dashboard assets and missing-asset 404 worked, the key security headers were present, and the deploy log was clean. This is the coordinator's deployment observation, not phone acceptance. The later cutover SHA still needs its own deployment verification before Pages is retired.
 
 ## Make recording keys
 
-Open the published key-page address in a supported browser. Tap **Generate keys**, then **Download private key**. Find `ride-log-key.private.pem`, keep a recoverable backup away from the Pi (for example in your password manager), and confirm **I have saved a recoverable copy**. Download `ride-log-key.public.pem`. Only the public file belongs on the Pi. Losing the private key makes old rides unreadable; generating another pair does not recover them. Existing owners can keep their existing keys.
+Open [the key page](https://cool-eva-keys.cool-eva.workers.dev) in a supported browser. Tap **Generate keys**, then **Download private key**. Find `ride-log-key.private.pem`, keep a recoverable backup away from the Pi (for example in your password manager), and confirm **I have saved a recoverable copy**. Download `ride-log-key.public.pem`. Only the public file belongs on the Pi. Losing the private key makes old rides unreadable; generating another pair does not recover them. Existing owners can keep their existing keys.
 
-The page reports that a download started. It cannot confirm that the file was saved or backed up. If the pair is still shown when you return to the tab, retrying its private download uses the same pair. Reloading, navigating away or a browser discarding the tab loses it; returning never generates a replacement automatically. Use the files you saved rather than accidentally configuring a different key. A browser download cannot set the CLI's mode 0600. Phone app-switching and file handling remain part of the pre-cutover acceptance below.
+The page reports that a download started. It cannot confirm that the file was saved or backed up. If the pair is still shown when you return to the tab, retrying its private download uses the same pair. Reloading, navigating away or a browser discarding the tab loses it; returning never generates a replacement automatically. Use the files you saved rather than accidentally configuring a different key. A browser download cannot set the CLI's mode 0600. Phone app-switching and file handling remain part of the outstanding acceptance below.
 
 Chrome/Edge 133+, Firefox 130+ and Safari/iOS Safari 17+ support the required X25519 operations. The page attempts generation and export and reports failure if either is unavailable. For an unsupported browser, update it or use the existing Node 24 laptop command:
 
@@ -26,7 +26,7 @@ On an iPhone use **Safari**; on Android use **Chrome**. When starting in the Coo
 2. Return to the same browser tab. If the pair is still shown, you can retry its private download before confirming your backup. A browser may suffix repeated filenames, so compare the public fingerprint and keep one known matching pair. If the tab was cleared, use your saved matching files; generating again creates a different pair.
 3. Confirm the backup, download the public file, and find `ride-log-key.public.pem` as well. Join the Pi's Wi-Fi network, open its own HTTP dashboard, and use ride recording setup's Browse/Files picker to select **only `ride-log-key.public.pem`**. Never select the private file. Compare the fingerprint, apply the setting and check the active recorder status.
 
-The file-picker flow belongs to [#317](https://github.com/danieltroger/cool-eva/issues/317); verification of the hosted-page handoff to Settings → Ride recording remains outstanding. The HTTPS key page never POSTs to the HTTP Pi or attempts cross-origin installation. Upload the public file through the Pi's own dashboard. [#324](https://github.com/danieltroger/cool-eva/issues/324)'s installation guide and #317 onboarding should link to the published key-page URL after hosting verification. No key argument is added to the installer.
+The file-picker flow belongs to [#317](https://github.com/danieltroger/cool-eva/issues/317); verification of the hosted-page handoff to Settings → Ride recording remains outstanding on phones. The HTTPS key page never POSTs to the HTTP Pi or attempts cross-origin installation. Upload the public file through the Pi's own dashboard. The installation guides link to the published key page; no key argument is added to the installer.
 
 ## One-time account setup — coordinator only
 
@@ -42,9 +42,11 @@ Keep both Worker names and the account subdomain stable. Changing either changes
 https://cool-eva-dashboard.cool-eva.workers.dev
 ```
 
-There is **no path or trailing slash**. Do not permit the key-page origin, wildcard workers.dev hosts, sibling Workers, deployment previews or the shared account GitHub Pages origin. #318 owns the committed exact-origin policy, its initial disabled state, native `cooleva://app/` allowance, legacy storage cleanup and any exposed-code rotation guidance.
+There is **no path or trailing slash**. `public/lib/ble-origin.js` permits only this hosted HTTPS origin. Do not permit the key-page origin, wildcard workers.dev hosts, sibling Workers, deployment previews or the shared account GitHub Pages origin. The #318 gate still checks the genuine native `cooleva://app/` URL separately because its origin can serialize as `null`; the native bridge requirement and legacy storage cleanup are unchanged.
 
-The selected account subdomain is `cool-eva`. Wrangler derives the addresses from each Worker name and this subdomain; the config comments record both canonical origins. The key page is `https://cool-eva-keys.cool-eva.workers.dev`. Configuring #318's BLE allow-list remains part of the separate cutover PR.
+The account subdomain is `cool-eva`. Wrangler derives the addresses from each Worker name and this subdomain; the config comments record both canonical origins. The key page is `https://cool-eva-keys.cool-eva.workers.dev`.
+
+**Riders moving from `https://danieltroger.github.io/cool-eva/` must re-enter their saved Bluetooth access code on the new dashboard.** Browser storage is tied to the origin and is not transferred or cleared by unpublishing Pages. Keep a recoverable copy and update bookmarks; after re-entry, you may clear the old site's data in your browser. See the [rotation requirement before reusing that Pages account](ble-server.md#hosted-pages-and-origin-isolation). The bundled native app keeps its existing origin and code.
 
 ## CI and local checks
 
@@ -78,9 +80,11 @@ The key page's `_headers` enforces a strict CSP with `connect-src 'none'`, same-
 
 There is no cron, scheduled rebuild, credential renewal, certificate renewal or storage migration. The pinned compatibility date does not expire. A later tooling/API failure might prevent a future deployment; it does not expire already-served static assets.
 
-## Pre-cutover acceptance
+## One-time phone acceptance — outstanding
 
-Use **synthetic keys only**. Record the platform/version, each observed result, screenshot paths and the tested main SHA in a private receipt. Missing hardware/emulators are **OUTSTANDING**, not a desktop substitute.
+**iOS Safari and Android Chrome acceptance remain OUTSTANDING for Daniel.** Neither platform has an acceptance receipt yet. Desktop browser checks do not substitute for either platform, and successful hosting does not establish phone download, app-switching or picker behaviour. These checks remain follow-up work through the hosting cutover.
+
+Use **synthetic keys only**. Record the platform/version, each observed result, screenshot paths and the tested main SHA in a private receipt. Missing hardware/emulators are **OUTSTANDING**.
 
 - Inspect the actual key page in light and dark at 390×844 with `innerWidth === 390`; inspect initial, generated/backup and unsupported states. Save screenshots under the worktree's gitignored `.preview-shots/`, without displaying private PEM.
 - In **iOS Safari** (Xcode iOS Simulator when installed, otherwise Daniel's real phone), save and find **both named PEM files**, retry the private download without changing the pair, switch to Files and return without silent generation, and select only the public PEM in #317 setup. Record picker integration separately if #317 is unavailable.
@@ -96,8 +100,13 @@ Use **synthetic keys only**. Record the platform/version, each observed result, 
 
 ## Ordered cutover and Pages retirement
 
-The first hosting PR keeps `.github/workflows/pages.yml`. After its main-only deployment is verified, the cutover PR coordinates #318's exact Worker origin, switches rider documentation/links, and deletes `.github/workflows/pages.yml`. The coordinator merges; the author lane never merges or deploys locally.
+The hosting PR (#330) deployed both Workers before this cutover. The cutover replaces #318's hosted allowlist entry, switches rider links and deletes `.github/workflows/pages.yml`. Deleting that workflow stops future Pages publishing; it **does not remove the existing Pages deployment**. The coordinator merges; the author lane never merges or deploys locally.
 
-**Retire/unpublish the existing GitHub Pages site only after the cutover SHA's Worker deployment and live responses are verified.** The first PR's green run alone is insufficient. Deleting the workflow alone does not unpublish existing Pages content. Outstanding phone download/picker checks keep cutover pending until Daniel completes them. Until the cutover merge and verified deployment, #327 remains open. Preserve the normal Pi HTTP route and genuine native origin throughout; do not transfer browser storage between origins.
+1. Merge the cutover and wait for **Hosted pages → deploy** to finish on the **cutover main SHA**. Check that the revision guard did not skip its deploy steps and that both Worker deployments succeeded. If main advanced, verify the newer SHA that contains the cutover instead; dispatch the workflow on main if needed. Record that exact deployed SHA and Actions run URL. A green PR check or the first hosting SHA `849ad29` alone is insufficient.
+2. Verify the live dashboard and `app.js` return 200, a missing asset returns 404, and `/lib/ble-origin.js` matches that deployed SHA with exactly `https://cool-eva-dashboard.cool-eva.workers.dev` as its hosted entry. Verify the key page still returns 200 with its CSP (`connect-src 'none'`, `worker-src 'none'`), `nosniff`, `no-referrer` and permissions policy. Read the deploy log and record the result. Leave Pages published if deployment or live verification fails.
+3. **Only after step 2, the coordinator unpublishes Pages.** The coordinator uses repository admin/maintainer access to open **[repository Settings → Pages](https://github.com/danieltroger/cool-eva/settings/pages)**, opens the menu beside **Your site is live at**, then selects **Unpublish site**. This removes the existing deployment; no replacement Pages workflow is needed. [GitHub's unpublishing instructions](https://docs.github.com/en/pages/getting-started-with-github-pages/unpublishing-a-github-pages-site) explain that a later successful Pages deployment could publish it again, which is why the workflow is removed first.
+4. The coordinator checks the former `https://danieltroger.github.io/cool-eva/` URL no longer serves the dashboard and records Pages retirement separately from the Worker deploy. Remind riders to update bookmarks and re-enter their saved Bluetooth code on the Worker origin. No browser-storage transfer or redirect migrates that code.
+
+The normal Pi HTTP route and genuine native origin remain available throughout. Phone download/picker acceptance stays **OUTSTANDING for Daniel** after this hosting switch; it is not implied by the deployment receipt.
 
 Sources read for the design: Cloudflare [static asset routing](https://developers.cloudflare.com/workers/static-assets/), [headers](https://developers.cloudflare.com/workers/static-assets/headers/), [workers.dev addresses](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/), [CI secrets](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/), and [script deployment permissions](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/methods/update/); the [X25519 export specification](https://wicg.github.io/webcrypto-secure-curves/#x25519) and [browser compatibility data](https://github.com/mdn/browser-compat-data/blob/main/api/SubtleCrypto.json). These describe platform contracts, not observations of this deployment.
