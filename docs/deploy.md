@@ -2,7 +2,7 @@
 
 Bundle installs use **Menu → Settings → Cool Eva → Update**. Park and keep the Pi powered with internet access. Update downloads the same prebuilt runtime/dependencies used by setup, verifies them, then reserves a safe stop. If moving, busy or settings changed, it leaves the app running and explains what to do. A failed candidate switches back automatically; ride data stays outside releases. No Git/npm/native build runs on a rider's Pi. [Bundle rollback, power-loss and slow-crash limits](bundle-updater.md).
 
-The bundle installer/releases are **not published yet**. Existing checkout installs continue using their owner-run Git updater until deliberately migrated. [New setup](manual-install.md) and [migration acceptance](bundle-installation.md#daniels-first-real-migration--go-at-the-bike) are separate from the checkout findings below.
+Existing checkout installs continue using their owner-run Git updater until deliberately migrated. [New setup](manual-install.md) and [migration acceptance](bundle-installation.md#daniels-first-real-migration--go-at-the-bike) are separate from the checkout findings below.
 
 The rest of this document preserves the checkout updater's ownership reasoning and historical measurements. Its operator commands live in [checkout installation](checkout-install.md#3-get-the-code).
 

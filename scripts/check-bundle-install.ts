@@ -78,6 +78,16 @@ export async function checkBundleInstall(): Promise<void> {
     ]);
     assert(!/[`$\r\n]/.test(installerOneLine()));
     assert(installerOneLine().includes("--proto '=https'"));
+    for (const file of ["README.md", "INSTALL.md", "docs/manual-install.md", "docs/bundle-installation.md"]) {
+      const contents = await readFile(join(root, file), "utf8");
+      const documentedCommands = contents.match(/^ssh -tt .+$/gm) ?? [];
+      assert(documentedCommands.length > 0, `${file}: installer command missing`);
+      assert.deepEqual(
+        documentedCommands,
+        documentedCommands.map(() => installerOneLine()),
+        file
+      );
+    }
     assert.match(installationFailureAdvice(new MigrationNeedsHelpError("conflict")), /Stop and ask for help/);
     assert(!installationFailureAdvice(new MigrationNeedsHelpError("conflict")).includes("paste"));
     assert.match(installationFailureAdvice(new Error("network")), /paste the same/);

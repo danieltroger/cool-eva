@@ -39,8 +39,6 @@ The bike's other CAN connector leaves OBD2 free, but needs a sourced plug and so
 
 ## Setup
 
-The release installer is **not published yet**. The command below becomes usable after the first release announcement.
-
 ### 1. Flash the card — on your computer
 
 Use [Raspberry Pi Imager](https://www.raspberrypi.com/software/) with **Raspberry Pi Zero 2 W → current Raspberry Pi OS Lite (64-bit)**. Set hostname **`cool-eva`**, username **`pi`**, a password, **SSH enabled**, and an internet-connected Wi-Fi network. Your computer and Pi must join the same network for setup. The Zero 2 W needs **2.4 GHz**; on iPhone, enable **Personal Hotspot → Maximize Compatibility** if available.
@@ -59,13 +57,13 @@ Read [what can change the bike](#what-can-change-the-bike) first. Paste this **o
 ssh -tt pi@cool-eva.local "sudo install -d -m 700 /var/cache/cool-eva-install && sudo curl -fsSL --proto '=https' --proto-redir '=https' https://github.com/danieltroger/cool-eva/releases/latest/download/install.sh -o /var/cache/cool-eva-install/install.sh && sudo sh /var/cache/cool-eva-install/install.sh"
 ```
 
-Accept the new Pi's host key and enter the Imager password when asked. Substitute your username/address if different. Type **BENCH** only with stable mains power. Answer the network and public-key prompts; enable optional probes/fan only if already wired. Setup handles OS packages, swap, service installation/start and the startup checks.
+Accept the new Pi's host key and enter the Imager password when asked. Substitute your username/address if different. [SSH help covers missing Windows OpenSSH, invisible password/key input, re-imaged host keys and the IP fallback](docs/manual-install.md#2-connect--on-your-computer). Type **BENCH** only with stable mains power. Answer the network and public-key prompts; enable optional probes/fan only if already wired. Setup handles OS packages, swap, service installation/start and the startup checks.
 
 **Do not unplug the Pi during OS catch-up.** If SSH closes, keep power on and paste the same line again to resume. A migration error that says **stop and ask for help** needs help instead of repeated retries.
 
 When setup prints **“Dashboard ready”**, open that address. It also reports the running bundle, encrypted-recording fingerprint or **“NOT SAVING RIDES”**, and whether CAN is present/waiting. Fresh settings leave the motorcycle hub unselected and optional hardware off unless explicitly enabled. Raw CAN capture is off. With the **bike awake and parked**, verify live readings; missing optional readings on a stock bike are normal. [Results and troubleshooting](docs/manual-install.md#5-results-and-help).
 
-Existing checkout owners: [migration and backups](docs/bundle-installation.md#daniels-first-real-migration--go-at-the-bike). Daniel's first migration is gated on his explicit GO; do not re-image or replace an existing install as a fresh setup.
+Existing checkout owners: keep your checkout and its Update button until the migration route is announced. **Never re-image to migrate.** [Daniel's first migration and backups](docs/bundle-installation.md#daniels-first-real-migration--go-at-the-bike) are separately gated on his explicit GO.
 
 ## Open the dashboard
 

@@ -240,7 +240,7 @@ async function exists(path: string): Promise<boolean> {
  * which is the bug this whole path exists to prevent).
  *
  * The remote's scheme is deliberately not the test. https and ssh are both correct
- * (INSTALL.md §3); the only question is whether origin is readable as that user.
+ * (docs/checkout-install.md §3); the only question is whether origin is readable as that user.
  */
 async function warnIfRemoteUnreadable(): Promise<void> {
   const ownerUid = (await stat(projectDir)).uid;

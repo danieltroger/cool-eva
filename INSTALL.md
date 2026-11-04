@@ -1,7 +1,5 @@
 # Cool Eva — Raspberry Pi setup
 
-The bundle installer is **not published yet**. Wait for the first release announcement before running its command.
-
 For Windows PowerShell and macOS Terminal, follow the [complete setup guide](docs/manual-install.md) or [short README setup](README.md#setup). The installer handles swap, package setup, the bundled Node/native modules, service installation/start and health checks; no Git/npm/compiler or laptop Node is needed.
 
 ## 0. Hardware
@@ -28,7 +26,7 @@ Setup prints the dashboard address, bundle version, service/recording result and
 
 ## 3. Existing installations and updates
 
-Existing checkouts stay in place until deliberately migrated. [Daniel's first bundle migration](docs/bundle-installation.md#daniels-first-real-migration--go-at-the-bike) requires off-card backups and his GO at the bike. Do not reflash to migrate: that erases the card's settings and ride data.
+Keep your existing checkout and its Update button until the migration route is announced. [Daniel's first bundle migration](docs/bundle-installation.md#daniels-first-real-migration--go-at-the-bike) requires off-card backups and his GO at the bike. Never re-image to migrate: that erases the card's settings and ride data.
 
 Bundle installs use the dashboard Update button for the same CI-built runtime/dependencies, with atomic selection and automatic rollback. Updates cannot be blocked by a checkout lockfile. OS/kernel/firmware updates are separate and require qualifying charging power; bundle rollback cannot repair the OS or SD card. [Update behavior and limits](docs/bundle-updater.md).
 
