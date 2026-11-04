@@ -116,8 +116,7 @@ handle_failure() {
     read_state
     # Once this lock is acquired, a pending trial's former owner has exited or been killed.
     if jq -e '.pending != null' "$STATE" >/dev/null; then repair_pending; return 0; fi
-    result=$(systemctl show "$SERVICE" --property=Result --value)
-    [ "$result" = start-limit-hit ] || return 0
+    start_limit_reached || return 0
     automatic_restarts=$(systemctl show "$SERVICE" --property=NRestarts --value)
     case "$automatic_restarts" in ''|*[!0-9]*) fail 'Cannot determine the service restart cause.' ;; esac
     if [ "$automatic_restarts" = 0 ]; then
@@ -132,4 +131,28 @@ handle_failure() {
     fi
     saved_snapshot=$(jq -er .snapshot "$STATE")
     rollback_to "$previous_target" "$CURRENT" "$saved_snapshot" late start-limit-hit true
+}
+
+start_limit_reached() {
+    failure_substate=$(systemctl show "$SERVICE" --property=SubState --value) || fail 'Cannot determine the failed service state.'
+    [ "$failure_substate" = failed ] || return 1
+    failure_result=$(systemctl show "$SERVICE" --property=Result --value) || fail 'Cannot determine the service failure result.'
+    [ "$failure_result" != start-limit-hit ] || return 0
+    # systemd preserves a preceding exit-code/signal result when the limiter refuses a restart.
+    failure_invocation=$(systemctl show "$SERVICE" --property=InvocationID --value) || fail 'Cannot determine the failed service invocation.'
+    [ "${#failure_invocation}" = 32 ] || fail 'Cannot determine the failed service invocation.'
+    case "$failure_invocation" in *[!a-f0-9]*) fail 'Invalid failed service invocation.' ;; esac
+    journal_attempt=0
+    while [ "$journal_attempt" -lt 5 ]; do
+        limit_events=$(journalctl --boot --no-pager --output=json --lines=16 \
+            _PID=1 "UNIT=$SERVICE" "INVOCATION_ID=$failure_invocation") || fail 'Cannot read the service start-limit journal.'
+        limit_recorded=$(printf '%s\n' "$limit_events" | jq -r -s --arg service "$SERVICE" --arg invocation "$failure_invocation" \
+            'any(.[]; ._PID == "1" and .UNIT == $service and .INVOCATION_ID == $invocation and
+                (.MESSAGE | strings | endswith("Start request repeated too quickly.")))') || fail 'Cannot parse the service start-limit journal.'
+        [ "$limit_recorded" != true ] || return 0
+        journal_attempt=$((journal_attempt + 1))
+        sleep 0.2
+    done
+    note 'No start-limit event for the failed invocation; leaving the current release selected.'
+    return 1
 }

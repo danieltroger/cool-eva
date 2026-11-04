@@ -30,7 +30,7 @@ export async function checkUpdaterSystemd(): Promise<void> {
   const port = await freePort();
   const units: string[] = [];
   try {
-    for (const command of ["systemctl", "cut", "sleep", "sync", "stat", "id"]) {
+    for (const command of ["systemctl", "journalctl", "cut", "sleep", "sync", "stat", "id"]) {
       await unlink(join(fixture.commandDirectory, command));
     }
     const configuration = JSON.parse(await readFile(fixture.configuration, "utf8"));

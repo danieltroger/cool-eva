@@ -84,16 +84,19 @@ export async function checkBundleRecovery(): Promise<void> {
     await unlink(join(fixture.root, "reset-denied"));
     await writeFile(join(fixture.root, "NRestarts.txt"), "3");
     await writeFile(join(fixture.root, "Result.txt"), "exit-code");
-    await invokeUpdater(fixture, "failure");
-    assert.equal((await readState(fixture)).current, "new");
+    await checkStartLimitEvidence(fixture);
 
-    await writeFile(join(fixture.root, "Result.txt"), "start-limit-hit");
     await changeSettings(fixture, 1, 20);
     await invokeUpdater(fixture, "failure");
     assert.equal((await readState(fixture)).current, "old");
     assert.equal(JSON.parse(await readFile(fixture.settings, "utf8")).revision, 20);
     assert.equal((await readState(fixture)).lastRollback?.settingsRestored, false);
     assert.equal((await readState(fixture)).previous, null);
+    assert.match(
+      await readFile(join(fixture.root, "commands.txt"), "utf8"),
+      /journalctl --boot --no-pager --output=json --lines=16 _PID=1 UNIT=synthetic-cool-eva.service INVOCATION_ID=dddddddddddddddddddddddddddddddd/
+    );
+    await writeFile(join(fixture.root, "Result.txt"), "start-limit-hit");
     await invokeUpdater(fixture, "failure");
     assert.equal((await readState(fixture)).current, "old", "a second OnFailure cannot toggle back to the failed code");
     assert.deepEqual((await readState(fixture)).rejected, [release]);
@@ -146,6 +149,47 @@ export async function checkBundleRecovery(): Promise<void> {
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+}
+
+async function checkStartLimitEvidence(fixture: UpdateFixture): Promise<void> {
+  const event = {
+    _PID: "1",
+    UNIT: "synthetic-cool-eva.service",
+    INVOCATION_ID: "d".repeat(32),
+    MESSAGE: "synthetic-cool-eva.service: Start request repeated too quickly.",
+  };
+  const journal = join(fixture.root, "journal.jsonl");
+  await writeFile(journal, JSON.stringify(event));
+  await writeFile(join(fixture.root, "commands.txt"), "");
+  for (const substate of ["auto-restart", "failed-before-auto-restart", "inactive"]) {
+    await writeFile(join(fixture.root, "SubState.txt"), substate);
+    await invokeUpdater(fixture, "failure");
+    assert.equal((await readState(fixture)).current, "new", "a pending restart or manual stop must not roll back");
+  }
+  assert.doesNotMatch(await readFile(join(fixture.root, "commands.txt"), "utf8"), /journalctl/);
+  await writeFile(join(fixture.root, "SubState.txt"), "failed");
+  for (const records of [
+    [],
+    [{ ...event, INVOCATION_ID: "e".repeat(32) }],
+    [{ ...event, UNIT: "another.service" }],
+    [{ ...event, _PID: "100" }],
+    [{ ...event, MESSAGE: "synthetic-cool-eva.service: Main process exited." }],
+  ]) {
+    await writeFile(journal, records.map(record => JSON.stringify(record)).join("\n"));
+    assert.match(await invokeUpdater(fixture, "failure"), /No start-limit event/);
+    assert.equal(
+      (await readState(fixture)).current,
+      "new",
+      "only the current invocation's manager limiter event counts"
+    );
+    assert.equal((await readState(fixture)).previous, "old");
+  }
+  await writeFile(journal, JSON.stringify(event));
+  await writeFile(join(fixture.root, "NRestarts.txt"), "0");
+  assert.match(await invokeUpdater(fixture, "failure"), /Manual restart limit/);
+  assert.equal((await readState(fixture)).current, "new");
+  assert.equal((await readState(fixture)).previous, "old");
+  await writeFile(join(fixture.root, "NRestarts.txt"), "3");
 }
 
 async function changeSettings(fixture: UpdateFixture, schemaVersion: number, revision: number): Promise<void> {

@@ -55,6 +55,9 @@ export async function createUpdateFixture(parent: string): Promise<UpdateFixture
     { mode: 0o600 }
   );
   await writeFile(join(root, "Result.txt"), "start-limit-hit");
+  await writeFile(join(root, "SubState.txt"), "failed");
+  await writeFile(join(root, "InvocationID.txt"), "d".repeat(32));
+  await writeFile(join(root, "journal.jsonl"), "");
   await writeFile(join(root, "NRestarts.txt"), "3");
   await writeFile(join(root, "clock.txt"), "10");
   await writeFile(join(root, "commands.txt"), "");
@@ -63,6 +66,7 @@ export async function createUpdateFixture(parent: string): Promise<UpdateFixture
     "stat",
     "mv",
     "systemctl",
+    "journalctl",
     "curl",
     "cut",
     "sleep",
@@ -94,6 +98,7 @@ const execFileAsync = promisify(execFile);
 export function commandWrapper(command: string): string {
   const trace = `#!/bin/sh\nprintf '%s\\n' '${command} '"$*" >> "$UPDATE_FIXTURE/commands.txt"\n`;
   if (command === "id") return trace + "printf '0\\n'\n";
+  if (command === "journalctl") return trace + 'cat "$UPDATE_FIXTURE/journal.jsonl"\n';
   if (command === "mv" && process.platform === "linux") return trace + 'exec /usr/bin/mv "$@"\n';
   if (["sleep", "sync", "flock"].includes(command)) return trace + "exit 0\n";
   if (command === "stat")
