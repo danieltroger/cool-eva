@@ -190,7 +190,9 @@ export interface PerWriteResult {
   onBike: { name: string; value: number; rawHex: string | null } | null;
 }
 
-export type ServiceWriteAnswer = { ok: true; result: ServiceWriteResult } | { ok: false; reason: string };
+export type ServiceWriteAnswer =
+  | { ok: true; result: ServiceWriteResult }
+  | { ok: false; reason: string; mayHaveSent?: boolean };
 
 export interface VcuWriteRunner {
   /** Does one thing. Resolves with a refusal rather than throwing, whatever goes wrong. */
@@ -762,7 +764,11 @@ async function perform(context: WriteContext, request: ServiceWriteRequest): Pro
     // that threw looks the same as a silent bike on screen unless it is said out loud,
     // and this is a bike we cannot attach a debugger to.
     console.error(`vcu-write: the ${request.kind} action failed:`, err);
-    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+    return {
+      ok: false,
+      reason: err instanceof Error ? err.message : String(err),
+      ...(request.kind === "charge-current" ? { mayHaveSent: true } : {}),
+    };
   } finally {
     if (watchdog) {
       clearInterval(watchdog);
@@ -1285,7 +1291,8 @@ async function performChargeCurrent(
         : outcome.reason,
   });
   if (outcome.status !== "sent") {
-    return { ok: false, reason: outcome.reason };
+    // The commit twin may have left before a later send failed; never report a refusal here.
+    return { ok: false, reason: outcome.reason, mayHaveSent: true };
   }
   return {
     ok: true,

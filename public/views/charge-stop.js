@@ -13,6 +13,33 @@ import {
 } from "../lib/charge-write.js";
 import { request } from "../lib/transport.js";
 
+/**
+ * The control, or an empty node when it must not be offered.
+ *
+ * ⚠️ Hidden — not merely disabled — for a phone that never enabled writes, and only shown while a
+ * charge is live (there is nothing to stop otherwise). Visibility is `sessionLive && writesEnabled`,
+ * both read off plain states, no serverTime.
+ */
+/** @param {{compact?:boolean}} [options] */
+export function ChargeStopControl({ compact = false } = {}) {
+  return div(() => {
+    if (!sessionLive.val || !writesEnabled()) {
+      return div();
+    }
+    return compact
+      ? div(
+          { class: "charge-stop-compact" },
+          StopButton(true),
+          div({ class: "stop-result-summary" }, () =>
+            message.val
+              ? `${lastSent.val === true ? "Sent" : lastRefused.val ? "Refused" : "Uncertain"} · Controls`
+              : ""
+          )
+        )
+      : div({ class: "tile span2" }, div({ class: "label" }, "Stop charging"), StopButton(), Outcome());
+  });
+}
+
 const { button, div } = van.tags;
 
 // Stop an active charge from the charge tab — the dashboard equivalent of the rider's two Mode
@@ -35,6 +62,7 @@ const busy = van.state(false);
 /** True only while the command's own POST is in flight, so "Sending…" is not shown for a status refresh. */
 const sending = van.state(false);
 const message = van.state("");
+const lastRefused = van.state(false);
 /** Whether the last stop landed on the bus (an event frame — not a confirmation it completed). */
 const lastSent = van.state(/** @type {boolean | null} */ (null));
 
@@ -43,29 +71,15 @@ onChargeSessionEnd(forgetStop);
 
 export const ARMED_KEY = "charge-stop";
 
-/**
- * The control, or an empty node when it must not be offered.
- *
- * ⚠️ Hidden — not merely disabled — for a phone that never enabled writes, and only shown while a
- * charge is live (there is nothing to stop otherwise). Visibility is `sessionLive && writesEnabled`,
- * both read off plain states, no serverTime.
- */
-export function ChargeStopControl() {
-  return div(() => {
-    if (!sessionLive.val || !writesEnabled()) {
-      return div();
-    }
-    return div({ class: "tile span2" }, div({ class: "label" }, "Stop charging"), StopButton(), Outcome());
-  });
-}
-
-function StopButton() {
+/** @param {boolean} [compact] */
+function StopButton(compact = false) {
   return div(
     button(
       {
         // The reversible/amber tier: it changes the bike but is the benign direction and the
         // rider can simply re-start a charge, so it is on-screen and amber, not behind the red fold.
         class: "action writes",
+        "data-charge-action": "stop",
         // One held Enter must not arm and then fire. See ../lib/arming.js.
         onkeydown: refuseKeyRepeat,
         disabled: () => busy.val || !commandable(),
@@ -88,15 +102,21 @@ function StopButton() {
           return "⏳  Sending…";
         }
         if (busy.val) {
-          return "⏳  Checking the charge is still live…";
+          return compact ? "Checking…" : "⏳  Checking the charge is still live…";
         }
         const type = chargeType.val;
         const label = type === null ? "the charge" : `the ${type.toUpperCase()} charge`;
-        return armed.val === ARMED_KEY ? `⚠️  Tap again to stop ${label}` : `🛑  Stop ${label}`;
+        return compact
+          ? armed.val === ARMED_KEY
+            ? "Tap again · Stop"
+            : "Stop charge"
+          : armed.val === ARMED_KEY
+            ? `⚠️  Tap again to stop ${label}`
+            : `🛑  Stop ${label}`;
       }
     ),
     div({ class: "action-note", style: `color:${MUTED}` }, () =>
-      commandable()
+      commandable() && !compact
         ? "Emulates holding Mode on the bike — the charge winds down over a few seconds; unplug the cable when prompted."
         : ""
     )
@@ -137,6 +157,7 @@ function forgetStop() {
   armed.val = "";
   message.val = "";
   lastSent.val = null;
+  lastRefused.val = false;
 }
 
 /**
@@ -188,4 +209,13 @@ async function performChargeStop() {
   }
   armed.val = "";
   lastSent.val = payload?.result?.succeeded ?? null;
+  lastRefused.val = payload !== null && payload.result?.succeeded !== true;
+}
+
+export function ChargeStopOutcome() {
+  return div(() =>
+    message.val
+      ? div({ class: "tile stop-operation-result" }, div({ class: "label" }, "Last Stop result"), Outcome())
+      : div()
+  );
 }

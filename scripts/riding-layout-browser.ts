@@ -23,8 +23,8 @@ export async function assertFixedLayout(page: HeadlessPage) {
     const view = document.querySelector('.riding-view');
     const header = document.querySelector('.header').getBoundingClientRect();
     const tabs = document.querySelector('.tabs').getBoundingClientRect();
-    const boxes = [...view.querySelectorAll('.tile,.value,.sub,.label,.ride-speed,.ride-soc,.range-margin-number,.range-share,button'), ...document.querySelectorAll('.header-notice:not([hidden]),.header .status')];
-    const textOutside = [...view.querySelectorAll('.value,.label,.sub,.ride-speed,.ride-soc,.range-margin-number,.range-share')].filter(element => {
+    const boxes = [...view.querySelectorAll('.tile,.value,.sub,.label,.ride-speed,.ride-soc,.range-margin-number,.range-share,.charge-soc-number,.charge-ceiling,.charge-ac-reading,.charge-graph-footer,button'), ...document.querySelectorAll('.header-notice:not([hidden]),.header .status')];
+    const textOutside = [...view.querySelectorAll('.value,.label,.sub,.ride-speed,.ride-soc,.range-margin-number,.range-share,.charge-soc-number,.charge-ceiling,.charge-ac-reading,.charge-graph-footer')].filter(element => {
       const range=document.createRange(); range.selectNodeContents(element);
       const text=range.getBoundingClientRect(); const card=element.closest('.tile').getBoundingClientRect();
       return text.width>0 && (text.left<card.left || text.right>card.right || text.top<card.top || text.bottom>card.bottom);
@@ -39,7 +39,7 @@ export async function assertFixedLayout(page: HeadlessPage) {
       flush:view.getBoundingClientRect().top-header.bottom,
       overflow:boxes.filter(element => element.scrollWidth>element.clientWidth+1 || (element.classList.contains('tile') && element.scrollHeight>element.clientHeight+1) || getComputedStyle(element).textOverflow==='ellipsis').map(element => element.className+': '+element.textContent),
       smallTargets:[...document.querySelectorAll('.header button,.tabs button,.sub-tabs button')].filter(element => !element.hidden && (element.getBoundingClientRect().width<44 || element.getBoundingClientRect().height<44)).map(element => element.textContent),
-      hiddenOverflow:[view,document.body,document.documentElement,...view.querySelectorAll('.tile,.value,.label,.sub,[data-signal],[data-reading],.range-margin-number,.range-share')].some(element => ['hidden','clip'].includes(getComputedStyle(element).overflowY))
+      hiddenOverflow:[view,document.body,document.documentElement,...view.querySelectorAll('.tile,.value,.label,.sub,[data-signal],[data-reading],.range-margin-number,.range-share,.charge-soc-number,.charge-ceiling,.charge-ac-reading,.charge-graph-footer')].some(element => ['hidden','clip'].includes(getComputedStyle(element).overflowY))
     };
   })()`
   )) as Layout;
@@ -62,4 +62,12 @@ export function resetLayoutClearance() {
 }
 export function layoutClearance() {
   return minimumClearance;
+}
+
+export async function assertRendered(page: HeadlessPage, selectors: string[]) {
+  const missing = await evaluateOnPage(
+    page,
+    `(()=>{const selectors=${JSON.stringify(selectors)};return selectors.flatMap(selector=>{const elements=[...document.querySelectorAll(selector)];if(!elements.length)return [selector+': absent'];return elements.filter(element=>{const box=element.getBoundingClientRect();if(box.width<=0||box.height<=0)return true;for(let parent=element;parent;parent=parent.parentElement){const style=getComputedStyle(parent);if(style.display==='none'||style.visibility!=='visible'||Number(style.opacity)===0||style.textOverflow==='ellipsis')return true;}return false;}).map(()=>selector+': hidden');});})()`
+  );
+  assert.deepEqual(missing, [], "Every required reading/control must render; hidden tiles cannot buy a short view.");
 }

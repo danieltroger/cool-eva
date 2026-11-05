@@ -10,6 +10,8 @@ import { updateTrip } from "./lib/trip.js";
 import { RideView } from "./views/ride.js";
 import { HypermileView } from "./views/hypermile.js";
 import { CellsView } from "./views/cells.js";
+import { ChargePackView } from "./views/charge-pack.js";
+import { ChargeControlsView } from "./views/charge-controls.js";
 import { ChargeView } from "./views/charge.js";
 import { AllView } from "./views/all.js";
 import { FaultsView } from "./views/faults.js";
@@ -55,6 +57,8 @@ const VIEWS = {
   hypermile: HypermileView,
   cells: CellsView,
   charge: ChargeView,
+  "charge-pack": ChargePackView,
+  "charge-controls": ChargeControlsView,
   all: AllView,
   faults: FaultsView,
 };

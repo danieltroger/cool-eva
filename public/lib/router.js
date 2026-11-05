@@ -35,6 +35,8 @@ export const ROUTES = /** @type {const} */ ([
   { name: "hypermile", tab: "hypermile", label: "Range", hash: "#hypermile" },
   { name: "cells", tab: "hypermile", label: "Cells", hash: "#hypermile/cells" },
   { name: "charge", tab: "charge", label: "Charge", hash: "#charge" },
+  { name: "charge-pack", tab: "charge", label: "Pack & cooling", hash: "#charge/pack-cooling" },
+  { name: "charge-controls", tab: "charge", label: "Controls", hash: "#charge/controls" },
   { name: "all", tab: "all", label: "All", hash: "#all" },
   { name: "faults", tab: "faults", label: "Faults", hash: "#faults" },
 ]);

@@ -1,4 +1,8 @@
+import { checkChargeReviewCases } from "./riding-charge-review-browser.ts";
 import { assertFixedLayout, resetLayoutClearance, layoutClearance } from "./riding-layout-browser.ts";
+import { assertChargeContent, checkChargeCases } from "./riding-charge-browser.ts";
+import { checkChargeNavigation } from "./riding-charge-navigation.ts";
+import { checkChargeActions } from "./riding-charge-actions.ts";
 import { assertRangeContent, checkRangeCases } from "./riding-range-browser.ts";
 import { assertCellsContent, checkCellsNavigation } from "./riding-cells-browser.ts";
 import { checkHistoryAndGestures } from "./riding-navigation-browser.ts";
@@ -16,7 +20,9 @@ const COVERAGE = {
   cooling: "fixed",
   hypermile: "fixed",
   cells: "scrolling",
-  charge: "legacy",
+  charge: "fixed",
+  "charge-pack": "scrolling",
+  "charge-controls": "scrolling",
   all: "scrolling",
   faults: "legacy",
 } as const;
@@ -44,7 +50,7 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
     .map(([name]) => name);
   assert.deepEqual(
     fixedViews,
-    ["ride", "cooling", "hypermile"],
+    ["ride", "cooling", "hypermile", "charge"],
     "Fixed-view coverage must match the converted screens."
   );
   for (const geometry of [
@@ -56,7 +62,13 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
     for (const theme of ["dark", "light"]) {
       const visited = new Set<string>();
       for (const route of ROUTES) {
-        await openPreview(page, previewFile, route.hash, `${geometry.height}-${theme}-${route.name}`);
+        await openPreview(
+          page,
+          previewFile,
+          route.hash,
+          `${geometry.height}-${theme}-${route.name}`,
+          route.tab === "charge" ? "&charge-scene=warm" : ""
+        );
         await evaluateOnPage(page, `ridingPreview("lib/theme.js").themePreference.val = ${JSON.stringify(theme)}`);
         await evaluateOnPage(page, FRAME);
         assert.equal(await evaluateOnPage(page, "ridingPreview('lib/router.js').currentView()"), route.name);
@@ -66,6 +78,8 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
         if (fixedViews.includes(route.name)) {
           if (route.name === "ride") {
             await assertRideContent(page);
+          } else if (route.name === "charge") {
+            await assertChargeContent(page);
           } else if (route.name === "hypermile") {
             await assertRangeContent(page);
           } else {
@@ -85,6 +99,9 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
       await checkNoticeStates(page, previewFile, theme, "#ride");
       await checkNoticeStates(page, previewFile, theme, "#hypermile");
       await checkRangeCases(page, previewFile, assertFixedLayout, theme);
+      await checkChargeCases(page, previewFile, assertFixedLayout, theme);
+      await checkChargeReviewCases(page, previewFile, theme);
+      await checkNoticeStates(page, previewFile, theme, "#charge");
       await checkRideBrowser(page, previewFile, assertFixedLayout, theme);
       await checkPowerWords(page, previewFile, assertFixedLayout, theme);
     }
@@ -99,13 +116,15 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
   await checkInsetCounterexample(page, previewFile);
   await checkHistoryAndGestures(page, previewFile);
   await checkCellsNavigation(page, previewFile);
+  await checkChargeNavigation(page, previewFile);
+  await checkChargeActions(page, previewFile);
   await checkCoolingFailures(page, previewFile);
   await checkCoolingFan(page, previewFile, assertFixedLayout);
   for (const theme of ["dark", "light"]) {
     await checkFaultRecovery(page, previewFile, assertFixedLayout, theme);
   }
   console.log(
-    `  ✓ riding: real PWA/native insets, ${layoutClearance()}px minimum Ride/Cooling/Range clearance, complete content, notices/Connect, history/reload and both gestures`
+    `  ✓ riding: real PWA/native insets, ${layoutClearance()}px minimum Ride/Cooling/Range/Charge clearance, complete content, notices/Connect, history/reload and both gestures`
   );
 }
 
@@ -294,7 +313,7 @@ async function checkNoticeStates(page: HeadlessPage, file: string, theme: string
     );
     assert.equal(
       await evaluateOnPage(page, "document.querySelector('.header .menu').textContent"),
-      hash === "#ride" ? "‹ Ride" : hash === "#hypermile" ? "‹ Range" : "‹ Cooling"
+      hash === "#ride" ? "‹ Ride" : hash === "#hypermile" ? "‹ Range" : hash === "#charge" ? "‹ Charge" : "‹ Cooling"
     );
     await evaluateOnPage(
       page,

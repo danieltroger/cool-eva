@@ -27,8 +27,8 @@ export async function assertCellsContent(page: HeadlessPage) {
   const keys = cellVoltageLayout().map(slot => slot.key);
   assert.deepEqual(data.keys, keys, "The full cell list is in physical pack/module order.");
   assert.deepEqual(data.bars, keys, "The strip preserves every physical slot.");
-  assert.equal(data.weakest, "Weakest #1");
-  assert.equal(data.strongest, "Strongest #81");
+  assert.equal(data.weakest, "Weakest position 1");
+  assert.equal(data.strongest, "Strongest position 81");
   assert.ok(
     data.overviewBottom <= data.tabs && data.barHeight === 76,
     "The complete strip, identities and explanation fit in the first viewport."
@@ -53,7 +53,11 @@ export async function assertCellsContent(page: HeadlessPage) {
   await evaluateOnPage(page, "window.scrollTo(0,0)");
 }
 
-export async function checkCellsNavigation(page: HeadlessPage, file: string) {
+export async function checkCellsNavigation(
+  page: HeadlessPage,
+  file: string,
+  capture?: (name: string) => Promise<void>
+) {
   await openPreview(page, file, "#hypermile", "range-cells-history");
   await evaluateOnPage(page, "document.querySelector('[data-view=cells]').click()");
   await waitOnPage(
@@ -62,6 +66,24 @@ export async function checkCellsNavigation(page: HeadlessPage, file: string) {
     "Cells sub-tab"
   );
   await assertCellsContent(page);
+  await evaluateOnPage(
+    page,
+    "window.cellRows=[...document.querySelectorAll('[data-cell-key]')];ridingPreview('lib/store.js').chartTick.val++"
+  );
+  await evaluateOnPage(page, FRAME);
+  assert.equal(
+    await evaluateOnPage(
+      page,
+      "window.cellRows.every((row,index)=>row===document.querySelectorAll('[data-cell-key]')[index])"
+    ),
+    true,
+    "Cells numeric rows retain their DOM nodes across sampled pulses."
+  );
+  assert.equal(
+    await evaluateOnPage(page, "document.querySelector('.cells-back')"),
+    null,
+    "An ordinary Range entry has no Back row."
+  );
   await evaluateOnPage(page, "history.back()");
   await waitOnPage(page, "!!document.querySelector('.range-view')", "Back to Range");
   await evaluateOnPage(page, "history.forward()");
@@ -162,8 +184,13 @@ export async function checkCellsNavigation(page: HeadlessPage, file: string) {
   await evaluateOnPage(page, "document.querySelector('.cells-back').click()");
   await waitOnPage(page, "!!document.querySelector('.battery-cooling-page')", "Back restores the real menu origin");
   await openPreview(page, file, "#hypermile/cells", "direct-cells");
-  await evaluateOnPage(page, "document.querySelector('.cells-back').click()");
-  await waitOnPage(page, "location.hash==='#hypermile'", "direct-entry fallback to Range");
+  assert.equal(
+    await evaluateOnPage(page, "document.querySelector('.cells-back')"),
+    null,
+    "Direct Cells entry has no redundant Range Back control."
+  );
+  await evaluateOnPage(page, "document.querySelector('[data-view=hypermile]').click()");
+  await waitOnPage(page, "location.hash==='#hypermile'", "adjacent Range sub-tab returns from direct entry");
   await openPreview(page, file, "#charge", "charging-cells-entry", "&ride-state=charging");
   await evaluateOnPage(
     page,
@@ -179,6 +206,7 @@ export async function checkCellsNavigation(page: HeadlessPage, file: string) {
     "document.querySelector('[data-cell-key=lmu1_cell1_mv] .cell-number')?.textContent==='3201mV'",
     "Cells uses the current charging snapshot"
   );
+  await checkRangeFollowups(page, file, capture);
   await openPreview(page, file, "#hypermile/cells", "cells-critical");
   await evaluateOnPage(
     page,
@@ -212,4 +240,123 @@ async function clickText(page: HeadlessPage, text: string) {
     page,
     `[...document.querySelectorAll('button')].find(button=>button.getBoundingClientRect().height>0&&button.textContent.replace('→','').trim()===${JSON.stringify(text)}).click()`
   );
+}
+
+async function checkRangeFollowups(page: HeadlessPage, file: string, capture?: (name: string) => Promise<void>) {
+  for (const theme of ["dark", "light"]) {
+    await openPreview(page, file, "#hypermile", `labels-${theme}`);
+    await evaluateOnPage(
+      page,
+      `ridingPreview('lib/theme.js').themePreference.val=${JSON.stringify(theme)};pushPatch({cell_lowest_v_idx:[7,'','cells']})`
+    );
+    await evaluateOnPage(page, FRAME);
+    assert.ok(
+      String(await evaluateOnPage(page, "document.querySelector('[data-reading=cutoff]').textContent")).includes(
+        "BMS index 7"
+      )
+    );
+    await evaluateOnPage(page, "document.querySelector('[data-view=cells]').click()");
+    await assertCellsContent(page);
+    assert.equal(await evaluateOnPage(page, "document.querySelector('.cells-back')"), null);
+    assert.equal(
+      await evaluateOnPage(page, "document.querySelector('[data-weakest]').textContent"),
+      "Weakest position 1",
+      "A BMS index must not become a physical position."
+    );
+    assert.ok(
+      String(
+        await evaluateOnPage(page, "document.querySelector('[data-cell-key=lmu1_cell1_mv] .sub').textContent")
+      ).includes("Position 1 · cell 1")
+    );
+    assert.equal(
+      await evaluateOnPage(
+        page,
+        "document.querySelector('.cells-content').children[1].classList.contains('cell-spread-history')"
+      ),
+      true,
+      "Spread history follows the complete strip, before Module 1."
+    );
+    await evaluateOnPage(
+      page,
+      "pushPatch({cell_spread_mv:[54,'mV','cells']});ridingPreview('lib/store.js').chartTick.val++"
+    );
+    await evaluateOnPage(page, FRAME);
+    assert.equal(
+      await evaluateOnPage(page, "document.querySelector('.cell-spread-history .value').textContent"),
+      "54 mV",
+      "History uses the accepted spread signal, not the incomplete cell snapshot."
+    );
+    assert.ok(
+      String(await evaluateOnPage(page, "document.querySelector('.cell-spread-history').innerText")).includes(
+        "last 10 min"
+      )
+    );
+    for (const [name, value, time] of [
+      ["stale", 54, "Date.now()-30_000"],
+      ["fault", 65535, "Date.now()"],
+    ] as const) {
+      await openPreview(page, file, "#hypermile/cells", `spread-${theme}-${name}`);
+      await evaluateOnPage(page, `ridingPreview('lib/theme.js').themePreference.val=${JSON.stringify(theme)}`);
+      await evaluateOnPage(page, `pushPatch({cell_spread_mv:[${value},'mV','cells',${time}]})`);
+      await evaluateOnPage(page, "pausePreviewMessages(true);ridingPreview('lib/store.js').chartTick.val++");
+      await evaluateOnPage(page, FRAME);
+      assert.equal(
+        await evaluateOnPage(page, "document.querySelector('.cell-spread-history .value').textContent"),
+        name
+      );
+      assert.equal(
+        await evaluateOnPage(page, "document.querySelectorAll('.cell-spread-history polyline').length"),
+        0,
+        "Unavailable spread must not leave a live trace."
+      );
+    }
+    await openPreview(page, file, "#hypermile", `regen-hint-${theme}`);
+    await evaluateOnPage(
+      page,
+      `ridingPreview('lib/theme.js').themePreference.val=${JSON.stringify(theme)};ridingPreview('lib/destination.js').openDestination('battery-cooling')`
+    );
+    for (const [soc, expected] of [
+      [95, "High charge level can reduce regen."],
+      [60, "Check pack temperature."],
+    ] as const) {
+      await evaluateOnPage(page, `pushPatch({soc:[${soc},'%','battery']})`);
+      await evaluateOnPage(page, FRAME);
+      assert.ok(
+        String(await evaluateOnPage(page, "document.querySelector('.regen-information').innerText")).includes(expected)
+      );
+    }
+    await evaluateOnPage(page, "pushPatch({allowed_regen_a:[120,'A','battery']});pausePreviewMessages(true)");
+    await evaluateOnPage(page, FRAME);
+    assert.ok(
+      String(await evaluateOnPage(page, "document.querySelector('.regen-information').textContent")).includes(
+        "Full regen"
+      ),
+      "A full allowance must not suggest a derate."
+    );
+    if (capture) {
+      await capture(`battery-full-regen-${theme}`);
+    }
+
+    await evaluateOnPage(
+      page,
+      "pausePreviewMessages(false);pushPatch({allowed_regen_a:[55,'A','battery']});pausePreviewMessages(true)"
+    );
+    await evaluateOnPage(page, "pausePreviewMessages(true);ridingPreview('lib/store.js').signalState('soc').val=null");
+    await evaluateOnPage(page, FRAME);
+    assert.ok(
+      String(await evaluateOnPage(page, "document.querySelector('.regen-information').innerText")).includes(
+        "Check charge level and pack temperature."
+      )
+    );
+    await evaluateOnPage(page, "pausePreviewMessages(false);pushPatch({allowed_regen_a:[65535,'A','battery']})");
+    await evaluateOnPage(page, FRAME);
+    assert.equal(
+      await evaluateOnPage(page, "document.querySelector('.regen-information .value').textContent"),
+      "fault"
+    );
+    assert.equal(
+      await evaluateOnPage(page, "document.querySelector('.regen-information').innerText.includes('Check pack')"),
+      false
+    );
+  }
 }

@@ -47,9 +47,11 @@ export const SERVICE_WRITE_HEADER_VALUE = "service-write";
 
 export interface VcuWriteResponse {
   status: VcuWriteStatus;
-  /** What the action did, or null when nothing was attempted. */
+  /** The action result; null also covers a refused or failed charge-current attempt. */
   result: ServiceWriteResult | null;
-  /** Why nothing was attempted, or why a request was rejected before it reached the bus. */
+  /** POST charge-current only: a pre-send refusal versus a potentially partial transmission. */
+  chargeCurrentAttempt?: "not-sent" | "unknown";
+  /** Why no action result is available; charge-current attempt metadata distinguishes uncertain delivery. */
   message: string | null;
 }
 
@@ -87,13 +89,29 @@ export async function handleVcuWriteEndpoint(
   if (!parsed.ok) {
     // 400, not 409: the request itself is wrong and re-sending it unchanged will
     // always be wrong. 409 is for a busy bus or a bike that may not be serviced.
-    await respond(res, 400, options, url, null, parsed.reason);
+    await respond(
+      res,
+      400,
+      options,
+      url,
+      null,
+      parsed.reason,
+      url.searchParams.get("action") === "charge-current" ? "not-sent" : undefined
+    );
     return;
   }
 
   const answer = await options.runner.perform(parsed.request);
   if (!answer.ok) {
-    await respond(res, 409, options, url, null, answer.reason);
+    await respond(
+      res,
+      409,
+      options,
+      url,
+      null,
+      answer.reason,
+      parsed.request.kind === "charge-current" ? (answer.mayHaveSent ? "unknown" : "not-sent") : undefined
+    );
     return;
   }
   // 200 even when the bike refused, and even for a read-back mismatch. Those are
@@ -361,12 +379,14 @@ async function respond(
   options: VcuWriteEndpointOptions,
   url: URL,
   result: ServiceWriteResult | null,
-  message: string | null
+  message: string | null,
+  chargeCurrentAttempt?: VcuWriteResponse["chargeCurrentAttempt"]
 ): Promise<void> {
   const payload: VcuWriteResponse = {
     status: await options.runner.status(parseStatusRequest(url.searchParams)),
     result,
     message,
+    ...(chargeCurrentAttempt ? { chargeCurrentAttempt } : {}),
   };
   const body = Buffer.from(JSON.stringify(payload), "utf-8");
   res.writeHead(statusCode, {

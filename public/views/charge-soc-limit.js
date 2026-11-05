@@ -3,6 +3,8 @@
 import van from "../vendor/van-1.6.1.js";
 import { GOOD, MUTED, WARN, WATCH } from "../lib/colors.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
+
+import { readingStatus, statusWord, freshValue } from "../lib/reading-status.js";
 import { valueOf } from "../lib/store.js";
 import {
   applyWriteStatus,
@@ -13,7 +15,41 @@ import {
 } from "../lib/charge-write.js";
 import { request } from "../lib/transport.js";
 
-const { button, div, input } = van.tags;
+/**
+ * The control, or an empty node when it must not be offered.
+ *
+ * ⚠️ Hidden rather than disabled for a phone that never enabled writes, exactly like the two
+ * controls beside it: an ordinary phone sees a read-only Charge tab.
+ */
+export function ChargeSocLimitControl() {
+  // Once per mount of the Charge tab, and only when no status is held. The gate is not a
+  // WebSocket signal, so without this the control could never appear on an unplugged bike.
+  void ensureWriteStatus();
+  return div(() => {
+    // ⚠️ The VALUE is a read-only signal, arriving over the WebSocket whenever the rider sets the
+    // limit on the bike's own menu, so it shows on any phone. Only the BUTTONS are behind the
+    // writes gate. Gating the whole tile meant an ordinary phone could receive the limit and not
+    // display it — the one read-only thing this feature adds, invisible by default.
+    const known = socKnown.val;
+    if (!known && !writesEnabled()) {
+      return div();
+    }
+    return div(
+      { class: "tile charge-soc-control" },
+      div({ class: "label" }, "Bike’s saved charge limit"),
+      CurrentValue(),
+      () => (writesEnabled() ? SetRow() : div()),
+      div({ class: "sub" }, () =>
+        parsedPercent() === 0
+          ? "0 removes the limit; the bike can charge to full."
+          : "Retained after unplugging. A saved limit is not a promise of where this charge will stop."
+      ),
+      Outcome()
+    );
+  });
+}
+
+const { button, div, input, span } = van.tags;
 
 // The bike's own "stop charging at N %" setting, from the charge tab — dash command 0x2C on the
 // 0x120 command channel (docs/dash-command-0x2c-charge-limit.md). Same gated /vcu-write path and
@@ -33,6 +69,7 @@ const { button, div, input } = van.tags;
 
 /** What the owner typed, as text so an empty box is distinct from a zero. */
 const wanted = van.state("");
+const socKnown = van.derive(() => valueOf("charge_soc_limit_pct") !== null);
 const busy = van.state(false);
 /**
  * Which POST is in flight, so one button's label never speaks for the other.
@@ -82,57 +119,21 @@ export const READ_ARMED_KEY = "charge-soc-limit-read";
  */
 export const MAX_PCT = 100;
 
-/**
- * The control, or an empty node when it must not be offered.
- *
- * ⚠️ Hidden rather than disabled for a phone that never enabled writes, exactly like the two
- * controls beside it: an ordinary phone sees a read-only Charge tab.
- */
-export function ChargeSocLimitControl() {
-  // Once per mount of the Charge tab, and only when no status is held. The gate is not a
-  // WebSocket signal, so without this the control could never appear on an unplugged bike.
-  void ensureWriteStatus();
-  return div(() => {
-    // ⚠️ The VALUE is a read-only signal, arriving over the WebSocket whenever the rider sets the
-    // limit on the bike's own menu, so it shows on any phone. Only the BUTTONS are behind the
-    // writes gate. Gating the whole tile meant an ordinary phone could receive the limit and not
-    // display it — the one read-only thing this feature adds, invisible by default.
-    const known = valueOf("charge_soc_limit_pct") !== null;
-    if (!known && !writesEnabled()) {
-      return div();
-    }
-    return div(
-      { class: "tile span2" },
-      div({ class: "label" }, "Charge limit"),
-      CurrentValue(),
-      () => (writesEnabled() ? SetRow() : div()),
-      Outcome()
-    );
-  });
-}
-
 /** What the bike says its limit is, or that nobody has asked yet. */
 function CurrentValue() {
-  return div({ class: "action-note" }, () => {
-    const limit = valueOf("charge_soc_limit_pct");
-    if (limit === null) {
-      return div(
-        { style: `color:${MUTED}` },
-        "Not read this session — nothing broadcasts it, so it is unknown until you read it or change it on the bike."
-      );
-    }
-    return div(
-      { style: `color:${limit === 0 ? WATCH : GOOD}` },
-      // ⚠️ "Set to stop at", not "Stops at". Everything else in this feature is careful to say the
-      // VCU STORES the limit rather than that the bike stops there — nobody has observed the limit
-      // being reached — and this is the line a rider reads every time, not just after a command.
-      limit === 0 ? "No limit — the bike charges to full." : `Set to stop at ${limit} %.`
-    );
+  return div({ class: "value", "data-saved-charge-limit": "" }, () => {
+    const limit = freshValue("charge_soc_limit_pct");
+    return limit === null
+      ? statusWord(readingStatus("charge_soc_limit_pct"), "Unknown")
+      : limit === 0
+        ? "No limit"
+        : `${limit} %`;
   });
 }
 
 function SetRow() {
   return div(
+    { class: "compact-action-row" },
     input({
       // The class the controls beside this one use. ⚠️ There is no `action-input` rule in
       // style.css, so the box rendered 30 px wide — caught by the screenshot gate, which is the
@@ -154,9 +155,11 @@ function SetRow() {
         armed.val = "";
       },
     }),
+    span("%"),
     button(
       {
         class: "action writes",
+        "data-charge-action": "limit-set",
         onkeydown: refuseKeyRepeat,
         disabled: () => busy.val || parsedPercent() === null,
         onclick: () => {
@@ -182,47 +185,50 @@ function SetRow() {
         if (value === null) {
           // Disabled, so say what would enable it — the control above does the same. A disabled
           // button whose label is just "Set" leaves the reader guessing what is wrong.
-          return `✏️  Type a limit (0…${MAX_PCT})`;
+          return `Set limit (0…${MAX_PCT})`;
         }
         const what = value === 0 ? "remove the limit" : `set ${value} %`;
         return armed.val === ARMED_KEY
-          ? `⚠️  Tap again to ${what}`
-          : `✏️  ${value === 0 ? "Remove the limit" : `Set ${value} %`}`;
+          ? `Confirm ${value === 0 ? "remove limit" : `${value}%`}`
+          : `${value === 0 ? "Remove limit" : `Set ${value}%`}`;
       }
-    ),
-    button(
-      {
-        class: "action",
-        onkeydown: refuseKeyRepeat,
-        disabled: () => busy.val,
-        onclick: () => {
-          if (armed.val !== READ_ARMED_KEY) {
-            arm(READ_ARMED_KEY);
-            return;
-          }
-          if (!armDwellElapsed()) {
-            return;
-          }
-          armed.val = "";
-          void performSocLimitRead();
-        },
-      },
-      () => {
-        if (sending.val === "read") {
-          return "⏳  Reading…";
-        }
-        if (busy.val) {
-          return "…";
-        }
-        return armed.val === READ_ARMED_KEY ? "⚠️  Tap again to read" : "🔍  Read";
-      }
-    ),
-    div({ class: "action-note", style: `color:${MUTED}` }, () =>
-      parsedPercent() === 0
-        ? "⚠️  0 removes the limit entirely — the bike would charge to 100 %."
-        : "Stored on the bike, and it survives unplugging — unlike the charge current."
     )
   );
+}
+
+function ReadButton() {
+  return button(
+    {
+      class: "action",
+      "data-charge-action": "limit-read",
+      onkeydown: refuseKeyRepeat,
+      disabled: () => busy.val,
+      onclick: () => {
+        if (armed.val !== READ_ARMED_KEY) {
+          arm(READ_ARMED_KEY);
+          return;
+        }
+        if (!armDwellElapsed()) {
+          return;
+        }
+        armed.val = "";
+        void performSocLimitRead();
+      },
+    },
+    () => {
+      if (sending.val === "read") {
+        return "⏳  Reading…";
+      }
+      if (busy.val) {
+        return "…";
+      }
+      return armed.val === READ_ARMED_KEY ? "Confirm read limit" : "Read limit";
+    }
+  );
+}
+
+export function ChargeLimitReadControl() {
+  return div(() => (writesEnabled() ? ReadButton() : div()));
 }
 
 function Outcome() {

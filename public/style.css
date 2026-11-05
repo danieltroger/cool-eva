@@ -2123,3 +2123,291 @@ body {
   font-size: 13.6px;
   overflow-wrap: anywhere;
 }
+
+.cells-identities {
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
+.charge-view > .charge-hero {
+  height: 124px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  padding: 8px;
+  gap: 8px;
+}
+.charge-soc,
+.charge-delivery {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-width: 0;
+}
+.charge-soc-number {
+  font-size: 64px;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.charge-delivery .value {
+  font-size: 34.4px;
+  margin: 0;
+}
+.charge-view > .charge-eta {
+  height: 80px;
+  padding: 8px;
+}
+.charge-eta-content {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 100%;
+  gap: 2px;
+}
+.charge-eta-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.charge-eta-row .value {
+  margin: 0;
+}
+.charge-eta-row .sub {
+  text-align: right;
+}
+.charge-view > .charge-graph {
+  height: 272px;
+  padding: 8px;
+  gap: 2px;
+}
+.charge-graph-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.charge-graph-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 36px;
+}
+.charge-ceiling {
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+.charge-graph-heading .sub {
+  max-width: 175px;
+  text-align: right;
+  line-height: 16px;
+}
+.charge-chart {
+  display: block;
+  width: 100%;
+  height: 110px;
+  margin: 0;
+  flex: none;
+  font-size: 12.5px;
+}
+.charge-graph-footer {
+  font-size: 12.48px;
+  line-height: 16px;
+  color: var(--sub);
+}
+.charge-model-caveat {
+  font-size: 12.48px;
+  line-height: 16px;
+}
+.charge-view > .charge-controller {
+  height: 80px;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 140px;
+  gap: 8px;
+  align-items: center;
+}
+.charge-controller-summary {
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  color: var(--fg);
+  font: inherit;
+  min-height: 44px;
+}
+.charge-controller-summary .label {
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: 12.48px;
+}
+.charge-stop-compact .action {
+  min-height: 44px;
+  white-space: nowrap;
+  font-size: 13px;
+  padding: 8px;
+}
+.charge-stop-compact .action-note:empty {
+  display: none;
+}
+.stop-result-summary {
+  font-size: 11.52px;
+  line-height: 14px;
+  color: var(--sub);
+  text-align: center;
+}
+.charge-stop-compact .action-note {
+  margin: 0;
+}
+.charge-controls-view,
+.charge-pack-view {
+  grid-template-columns: minmax(0, 1fr);
+  padding: 8px;
+}
+.charge-controls-view > .tile,
+.charge-controls-view > div > .tile {
+  padding: 8px;
+  gap: 4px;
+}
+.charge-current-control {
+  min-height: 192px;
+}
+.charge-soc-control {
+  min-height: 184px;
+}
+.charge-secondary-controls {
+  min-height: 128px;
+}
+.charge-request-reply {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.charge-request-reply .value {
+  margin: 0;
+  font-size: 34.4px;
+}
+.compact-action-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.compact-action-row .probe-field {
+  margin: 0;
+}
+.compact-action-row .probe-input {
+  width: 76px;
+  min-height: 44px;
+}
+.compact-action-row .action,
+.charge-secondary-controls .action {
+  width: auto;
+  min-height: 44px;
+  padding: 8px 12px;
+  font-size: 14px;
+}
+.compact-action-row .action-note:empty {
+  display: none;
+}
+.charge-auto-secondary {
+  display: grid;
+  gap: 4px;
+}
+.charge-auto-secondary .action-note {
+  font-size: 11.52px;
+  margin: 0;
+  line-height: 1.3;
+}
+.charge-thermal .value {
+  font-size: 34.4px;
+}
+.charge-pack-view .charge-ac-details {
+  display: grid;
+  gap: 8px;
+}
+.charge-auto-secondary {
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 8px;
+  row-gap: 0;
+}
+.charge-auto-secondary > .label,
+.charge-auto-secondary > .sub {
+  grid-column: 1;
+}
+.charge-auto-secondary .compact-auto-toggle {
+  grid-column: 2;
+  grid-row: 1 / 4;
+  align-self: center;
+}
+.charge-auto-secondary > .action-note:empty {
+  display: none;
+}
+.charge-secondary-controls > .compact-action-row {
+  margin-top: 8px;
+}
+.charge-view > .charge-eta,
+.charge-view > .charge-controller {
+  min-height: 80px;
+}
+.charge-secondary-controls .settings-button {
+  font-size: 14px;
+  max-width: none;
+  white-space: nowrap;
+  padding: 8px 12px;
+  min-height: 44px;
+}
+.charge-view .action,
+.charge-controls-view .action {
+  box-shadow: none;
+  border: 1px solid var(--tile-edge);
+  border-radius: 8px;
+}
+.charge-view .action.writes,
+.charge-controls-view .action.writes {
+  border-color: var(--warn);
+}
+.compact-action-row .probe-field {
+  flex: none;
+  display: block;
+}
+
+.charge-controls-view > *,
+.charge-pack-view > * {
+  grid-column: 1 / -1;
+}
+
+.charge-view > .charge-ac-limits {
+  height: 272px;
+  padding: 8px;
+  gap: 4px;
+  justify-content: space-between;
+}
+.charge-ac-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 56px;
+}
+.charge-ac-row .sub {
+  margin: 0;
+}
+.charge-ac-reading {
+  font-size: 34.4px;
+  font-weight: 600;
+}
+.charge-ac-reading.status-word {
+  font-size: 16px;
+}
+.charge-ac-notes {
+  margin: 0;
+  font-size: 12.48px;
+  line-height: 16px;
+}
+.compact-auto-toggle .action {
+  max-width: 176px;
+}

@@ -310,7 +310,7 @@ export const SIGNALS: SignalDef[] = [
   // reading it, and the bike ANSWERING this Pi's own write ~6 ms later. Nothing broadcasts it, so
   // an absent value means "not asked and not touched", never "no limit".
   // docs/dash-command-0x2c-charge-limit.md.
-  { key: "charge_soc_limit_pct", unit: "%", group: "charge", source: "stream", bounds: [0, 100] },
+  { key: "charge_soc_limit_pct", unit: "%", group: "charge", source: "stream", onDemand: true, bounds: [0, 100] },
   // 0x605 / 0x610 / 0x615 / 0x620 / 0x625 — the charge manager (src/can/charge-manager.ts),
   // added 2026-08-19 from 29 charge sessions and reconciled against Energica's factory DBC on
   // 2026-08-20. Present only while a cable is live, EXCEPT the four off 0x625 — that frame

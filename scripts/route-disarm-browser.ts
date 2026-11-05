@@ -47,7 +47,7 @@ export async function checkRouteDisarmBrowser(page: HeadlessPage, previewFile: s
   console.log("  ✓ Charge → All → Charge disarms Stop; the first return tap sends zero write requests");
 }
 
-const STOP_BUTTON = `([...document.querySelectorAll(".view .tile")].find(tile => tile.querySelector(".label")?.textContent === "Stop charging")?.querySelector("button.action"))`;
+const STOP_BUTTON = `document.querySelector("[data-charge-action=stop]")`;
 
 async function clickTab(page: HeadlessPage, name: "all" | "charge"): Promise<void> {
   const label = TABS.find(tab => tab.name === name)?.label;

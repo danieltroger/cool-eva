@@ -3,9 +3,9 @@
 // Conditional units keep a text anchor: VanJS cannot revive a binding whose first result is null.
 import van from "../vendor/van-1.6.1.js";
 import { SubTabs } from "../lib/sub-tabs.js";
-import { chartTick, isStale, valueOf } from "../lib/store.js";
-import { readingStatus } from "../lib/reading-status.js";
-import { chargeMode } from "../lib/charge-mode.js";
+import { chartTick, valueOf } from "../lib/store.js";
+import { readingStatus, worstStatus, statusWord, freshValue } from "../lib/reading-status.js";
+import { currentChargeMode } from "../lib/charge-display.js";
 import { powerEdge } from "../lib/power-edge.js";
 import { ridePowerState } from "../lib/ride-power-state.js";
 import { ridePowerDisplay } from "../lib/ride-power-display.js";
@@ -51,9 +51,9 @@ function PowerPanel() {
       div(
         { class: "ride-speed" },
         span({ "data-signal": "gps_speed_kmh" }, () =>
-          fresh("gps_speed_kmh") === null ? "—" : String(Math.round(units.speed(valueOf("gps_speed_kmh") ?? 0)))
+          freshValue("gps_speed_kmh") === null ? "—" : String(Math.round(units.speed(valueOf("gps_speed_kmh") ?? 0)))
         ),
-        span({ class: "hero-unit" }, () => (fresh("gps_speed_kmh") === null ? "" : units.speedUnit()))
+        span({ class: "hero-unit" }, () => (freshValue("gps_speed_kmh") === null ? "" : units.speedUnit()))
       ),
       div(
         { class: "value ride-kilowatts", style: () => `color:${powerDisplay().color}` },
@@ -74,8 +74,9 @@ function PowerPanel() {
         () => currentPower().status || speedNote()
       ),
       span(
-        { class: "ride-soc", "data-signal": "soc", style: () => `color:${colors.stateOfCharge(fresh("soc"))}` },
-        () => (fresh("soc") === null ? `SOC ${word(readingStatus("soc"))}` : `${Math.round(valueOf("soc") ?? 0)}%`)
+        { class: "ride-soc", "data-signal": "soc", style: () => `color:${colors.stateOfCharge(freshValue("soc"))}` },
+        () =>
+          freshValue("soc") === null ? `SOC ${statusWord(readingStatus("soc"))}` : `${Math.round(valueOf("soc") ?? 0)}%`
       )
     ),
     () => powerEdge(currentPower(), powerDisplay())
@@ -83,18 +84,18 @@ function PowerPanel() {
 }
 
 function currentPower() {
-  return ridePowerState(valueOf, readingStatus, chargeMode(valueOf, isStale) !== "none");
+  return ridePowerState(valueOf, readingStatus, currentChargeMode() !== "none");
 }
 
 function powerDisplay() {
-  const speed = fresh("speed_can_kmh") ?? fresh("speed_kmh") ?? fresh("gps_speed_kmh");
+  const speed = freshValue("speed_can_kmh") ?? freshValue("speed_kmh") ?? freshValue("gps_speed_kmh");
   return ridePowerDisplay(currentPower(), speed !== null && speed > 0);
 }
 
 function speedNote() {
-  const speed = fresh("gps_speed_kmh");
-  if (speed === null) return `GPS speed ${word(readingStatus("gps_speed_kmh"))}`;
-  const wheel = fresh("speed_can_kmh") ?? fresh("speed_kmh");
+  const speed = freshValue("gps_speed_kmh");
+  if (speed === null) return `GPS speed ${statusWord(readingStatus("gps_speed_kmh"))}`;
+  const wheel = freshValue("speed_can_kmh") ?? freshValue("speed_kmh");
   if (wheel === null) return "GPS · no wheel speed";
   const difference = units.speed(wheel) - units.speed(speed);
   return `GPS · wheel ${Math.round(units.speed(wheel))} (${difference >= 0 ? "+" : "−"}${Math.abs(difference).toFixed(0)})`;
@@ -110,7 +111,7 @@ function DeltaCard() {
         style: () => `color:${delta() === null ? colors.MUTED : colors.GOOD}`,
         "data-reading": "coolant-delta",
       },
-      () => (delta() === null ? word(thermalStatus()) : units.tempDelta(delta() ?? 0).toFixed(2)),
+      () => (delta() === null ? statusWord(thermalStatus()) : units.tempDelta(delta() ?? 0).toFixed(2)),
       span({ class: "unit" }, () => (delta() === null ? "" : units.tempUnit()))
     ),
     () => {
@@ -124,7 +125,7 @@ function DeltaCard() {
         { class: "ride-trace", "data-trace": available ? "available" : "unavailable" },
         available
           ? sparkline({ values, color: colors.GOOD, minSpan: 0.5, baseline: 0, height: 40 })
-          : div({ class: "sub" }, `ΔT ${word(thermalStatus(true))}`)
+          : div({ class: "sub" }, `ΔT ${statusWord(thermalStatus(true))}`)
       );
     },
     div({ class: "sub" }, "out − in · last 10 min")
@@ -138,17 +139,17 @@ function HeatCard() {
     div(
       { class: "value" },
       span({ "data-reading": "resistance-heat" }, () =>
-        heat() === null ? word(readingStatus("pack_a")) : ((heat() ?? 0) / 1000).toFixed(2)
+        heat() === null ? statusWord(readingStatus("pack_a")) : ((heat() ?? 0) / 1000).toFixed(2)
       ),
       () => (heat() !== null && delta() === null ? span({ class: "unit" }, "kW") : ""),
       " / ",
       span({ "data-reading": "loop-removal" }, () =>
-        delta() === null ? word(thermalStatus()) : (((delta() ?? 0) * COOLANT_WATTS_PER_KELVIN) / 1000).toFixed(2)
+        delta() === null ? statusWord(thermalStatus()) : (((delta() ?? 0) * COOLANT_WATTS_PER_KELVIN) / 1000).toFixed(2)
       ),
       span({ class: "unit" }, () => (delta() === null ? "" : "kW"))
     ),
     div({ class: "sub" }, () => {
-      const output = fresh("pack_kw");
+      const output = freshValue("pack_kw");
       const loss = heat();
       const share =
         output === null || Math.abs(output) < 0.3 || loss === null
@@ -173,15 +174,15 @@ function TemperatureCard(label, keys, caption) {
         span(
           {
             "data-signal": key,
-            style: () => `color:${readingStatus(key) === "fault" ? colors.BAD : colors.temperature(fresh(key))}`,
+            style: () => `color:${readingStatus(key) === "fault" ? colors.BAD : colors.temperature(freshValue(key))}`,
           },
           () => {
-            const reading = fresh(key);
+            const reading = freshValue(key);
             return reading === null ? "—" : units.temp(reading).toFixed(0);
           }
         ),
         () =>
-          fresh(key) !== null && !keys.slice(index + 1).some(next => fresh(next) !== null)
+          freshValue(key) !== null && !keys.slice(index + 1).some(next => freshValue(next) !== null)
             ? span({ class: "unit" }, units.tempUnit)
             : "",
       ])
@@ -195,21 +196,9 @@ function TemperatureCard(label, keys, caption) {
   );
 }
 
-/** @param {string} key */
-function fresh(key) {
-  return readingStatus(key) === "fresh" ? valueOf(key) : null;
-}
-
 /** @param {boolean} [sampled] @returns {import("../lib/reading-status.js").ReadingStatus} */
 function thermalStatus(sampled = false) {
-  const states = [readingStatus("coolant_in", sampled), readingStatus("coolant_out", sampled)];
-  return states.includes("fault")
-    ? "fault"
-    : states.includes("missing")
-      ? "missing"
-      : states.includes("stale")
-        ? "stale"
-        : "fresh";
+  return worstStatus(["coolant_in", "coolant_out"], sampled);
 }
 
 function delta() {
@@ -217,11 +206,6 @@ function delta() {
 }
 
 function heat() {
-  const amps = fresh("pack_a");
+  const amps = freshValue("pack_a");
   return amps === null ? null : (amps * amps * packResistance.val.milliohms) / 1000;
-}
-
-/** @param {import("../lib/reading-status.js").ReadingStatus} state */
-function word(state) {
-  return state === "missing" ? "—" : state === "fresh" ? "—" : state;
 }
