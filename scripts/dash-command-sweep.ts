@@ -1,11 +1,11 @@
 // Reads every command id on the VCU's 0x120/0x121 dashboard command channel — the same injectable
 // channel that already carries charge-stop (0x16), charge-current (0x18/0x1A) and the RTC clock
 // (0x14). READ-ONLY: every request here has bit 7 CLEAR, documented as
-// non-mutating — a read cannot change a setting (Energica's definitions, and
+// non-mutating — a read cannot change a setting (another owner's implementation, and
 // energica-rnd's dashboard-settings.md "proven not to change anything").
 //
-// The point is to map which command ids THIS bike honours. Energica's own command definitions
-// (for an SS9) cover ~19 of the 128 ids and label only a handful — and we are hunting a
+// The point is to map which command ids THIS bike honours. Another owner's SS9 sweep
+// found ~19 of the 128 ids answered and only a handful are labelled — and we are hunting a
 // non-diagnostic light control. 0x2A ("Light in charge") and 0x15 ("LPR mode") are the labelled
 // light-related ids, but an UNLABELLED live id could be a general beam control, so the sweep lists
 // every live id and flags the ones nobody has named. See docs/headlight-charge-interlock.md.
@@ -29,7 +29,7 @@ const WRITE_BIT = 0x80; // b0 bit 7: set = write/echo, clear = read. We only eve
 const HIGHEST_COMMAND_ID = 0x7f; // 7-bit id space (0..127); bit 7 is the read/write flag
 const READ_TIMEOUT_MS = 150; // a live id answers in a few ms; this is how long we wait on silence
 
-// The ids named in Energica's dash-command definitions. Light-related ones
+// The ids another owner's tool names. Light-related ones
 // are the reason for this sweep; the rest are here so a live reply is recognised, not re-derived.
 const KNOWN_COMMANDS: Record<number, string> = {
   0x01: "Ride map",

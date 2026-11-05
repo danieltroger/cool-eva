@@ -489,7 +489,7 @@ Whatever the field is, either the DC path does not heat measurably during a fast
 
 ### 0x630 — DLC 3, and a poll addressed per ECU
 
-The only DLC-3 frame on a bus where almost everything is 8. 1 964 694 frames. b0 takes {`0xA1`, `0xA2`, `0xA3`, `0xA5`, `0xA9`, `0xEA`} — the first five are precisely Energica's own `MotorbikeECU` node ids (BMSuControl `0xA1`, Logo `0xA2`, CNode `0xA3`, DCDC `0xA5`, VCUControl `0xA9`), which says `0x630` is addressed per-ECU. `0xEA` is not in that enum and appears 18 times.
+The only DLC-3 frame on a bus where almost everything is 8. 1 964 694 frames. b0 takes {`0xA1`, `0xA2`, `0xA3`, `0xA5`, `0xA9`, `0xEA`} — the first five are precisely Energica's own node ids (BMSuControl `0xA1`, Logo `0xA2`, CNode `0xA3`, DCDC `0xA5`, VCUControl `0xA9`), which says `0x630` is addressed per-ECU. `0xEA` is not in that list and appears 18 times.
 
 thimo's observation that "byte 2 sometimes echoes byte 0" holds, and the corpus makes it sharper — **the echo is per node and total**, not occasional:
 

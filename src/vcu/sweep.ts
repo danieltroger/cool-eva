@@ -318,8 +318,8 @@ function mayContinue(options: ParameterSweepOptions, state: SweepState): boolean
  * One target, read — with the OBD poller parked first if this is a firmware-block row.
  *
  * ⚠️ The rule is "the width is a CLAIM, not a measurement", not "the record is wide".
- * The 277 widths have 233 live records; the block's use one set of Energica's own definitions.
- * A wrong width can open a transfer for the poller to land in.
+ * The 277 widths have 233 live records; the block's use one build of the A8 firmware.
+ * A wrong width is wrong in the direction that opens a transfer for the poller to land in.
  *
  * ⚠️ An abort during the park is WAITED OUT and cannot be checked away — a re-check before
  * the `await` would be dead code, since the loop's `mayContinue` runs in the same

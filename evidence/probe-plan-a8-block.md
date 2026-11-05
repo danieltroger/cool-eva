@@ -19,7 +19,7 @@ curl -s '<pi>/vcu-read' | head -c 400                             # watch
 Why the sweep rather than 25 separate `/vcu-probe` calls:
 
 - **A sweep holds the A8 session across the whole block.** Requests are paced 10 ms apart and the session idles out after ~2.5 s, so all 25 are asked inside one session. A probe opens a session, asks once and stops — and on 2026-09-14 one of the three probes came back `no-session`.
-- **It parks the 2 Hz OBD poller for each of the 25 block rows** — not only the three wide ones — because their widths come from Energica's own definitions, not yet matched against what is flashed, and a park chosen off a width that might be wrong skips exactly the row it was needed for. The 44 named A8 parameters are read unparked, as they always have been. A hand-run probe parks unconditionally, which comes to the same thing for one read.
+- **It parks the 2 Hz OBD poller for each of the 25 block rows** — not only the three wide ones — because their widths come from the A8 firmware, not yet matched against what is flashed, and a park chosen off a width that might be wrong skips exactly the row it was needed for. The 44 named A8 parameters are read unparked, as they always have been. A hand-run probe parks unconditionally, which comes to the same thing for one read.
 - **It writes the answers down.** A probe's reply exists only in the HTTP response; a sweep's lands in `vcu-params/latest.json`, in the archive, in the diff against the previous snapshot, and in `journalctl -u cool-eva`. For this question — _which of these 25 answer, and with how many bytes_ — the snapshot is the artefact.
 
 Afterwards, keep the evidence the way `evidence/probes-20260914.txt` was kept:
@@ -31,7 +31,7 @@ curl -s '<pi>/vcu-params' > evidence/vcu-params-<date>.json
 
 ## 3. What each index is, and what its answer settles
 
-`CID = 0x1000 | index`, bank 1, micro **A8** — request `A8 03 22 <hi> <lo>`. Widths are what Energica's own definitions for A8 specify (#219); a **width that disagrees is the most interesting outcome on this page**, because it is the first thing that would say those definitions do not match what is flashed.
+`CID = 0x1000 | index`, bank 1, micro **A8** — request `A8 03 22 <hi> <lo>`. Widths are what the A8 firmware specifies (#219); a **width that disagrees is the most interesting outcome on this page**, because it is the first thing that would say that firmware does not match what is flashed.
 
 | idx | CID | firmware width | expected reply | what an answer settles |
 | --- | --- | --- | --- | --- |

@@ -410,9 +410,9 @@ export const NAME_TABLE = "the name table";
  *
  * ⚠️ It names WHICH width it contradicts, and that is the whole reason it is shared rather
  * than written at each surface: the name table's TYPE column has 233 live records behind
- * it, so a mismatch against it means the framing is wrong; A8's widths use Energica's
- * own definitions for one build, so a mismatch is at least as likely to mean those
- * definitions do not match what is flashed. Same withheld value, very different thing to go
+ * it, so a mismatch against it means the framing is wrong; A8's widths use one build
+ * of its firmware, so a mismatch is at least as likely to mean that
+ * firmware does not match what is flashed. Same withheld value, very different thing to go
  * and look at. docs/vcu-parameters.md §2.
  */
 export function describeWidthMismatch(recordLength: number, encoding: RecordEncoding): string {
