@@ -60,3 +60,11 @@ printf 'Completed %s/100 default-flag imports.\n' "$completed"
 ```
 
 This imports definitions; it does not call the installer, migrate data, stop the service or transmit CAN. Preserve the completed count, exit status and any fatal-signal evidence. If all 100 pass, the guard becomes a deletion candidate for a separate reviewed change. If a default-flag import faults, keep it. Then verify the guarded service's startup, memory, storage, actual CAN/BLE/accessories and Update as part of Daniel's first migration. No lane may run this on the bike without his explicit GO.
+
+Saturday 2026-11-07 step 4b runs the import loop above from the reviewed scratch bundle directory, rather than assuming `/opt/cool-eva/current` already exists. It does not install that bundle. While on bench power, also time its full inventory without modifying anything:
+
+```sh
+time sha256sum --check --strict --quiet files.sha256
+```
+
+Keep the checksum exit status and real/user/sys timings, bundle archive SHA-256, board model, OS/kernel/Node versions and inventory file count beside the import result. Pair this with the existing service's `systemctl show cool-eva.service --property=ExecMainStartTimestampMonotonic` and HTTP-listening journal timestamp from its already authorized boot/start; record the first healthy HTTP time if it was captured. Do not restart the service solely for this measurement. If bundle startup has not yet been authorized, mark that comparison pending until the later migration visit. The branch-prerelease migration is deliberately not part of Saturday. [The startup investigation](release-startup.md) explains why hash duration and app startup must be recorded separately.

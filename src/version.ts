@@ -4,12 +4,13 @@ import { promisify } from "util";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { asOwnerCommand } from "./http/update.ts";
-import { readReleaseMetadata } from "./release/metadata.ts";
+import { readReleaseMetadata, type RuntimeRelease } from "./release/metadata.ts";
 import { readBundleNotices, readBundleVersion } from "./release/version.ts";
+import { settingsPaths } from "./settings/paths.ts";
 
 const execFileAsync = promisify(execFile);
 
-// Which commit this process is running, read once at startup.
+// Which commit this process is running; expensive bundle diagnostics start after HTTP listens.
 //
 // ⚠️ Exists because of a failure nothing else here could see. On 2026-09-07 three DC charge-current
 // commands changed the dash's number and moved no current: the Pi was running a build from five
@@ -18,7 +19,7 @@ const execFileAsync = promisify(execFile);
 // the feature looked broken rather than old. docs/can-0x121-charge-command.md.
 //
 // Checkouts use Git, since package.json's 1.0.0 identifies no commit. Bundles carry their
-// identity and file inventory; their OS/rollback notices refresh separately. docs/bundle-updater.md.
+// identity and file inventory; their OS/rollback notices refresh separately. docs/release-startup.md.
 
 /** The running commit, or why it could not be read. A null `commit` is never fatal. */
 export interface RunningVersion {
@@ -37,7 +38,7 @@ export interface RunningVersion {
 }
 
 /**
- * Reads the commit once and remembers it. Safe to call from anywhere afterwards.
+ * Reads the commit once and remembers it. Bundles remain unverified until background checks finish.
  *
  * `directory` is the checkout the Update button pulls (`UPDATE_DIR`), passed by src/index.ts at
  * startup rather than re-derived here — a Pi with `UPDATE_DIR` set would otherwise pull one
@@ -47,23 +48,75 @@ export interface RunningVersion {
  * The PROMISE is cached, not the value: two callers racing the first read would otherwise each
  * spawn their own pair of git processes.
  */
-export function readRunningVersion(directory?: string): Promise<RunningVersion> {
-  cached ??= readVersion(directory ?? join(dirname(fileURLToPath(import.meta.url)), ".."));
-  return cached.then(async version => {
-    if (bundleDirectory === null) return version;
-    return { ...version, label: [version.label, ...(await readBundleNotices(bundleDirectory))].join(" · ") };
+export function readRunningVersion(
+  directory?: string,
+  updaterDirectory = settingsPaths().updaterDirectory
+): Promise<RunningVersion> {
+  cached ??= readVersion(directory ?? join(dirname(fileURLToPath(import.meta.url)), ".."), updaterDirectory);
+  return cached.then(version => {
+    if (bundle === null) return version;
+    if (bundle.started) {
+      refreshNotices(bundle);
+    }
+    return { ...version, label: [version.label, ...bundle.notices].join(" · ") };
+  });
+}
+
+/** Call after HTTP is listening; diagnostic subprocesses must not gate startup or a settings response. */
+export function beginRunningVersionChecks(): void {
+  if (bundle === null || bundle.started) return;
+  const current = bundle;
+  current.started = true;
+  setImmediate(() => {
+    void readBundleVersion(current.directory, current.metadata).then(
+      version => {
+        cached = Promise.resolve(version);
+        console.log(`version: release inventory check completed: ${version.label}`);
+      },
+      error => console.warn("version: background release check failed; retaining +unverified:", error)
+    );
+    refreshNotices(current);
   });
 }
 
 let cached: Promise<RunningVersion> | null = null;
-let bundleDirectory: string | null = null;
+let bundle: BundleVersionState | null = null;
 
-async function readVersion(directory: string): Promise<RunningVersion> {
+interface BundleVersionState {
+  directory: string;
+  updaterDirectory: string;
+  metadata: RuntimeRelease;
+  started: boolean;
+  notices: string[];
+  refreshing: Promise<void> | null;
+}
+
+function refreshNotices(current: BundleVersionState): void {
+  if (current.refreshing !== null) return;
+  current.refreshing = Promise.resolve()
+    .then(() => readBundleNotices(current.directory, current.updaterDirectory))
+    .then(
+      notices => {
+        current.notices = notices;
+      },
+      error => console.warn("version: background OS/rollback notice refresh failed:", error)
+    )
+    .finally(() => {
+      current.refreshing = null;
+    });
+}
+
+async function readVersion(directory: string, updaterDirectory: string): Promise<RunningVersion> {
   try {
     const metadata = await readReleaseMetadata(directory);
     if (metadata) {
-      bundleDirectory = directory;
-      return readBundleVersion(directory, metadata);
+      bundle = { directory, updaterDirectory, metadata, started: false, notices: [], refreshing: null };
+      return {
+        commit: metadata.commit.slice(0, 7),
+        dirty: false,
+        trustworthy: false,
+        label: `${metadata.branch}@${metadata.commit.slice(0, 7)}+unverified`,
+      };
     }
   } catch (error) {
     console.warn("version: could not read release metadata:", error);
