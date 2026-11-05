@@ -3,8 +3,8 @@
 import van from "../vendor/van-1.6.1.js";
 import { SubTabs } from "../lib/sub-tabs.js";
 import { chartTick, peek } from "../lib/store.js";
-import { readingStatus, statusWord, worstStatus } from "../lib/reading-status.js";
-import { chargeValue, chargePowerDisplay, displayChargeMode } from "../lib/charge-display.js";
+import { readingStatus, statusWord, worstStatus, freshValue } from "../lib/reading-status.js";
+import { chargePowerDisplay, displayChargeMode } from "../lib/charge-display.js";
 import { SignalTile, PairTile, Fact } from "../lib/tiles.js";
 import { heatmap, meter, sparkline } from "../lib/svg.js";
 import { cellSnapshot } from "../lib/cell-snapshot.js";
@@ -62,7 +62,7 @@ export function ChargePackView() {
       const states = [
         ...["bms_state_trickle", "bms_state_maintenance", "bms_state_balancing"].map(
           key =>
-            `${key.replace("bms_state_", "")}: ${chargeValue(key) === null ? statusWord(readingStatus(key)) : chargeValue(key) === 1 ? "yes" : "no"}`
+            `${key.replace("bms_state_", "")}: ${freshValue(key) === null ? statusWord(readingStatus(key)) : freshValue(key) === 1 ? "yes" : "no"}`
         ),
       ];
       return div({ class: "sub" }, states.join(" · "));
@@ -71,8 +71,19 @@ export function ChargePackView() {
     SignalTile({
       key: "pack_a",
       label: "Pack current",
-      format: value => Math.abs(value).toFixed(1),
+      className: "charge-pack-current",
+      format: value => value.toFixed(1),
       unit: "A",
+      sub: () => {
+        const value = freshValue("pack_a");
+        return value === null
+          ? statusWord(readingStatus("pack_a"), "unavailable")
+          : value < 0
+            ? "Power out of the pack"
+            : value > 0
+              ? "Power into the pack"
+              : "No current flow";
+      },
       chart: true,
       minSpan: 2,
     }),
@@ -132,8 +143,8 @@ function Balance() {
     sub: () => {
       const state = worstStatus(["cell_min_mv", "cell_max_mv"]);
       const span =
-        state === "fresh" ? `${chargeValue("cell_min_mv")}–${chargeValue("cell_max_mv")} mV` : statusWord(state);
-      const balance = chargeValue("bms_state_balancing");
+        state === "fresh" ? `${freshValue("cell_min_mv")}–${freshValue("cell_max_mv")} mV` : statusWord(state);
+      const balance = freshValue("bms_state_balancing");
       return `${span} · ${balance === null ? `balancing ${statusWord(readingStatus("bms_state_balancing"))}` : balance === 1 ? "balancing now" : "not balancing"} · last 10 min`;
     },
   });
@@ -172,7 +183,7 @@ function Isolation() {
     { class: "tile charge-isolation" },
     div({ class: "label" }, "Isolation"),
     div({ class: "value" }, () => {
-      const value = chargeValue("iso_test_total");
+      const value = freshValue("iso_test_total");
       return value === null ? statusWord(readingStatus("iso_test_total"), "Not reported") : String(Math.round(value));
     }),
     div({ class: "sub" }, "Raw BMS units · watch for a sudden drop, not the absolute number")
@@ -221,14 +232,14 @@ function AcDetails() {
         ["AC setpoint", "charge_limit_a", "A"],
       ]).map(([label, key, unit]) =>
         Fact(label, () => {
-          const value = chargeValue(key);
+          const value = freshValue(key);
           return value === null ? statusWord(readingStatus(key)) : `${value.toFixed(1)} ${unit}`;
         })
       ),
       Fact("Charger enabled", () =>
-        chargeValue("charger_enabled") === null
+        freshValue("charger_enabled") === null
           ? statusWord(readingStatus("charger_enabled"))
-          : chargeValue("charger_enabled") === 1
+          : freshValue("charger_enabled") === 1
             ? "yes"
             : "no"
       )

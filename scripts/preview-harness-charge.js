@@ -2,6 +2,7 @@
 const chargeScene = new URLSearchParams(location.search).get("charge-scene");
 window.chargePreviewRequests = [];
 window.chargePreviewReplyMode = "success";
+window.chargePreviewAutoReason = 4;
 if (ridingFixture.get("fixture") === "all-installed" && chargeScene) {
   const cold = chargeScene === "cold";
   Object.assign(LIVE, {
@@ -98,8 +99,11 @@ if (ridingFixture.get("fixture") === "all-installed" && chargeScene) {
     if (url.pathname.endsWith("/charge-auto")) {
       window.chargePreviewRequests.push({ action: "automatic", method, query: url.search });
       const response = {
-        state: { mode: "automatic", reason: 4, commandedAmps: null },
-        reasonText: "Paused after the rider set the current.",
+        state: { mode: "automatic", reason: window.chargePreviewAutoReason, commandedAmps: null },
+        reasonText:
+          window.chargePreviewAutoReason === 4
+            ? "Paused after the rider set the current."
+            : "Automatic reduction is active.",
         floorAmps: 35,
         message: null,
       };
@@ -130,8 +134,17 @@ if (ridingFixture.get("fixture") === "all-installed" && chargeScene) {
         return json({
           status: writeStatus(url.searchParams),
           result: null,
+          chargeCurrentAttempt: action === "charge-current" ? "not-sent" : undefined,
           message:
             "Synthetic refusal: the bus lease is busy. The request was not sent; wait for the current operation and check the bike’s live state before trying again.",
+        });
+      }
+      if (window.chargePreviewReplyMode === "send-failed" && action === "charge-current") {
+        return json({
+          status: writeStatus(url.searchParams),
+          result: null,
+          chargeCurrentAttempt: "unknown",
+          message: "Synthetic transmit failure after the first frame.",
         });
       }
       if (!["charge-current", "charge-stop"].includes(action)) {

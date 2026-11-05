@@ -23,8 +23,8 @@ export async function assertFixedLayout(page: HeadlessPage) {
     const view = document.querySelector('.riding-view');
     const header = document.querySelector('.header').getBoundingClientRect();
     const tabs = document.querySelector('.tabs').getBoundingClientRect();
-    const boxes = [...view.querySelectorAll('.tile,.value,.sub,.label,.ride-speed,.ride-soc,.range-margin-number,.range-share,.charge-soc-number,.charge-ceiling,.charge-graph-footer,button'), ...document.querySelectorAll('.header-notice:not([hidden]),.header .status')];
-    const textOutside = [...view.querySelectorAll('.value,.label,.sub,.ride-speed,.ride-soc,.range-margin-number,.range-share,.charge-soc-number,.charge-ceiling,.charge-graph-footer')].filter(element => {
+    const boxes = [...view.querySelectorAll('.tile,.value,.sub,.label,.ride-speed,.ride-soc,.range-margin-number,.range-share,.charge-soc-number,.charge-ceiling,.charge-ac-reading,.charge-graph-footer,button'), ...document.querySelectorAll('.header-notice:not([hidden]),.header .status')];
+    const textOutside = [...view.querySelectorAll('.value,.label,.sub,.ride-speed,.ride-soc,.range-margin-number,.range-share,.charge-soc-number,.charge-ceiling,.charge-ac-reading,.charge-graph-footer')].filter(element => {
       const range=document.createRange(); range.selectNodeContents(element);
       const text=range.getBoundingClientRect(); const card=element.closest('.tile').getBoundingClientRect();
       return text.width>0 && (text.left<card.left || text.right>card.right || text.top<card.top || text.bottom>card.bottom);
@@ -39,7 +39,7 @@ export async function assertFixedLayout(page: HeadlessPage) {
       flush:view.getBoundingClientRect().top-header.bottom,
       overflow:boxes.filter(element => element.scrollWidth>element.clientWidth+1 || (element.classList.contains('tile') && element.scrollHeight>element.clientHeight+1) || getComputedStyle(element).textOverflow==='ellipsis').map(element => element.className+': '+element.textContent),
       smallTargets:[...document.querySelectorAll('.header button,.tabs button,.sub-tabs button')].filter(element => !element.hidden && (element.getBoundingClientRect().width<44 || element.getBoundingClientRect().height<44)).map(element => element.textContent),
-      hiddenOverflow:[view,document.body,document.documentElement,...view.querySelectorAll('.tile,.value,.label,.sub,[data-signal],[data-reading],.range-margin-number,.range-share,.charge-soc-number,.charge-ceiling,.charge-graph-footer')].some(element => ['hidden','clip'].includes(getComputedStyle(element).overflowY))
+      hiddenOverflow:[view,document.body,document.documentElement,...view.querySelectorAll('.tile,.value,.label,.sub,[data-signal],[data-reading],.range-margin-number,.range-share,.charge-soc-number,.charge-ceiling,.charge-ac-reading,.charge-graph-footer')].some(element => ['hidden','clip'].includes(getComputedStyle(element).overflowY))
     };
   })()`
   )) as Layout;

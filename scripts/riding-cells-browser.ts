@@ -53,7 +53,11 @@ export async function assertCellsContent(page: HeadlessPage) {
   await evaluateOnPage(page, "window.scrollTo(0,0)");
 }
 
-export async function checkCellsNavigation(page: HeadlessPage, file: string) {
+export async function checkCellsNavigation(
+  page: HeadlessPage,
+  file: string,
+  capture?: (name: string) => Promise<void>
+) {
   await openPreview(page, file, "#hypermile", "range-cells-history");
   await evaluateOnPage(page, "document.querySelector('[data-view=cells]').click()");
   await waitOnPage(
@@ -62,6 +66,19 @@ export async function checkCellsNavigation(page: HeadlessPage, file: string) {
     "Cells sub-tab"
   );
   await assertCellsContent(page);
+  await evaluateOnPage(
+    page,
+    "window.cellRows=[...document.querySelectorAll('[data-cell-key]')];ridingPreview('lib/store.js').chartTick.val++"
+  );
+  await evaluateOnPage(page, FRAME);
+  assert.equal(
+    await evaluateOnPage(
+      page,
+      "window.cellRows.every((row,index)=>row===document.querySelectorAll('[data-cell-key]')[index])"
+    ),
+    true,
+    "Cells numeric rows retain their DOM nodes across sampled pulses."
+  );
   assert.equal(
     await evaluateOnPage(page, "document.querySelector('.cells-back')"),
     null,
@@ -189,7 +206,7 @@ export async function checkCellsNavigation(page: HeadlessPage, file: string) {
     "document.querySelector('[data-cell-key=lmu1_cell1_mv] .cell-number')?.textContent==='3201mV'",
     "Cells uses the current charging snapshot"
   );
-  await checkRangeFollowups(page, file);
+  await checkRangeFollowups(page, file, capture);
   await openPreview(page, file, "#hypermile/cells", "cells-critical");
   await evaluateOnPage(
     page,
@@ -225,7 +242,7 @@ async function clickText(page: HeadlessPage, text: string) {
   );
 }
 
-async function checkRangeFollowups(page: HeadlessPage, file: string) {
+async function checkRangeFollowups(page: HeadlessPage, file: string, capture?: (name: string) => Promise<void>) {
   for (const theme of ["dark", "light"]) {
     await openPreview(page, file, "#hypermile", `labels-${theme}`);
     await evaluateOnPage(
@@ -279,6 +296,7 @@ async function checkRangeFollowups(page: HeadlessPage, file: string) {
       ["fault", 65535, "Date.now()"],
     ] as const) {
       await openPreview(page, file, "#hypermile/cells", `spread-${theme}-${name}`);
+      await evaluateOnPage(page, `ridingPreview('lib/theme.js').themePreference.val=${JSON.stringify(theme)}`);
       await evaluateOnPage(page, `pushPatch({cell_spread_mv:[${value},'mV','cells',${time}]})`);
       await evaluateOnPage(page, "pausePreviewMessages(true);ridingPreview('lib/store.js').chartTick.val++");
       await evaluateOnPage(page, FRAME);
@@ -293,7 +311,10 @@ async function checkRangeFollowups(page: HeadlessPage, file: string) {
       );
     }
     await openPreview(page, file, "#hypermile", `regen-hint-${theme}`);
-    await evaluateOnPage(page, "ridingPreview('lib/destination.js').openDestination('battery-cooling')");
+    await evaluateOnPage(
+      page,
+      `ridingPreview('lib/theme.js').themePreference.val=${JSON.stringify(theme)};ridingPreview('lib/destination.js').openDestination('battery-cooling')`
+    );
     for (const [soc, expected] of [
       [95, "High charge level can reduce regen."],
       [60, "Check pack temperature."],
@@ -304,6 +325,22 @@ async function checkRangeFollowups(page: HeadlessPage, file: string) {
         String(await evaluateOnPage(page, "document.querySelector('.regen-information').innerText")).includes(expected)
       );
     }
+    await evaluateOnPage(page, "pushPatch({allowed_regen_a:[120,'A','battery']});pausePreviewMessages(true)");
+    await evaluateOnPage(page, FRAME);
+    assert.ok(
+      String(await evaluateOnPage(page, "document.querySelector('.regen-information').textContent")).includes(
+        "Full regen"
+      ),
+      "A full allowance must not suggest a derate."
+    );
+    if (capture) {
+      await capture(`battery-full-regen-${theme}`);
+    }
+
+    await evaluateOnPage(
+      page,
+      "pausePreviewMessages(false);pushPatch({allowed_regen_a:[55,'A','battery']});pausePreviewMessages(true)"
+    );
     await evaluateOnPage(page, "pausePreviewMessages(true);ridingPreview('lib/store.js').signalState('soc').val=null");
     await evaluateOnPage(page, FRAME);
     assert.ok(

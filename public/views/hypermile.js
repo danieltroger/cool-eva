@@ -3,8 +3,8 @@
 import van from "../vendor/van-1.6.1.js";
 import { chartTick, valueOf } from "../lib/store.js";
 import { SubTabs } from "../lib/sub-tabs.js";
-import { readingStatus, worstStatus, statusWord } from "../lib/reading-status.js";
-import { rangeDistanceKey, rangeEnergyKey, rangeValue } from "../lib/range-readings.js";
+import { readingStatus, worstStatus, statusWord, freshValue } from "../lib/reading-status.js";
+import { REGEN_CEILING_A, rangeDistanceKey, rangeEnergyKey } from "../lib/range-readings.js";
 import {
   headroomMv,
   restingHeadroomMv,
@@ -23,7 +23,6 @@ import * as units from "../lib/units.js";
 
 const { div, span } = van.tags;
 const DISCHARGE_CEILING_A = 400;
-const REGEN_CEILING_A = 120;
 
 export function HypermileView() {
   return div(
@@ -64,8 +63,8 @@ function MarginCard() {
         : `Rest/sag ${statusWord(status)}`;
     }),
     div({ class: "sub", "data-reading": "cutoff" }, () => {
-      const cutoff = rangeValue("cell_cutoff_mv");
-      const identity = rangeValue("cell_lowest_v_idx");
+      const cutoff = freshValue("cell_cutoff_mv");
+      const identity = freshValue("cell_lowest_v_idx");
       const note = resistanceNote(packResistance.val) || "measured R";
       return `Cut-off ${cutoff === null ? statusWord(readingStatus("cell_cutoff_mv")) : `${cutoff.toFixed(0)} mV`} · BMS index ${identity === null ? statusWord(readingStatus("cell_lowest_v_idx")) : String(identity)} · ${note}`;
     })
@@ -86,7 +85,7 @@ function TimerCard() {
         chartTick.val;
         const status = worstStatus(["cell_min_mv", "cell_cutoff_mv"]);
         if (status !== "fresh") return statusWord(status);
-        return dwellSeconds() < 0.5 && (rangeValue("cell_min_mv") ?? 0) >= (rangeValue("cell_cutoff_mv") ?? 0)
+        return dwellSeconds() < 0.5 && (freshValue("cell_min_mv") ?? 0) >= (freshValue("cell_cutoff_mv") ?? 0)
           ? "clear"
           : `${Math.round(secondsRemaining())} s`;
       }
@@ -104,14 +103,14 @@ function AllowanceCard(label, key, ceiling) {
     div(
       { class: "value", style: () => `color:${allowanceInk(key, ceiling)}` },
       span({ "data-reading": key }, () =>
-        rangeValue(key) === null ? statusWord(readingStatus(key)) : String(Math.round(rangeValue(key) ?? 0))
+        freshValue(key) === null ? statusWord(readingStatus(key)) : String(Math.round(freshValue(key) ?? 0))
       ),
-      span({ class: "unit" }, () => (rangeValue(key) === null ? "" : "A"))
+      span({ class: "unit" }, () => (freshValue(key) === null ? "" : "A"))
     ),
     div({ class: "range-share", "data-share": key }, () =>
-      rangeValue(key) === null
+      freshValue(key) === null
         ? `of ${ceiling} A · ${readingStatus(key) === "missing" ? "unknown" : readingStatus(key)}`
-        : `${Math.round(((rangeValue(key) ?? 0) / ceiling) * 100)}% of ${ceiling} A`
+        : `${Math.round(((freshValue(key) ?? 0) / ceiling) * 100)}% of ${ceiling} A`
     ),
     () => {
       const status = readingStatus(key);
@@ -126,7 +125,7 @@ function AllowanceCard(label, key, ceiling) {
           "aria-label":
             fraction === null
               ? `${label} ${status}; configured ${ceiling} A`
-              : `${label}: ${rangeValue(key)} A of ${ceiling} A`,
+              : `${label}: ${freshValue(key)} A of ${ceiling} A`,
         },
         fraction === null ? "" : div({ style: `width:${fraction * 100}%;height:100%;background:${color}` })
       );
@@ -203,14 +202,14 @@ function SpreadCard() {
       {
         class: "value",
         style: () =>
-          `color:${readingStatus("cell_spread_mv") === "fault" ? colors.BAD : colors.spread(rangeValue("cell_spread_mv"))}`,
+          `color:${readingStatus("cell_spread_mv") === "fault" ? colors.BAD : colors.spread(freshValue("cell_spread_mv"))}`,
       },
       span({ "data-reading": "spread" }, () =>
-        rangeValue("cell_spread_mv") === null
+        freshValue("cell_spread_mv") === null
           ? statusWord(readingStatus("cell_spread_mv"))
           : String(Math.round(valueOf("cell_spread_mv") ?? 0))
       ),
-      span({ class: "unit" }, () => (rangeValue("cell_spread_mv") === null ? "" : "mV"))
+      span({ class: "unit" }, () => (freshValue("cell_spread_mv") === null ? "" : "mV"))
     ),
     div({ class: "sub" }, "Best − weakest")
   );

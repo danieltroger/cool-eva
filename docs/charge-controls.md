@@ -69,3 +69,51 @@ Presentation changes keep the shared arming, dwell, request paths, endpoint resu
  * @returns {{ label: string, mode: "automatic" | "off", note: string }}
  */
 ```
+
+## AC ceilings and operation results
+
+An AC command ceiling is a command-encoding constraint, not the observed DC temperature allowance. The AC landing shows the committed AC setpoint and the battery's granted charger-output current and voltage. Controls names those scopes separately. Unknown, stale or rejected values remain explicit.
+
+The earlier control's warning sentences remain relevant: “DC ceiling has not arrived — this means CAN is not being received.” For AC without an observed ceiling, “using the default ceiling; the bike may ignore the command and settle near 10 A — check charge_limit_a.” The current AC control labels that fallback “(default — may be ignored)”; Bike replied now provides the vehicle-side confirmation instead of asking the rider to infer it from delivered pack current. The fallback does not establish that a command worked.
+
+A refused attempt names its requested amperage and says it was NOT sent; the draft stays available for retry. Any older success acknowledgement is suppressed beneath refused or uncertain attempts. The retained last request and vehicle reply share a freshness boundary, so a link dropout marks both stale and suppresses the old acknowledgement together. Session-end clearing remains in the shared charge-write machinery.
+
+The original ceiling/default warnings, preserved with their substitutions and conditions:
+
+```js
+function Situation() {
+  return div({ class: "action-note" }, () => {
+    const type = chargeType.val;
+    if (type === null) {
+      // charge_manager_state briefly out of a settled AC/DC value (a pause or handshake step) —
+      // the tile stays; the button waits for it. A real unplug clears sessionLive and hides this.
+      return div({ style: `color:${MUTED}` }, "Charge state changing — hold on.");
+    }
+    const ceiling = liveCeiling(type);
+    if (ceiling === null) {
+      // Only DC reaches here now — AC falls back to a default ceiling (see liveCeiling).
+      return div(
+        { style: `color:${WARN}` },
+        "⚠️ DC ceiling (fast_dc_limit_max_a) has not arrived — this means CAN is not being received."
+      );
+    }
+    if (ceilingIsFallback(type)) {
+      return div(
+        { style: `color:${WATCH}` },
+        `Live AC charge · using the default ceiling ${ceiling} A (the dial has not been nudged this session, so the dash has broadcast no ceiling). Whole amps, 1…${ceiling}. `,
+        "If this charger's rating differs from " +
+          `${ceiling} A the bike may ignore the command and settle near 10 A — check charge_limit_a on the dash after sending.`
+      );
+    }
+    return div(
+      { style: `color:${MUTED}` },
+      `Live ${type.toUpperCase()} charge · ceiling ${ceiling} A. Whole amps, 1…${ceiling}. `,
+      "The Pi picks AC/DC and the ceiling from the live bus — this echoes them."
+    );
+  });
+}
+```
+
+## Refused versus uncertain transmission
+
+A null /vcu-write result alone cannot prove that no frame left: sendChargeCommand can fail after its first frame, and the runner returns that failure through the same HTTP null-result shape. The charge-current POST therefore adds an optional chargeCurrentAttempt field: not-sent only for pre-send refusals, unknown after a sender failure or an exception during the action. A missing field from an older service also stays uncertain. This changes outcome metadata only; frame bytes, sequencing, gates and confirmation rules are unchanged. The frontend never derives a NOT sent claim from prose or null alone.

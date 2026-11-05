@@ -8,6 +8,10 @@ Controls retain the existing request/arming/permission machinery. The last reque
 
 The saved SOC limit is event data: its own protocol document records that it arrives only on read/change, with no periodic rebroadcast. Its registry onDemand flag now expresses that existing behavior, and generated frontend metadata applies the same presence/fault/live-link policy as other held events. The charge group still has periodic signals; no command or decoder changes. Physical SIGNAL_BOUNDS remain unchanged. Both commanded amps and the retained SOC setting use 60-second-old last-change timestamps in the complete Charge fixture.
 
+## AC limits
+
+An established AC session replaces the DC graph with an equally sized AC limits card. It names the committed AC setpoint (charge_limit_a), battery-granted charger current (charger_max_dc_a) and battery-granted charger voltage (charger_max_dc_v), all on the charger-output/battery side. Missing values say unavailable; stale or rejected values retain their status. These are not mains-current readings and do not promise delivery. Controls uses the same scopes and never presents the observed DC curve as an AC allowance.
+
 ## Preserved findings from the previous Charge composition
 
 These source comments record constraints and observations from the retired layout. The thermal-knee description is superseded by the exact observed curve and reported-temperature markers above; its old clamp-boundary claim must not be reused. Historical prose is preserved verbatim here for investigation.

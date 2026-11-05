@@ -1,10 +1,11 @@
 // @ts-check
 // Parked histories and cross-checks moved from Range: docs/range-and-cells.md.
 import { ModuleTemperatures } from "./module-temperatures.js";
+import { REGEN_CEILING_A } from "../lib/range-readings.js";
 import van from "../vendor/van-1.6.1.js";
 import { chartTick, peek } from "../lib/store.js";
-import { readingStatus, worstStatus, statusWord } from "../lib/reading-status.js";
-import { rangeValue } from "../lib/range-readings.js";
+import { readingStatus, worstStatus, statusWord, freshValue } from "../lib/reading-status.js";
+
 import { openRidingView } from "../lib/destination.js";
 import { Fact, SignalTile } from "../lib/tiles.js";
 import { sparkline } from "../lib/svg.js";
@@ -36,7 +37,7 @@ export function BatteryCoolingPage() {
           : `${units.efficiency(reading).toFixed(0)} ${units.efficiencyUnit()} · last 5 min`;
       }),
       Fact("Bike's range", () => {
-        const value = rangeValue("range_km");
+        const value = freshValue("range_km");
         return value === null
           ? statusWord(readingStatus("range_km"))
           : `${units.distance(value).toFixed(0)} ${units.distanceUnit()}`;
@@ -114,15 +115,18 @@ function RegenAvailable() {
     { class: "tile regen-information" },
     div({ class: "label" }, "Regen available"),
     div({ class: "value" }, () => {
-      const value = rangeValue("allowed_regen_a");
-      return value === null ? statusWord(readingStatus("allowed_regen_a")) : `${Math.round(value)} A of 120 A`;
+      const value = freshValue("allowed_regen_a");
+      return value === null
+        ? statusWord(readingStatus("allowed_regen_a"))
+        : `${Math.round(value)} A of ${REGEN_CEILING_A} A`;
     }),
     div({ class: "sub" }, () => {
-      const allowance = rangeValue("allowed_regen_a");
+      const allowance = freshValue("allowed_regen_a");
       if (allowance === null) return `Allowance ${statusWord(readingStatus("allowed_regen_a"), "unknown")}`;
-      const soc = rangeValue("soc");
+      if (allowance >= REGEN_CEILING_A) return "Full regen";
+      const soc = freshValue("soc");
       if (soc === null) return "Check charge level and pack temperature.";
-      return allowance < 120 && soc > 90 ? "High charge level can reduce regen." : "Check pack temperature.";
+      return soc > 90 ? "High charge level can reduce regen." : "Check pack temperature.";
     })
   );
 }

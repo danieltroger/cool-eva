@@ -196,19 +196,9 @@ function summariseGroups(): Record<string, [number, number]> {
 }
 
 /**
- * Groups every one of whose signals is written on request, so the group is left out
- * of the summary above entirely.
- *
- * `waypoint` is the only one today and the case that forced this: it reads [0, 3]
- * before you ever save a waypoint and [0, 3] again ten seconds after you do, so
- * anything filtering `live === 0` would fire on the resting state forever and learn
- * nothing. Silence that is not evidence should not be served as if it were.
- *
- * ⚠️ WHOLE-GROUP, not per-signal, and that is a decision rather than an accident:
- * `.some` here would delete a whole group's liveness the moment one signal in it
- * were flagged. The registry has no mixed group today, so nothing in the real data
- * tells the two apart — which is why this is exported and §5b of
- * scripts/check-ride-log-status.ts feeds it a mixed group of its own.
+ * Only groups containing exclusively onDemand signals are exempt from liveness.
+ * Charge mixes periodic readings and held events; one event must not exempt its peers.
+ * Rationale: docs/reading-status.md. check-ride-log-status.ts §5b pins the mixed case.
  */
 export function onDemandOnlyGroups(signals: readonly SignalDef[]): Set<string> {
   const everyGroup = new Set(signals.map(signal => signal.group));

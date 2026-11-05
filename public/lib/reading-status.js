@@ -10,6 +10,7 @@ import {
   peek,
   peekServerTime,
   signalState,
+  valueOf,
 } from "./store.js";
 
 const onDemand = new Set(ON_DEMAND_KEYS);
@@ -23,6 +24,11 @@ export function readingStatus(key, sampled = false) {
   if (readingHasFault(key, sampled)) return "fault";
   if (!reading) return "missing";
   return readingIsStale(key, sampled) ? "stale" : "fresh";
+}
+
+/** @param {string} key @param {boolean} [sampled] */
+export function freshValue(key, sampled = false) {
+  return readingStatus(key, sampled) === "fresh" ? (sampled ? peek(key) : valueOf(key)) : null;
 }
 
 /** @param {string[]} keys @param {boolean} [sampled] @param {(key:string,sampled?:boolean)=>ReadingStatus} [status] @returns {ReadingStatus} */

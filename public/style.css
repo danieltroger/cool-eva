@@ -2379,3 +2379,35 @@ body {
 .charge-pack-view > * {
   grid-column: 1 / -1;
 }
+
+.charge-view > .charge-ac-limits {
+  height: 272px;
+  padding: 8px;
+  gap: 4px;
+  justify-content: space-between;
+}
+.charge-ac-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 56px;
+}
+.charge-ac-row .sub {
+  margin: 0;
+}
+.charge-ac-reading {
+  font-size: 34.4px;
+  font-weight: 600;
+}
+.charge-ac-reading.status-word {
+  font-size: 16px;
+}
+.charge-ac-notes {
+  margin: 0;
+  font-size: 12.48px;
+  line-height: 16px;
+}
+.compact-auto-toggle .action {
+  max-width: 176px;
+}

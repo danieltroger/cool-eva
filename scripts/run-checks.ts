@@ -1051,6 +1051,11 @@ const CHECKS: SelfCheck[] = [
       "fresh signed Charge direction, small incoming/outgoing power, neutral zero, invalid/unavailable readings and held onDemand values",
   },
   {
+    script: "scripts/check-charge-attempt.ts",
+    covers:
+      "real HTTP charge-current attempt metadata distinguishes zero-frame refusals from partial or failed transmission without changing command guards",
+  },
+  {
     script: "scripts/check-charge-curve.ts",
     covers:
       "exact observed charge-current interpolation/cap, both reported extremes, adaptive/fallback framing, truthful command replies and shared status priority",

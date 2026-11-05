@@ -2,7 +2,7 @@
 // Fresh signed delivery and source evidence: docs/charge-dashboard.md.
 import van from "../vendor/van-1.6.1.js";
 import { connection, isStale, isStaleSampled, peek, valueOf } from "./store.js";
-import { readingHasFault, readingStatus, statusWord } from "./reading-status.js";
+import { freshValue, readingHasFault, readingStatus, statusWord } from "./reading-status.js";
 import { chargeMode } from "./charge-mode.js";
 import { CHARGE_SESSION_MAX_AGE_MS } from "./charge-write.js";
 import { power } from "./format.js";
@@ -18,8 +18,9 @@ export function currentChargeMode(sampled = false) {
         readingHasFault(key, sampled) ||
         (["bms_state_charge", "bms_state_trickle", "bms_state_maintenance"].includes(key) &&
           stale(key, CHARGE_SESSION_MAX_AGE_MS))
-      )
+      ) {
         return null;
+      }
       return sampled ? peek(key) : valueOf(key);
     },
     (key, age) => readingHasFault(key, sampled) || stale(key, age)
@@ -31,9 +32,10 @@ export const displayChargeMode = van.derive(() => currentChargeMode());
 /** @param {boolean} [sampled] */
 export function chargePowerDisplay(sampled = false) {
   const status = readingStatus("pack_kw", sampled);
-  const value = status === "fresh" ? (sampled ? peek("pack_kw") : valueOf("pack_kw")) : null;
-  if (value === null)
+  const value = freshValue("pack_kw", sampled);
+  if (value === null) {
     return { label: "POWER", magnitude: statusWord(status), unit: "", color: status === "fault" ? BAD : MUTED, status };
+  }
   const magnitude = power(Math.abs(value));
   if (Number(magnitude) === 0) return { label: "POWER", magnitude: "0.0", unit: "kW", color: CALM, status };
   return {
@@ -43,9 +45,4 @@ export function chargePowerDisplay(sampled = false) {
     color: value < 0 ? FLOW : GOOD,
     status,
   };
-}
-
-/** @param {string} key @param {boolean} [sampled] */
-export function chargeValue(key, sampled = false) {
-  return readingStatus(key, sampled) === "fresh" ? (sampled ? peek(key) : valueOf(key)) : null;
 }

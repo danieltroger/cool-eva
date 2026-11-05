@@ -1,3 +1,4 @@
+import { checkChargeReviewCases } from "./riding-charge-review-browser.ts";
 import { assertFixedLayout, resetLayoutClearance, layoutClearance } from "./riding-layout-browser.ts";
 import { assertChargeContent, checkChargeCases } from "./riding-charge-browser.ts";
 import { checkChargeNavigation } from "./riding-charge-navigation.ts";
@@ -99,6 +100,7 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
       await checkNoticeStates(page, previewFile, theme, "#hypermile");
       await checkRangeCases(page, previewFile, assertFixedLayout, theme);
       await checkChargeCases(page, previewFile, assertFixedLayout, theme);
+      await checkChargeReviewCases(page, previewFile, theme);
       await checkNoticeStates(page, previewFile, theme, "#charge");
       await checkRideBrowser(page, previewFile, assertFixedLayout, theme);
       await checkPowerWords(page, previewFile, assertFixedLayout, theme);

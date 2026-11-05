@@ -1,16 +1,17 @@
 // @ts-check
+import { readingStatus, statusWord, freshValue } from "../lib/reading-status.js";
 
 import van from "../vendor/van-1.6.1.js";
 import { GOOD, MUTED, WARN, WATCH } from "../lib/colors.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
-import { chargeValue } from "../lib/charge-display.js";
-import { chargeReply } from "../lib/charge-command-display.js";
+
+import { chargeRequestReply } from "../lib/charge-request-display.js";
+import { chargeAttemptText } from "../lib/charge-command-display.js";
 import { chargeCeiling } from "../lib/charge-curve.js";
 import { valueOf } from "../lib/store.js";
 import {
   applyWriteStatus,
   ceilingIsFallback,
-  chargeAck,
   chargeType,
   fetchChargeWriteStatus,
   liveCeiling,
@@ -39,17 +40,11 @@ export function ChargeCurrentControl() {
         { class: "charge-request-reply" },
         div(
           div({ class: "sub" }, "Last request"),
-          div({ class: "value", "data-last-charge-request": "" }, () => {
-            const value = chargeAck.val === null ? null : chargeValue("charge_cmd_a");
-            return value === null ? "—" : `${value} A`;
-          })
+          div({ class: "value", "data-last-charge-request": "" }, () => chargeRequestReply().request)
         ),
         div(
           div({ class: "sub" }, "Bike replied"),
-          div({ class: "value", "data-charge-reply": "" }, () => {
-            const reply = chargeReply(chargeAck.val?.verdict ?? null);
-            return typeof reply === "number" ? `${reply} A` : reply;
-          })
+          div({ class: "value", "data-charge-reply": "" }, () => chargeRequestReply().reply)
         )
       ),
       div({ class: "compact-action-row" }, InputRow(), span("A"), SetButton()),
@@ -129,9 +124,24 @@ function Situation() {
     const type = chargeType.val;
     if (type === null) return "Charge state changing";
     const cap = liveCeiling(type);
-    const temperature = chargeCeiling(chargeValue("batt_temp_lo_vcu"), chargeValue("batt_temp_hi_vcu"));
-    return `${type.toUpperCase()} bike cap ${cap === null ? "unknown" : `${cap} A`}${ceilingIsFallback(type) ? " (default)" : ""} · temperature ceiling ${temperature === null ? "unknown" : `${temperature.toFixed(temperature % 1 === 0 ? 0 : 1)} A`}`;
+    const command = `${type.toUpperCase()} command ceiling ${cap === null ? "unavailable" : `${cap} A`}${ceilingIsFallback(type) ? " (default — may be ignored)" : ""}`;
+    if (type === "ac") {
+      return div(
+        div(command),
+        div(
+          `AC setpoint ${acReading("charge_limit_a", "A")} · Battery grants ${acReading("charger_max_dc_a", "A")} / ${acReading("charger_max_dc_v", "V")}`
+        )
+      );
+    }
+    const temperature = chargeCeiling(freshValue("batt_temp_lo_vcu"), freshValue("batt_temp_hi_vcu"));
+    return `${command} · DC temperature ceiling ${temperature === null ? "unknown" : `${temperature.toFixed(temperature % 1 === 0 ? 0 : 1)} A`}`;
   });
+}
+
+/** @param {string} key @param {string} unit */
+function acReading(key, unit) {
+  const value = freshValue(key);
+  return value === null ? statusWord(readingStatus(key), "unavailable") : `${Number(value.toFixed(1))} ${unit}`;
 }
 
 function InputRow() {
@@ -241,8 +251,8 @@ function Outcome() {
  * since dialling up is the charger's decision. src/charge/acknowledge.ts.
  */
 function Acknowledgement() {
-  const ack = chargeAck.val;
-  if (!ack) {
+  const ack = chargeRequestReply().acknowledgement;
+  if (!ack || sending.val || (message.val && lastResult.val !== true)) {
     return div();
   }
   const colour = ack.verdict.kind === "took" ? GOOD : ack.verdict.kind === "not-acknowledged" ? WARN : MUTED;
@@ -344,13 +354,13 @@ async function performChargeCurrent() {
     });
     payload = /** @type {VcuWriteResponse} */ (await response.json());
     applyWriteStatus(payload);
-    message.val = payload.result?.message ?? payload.message ?? "";
+    message.val = chargeAttemptText(value, payload);
   } catch (error) {
     // ⚠️ A request that did not come back may still have reached the bike — the frame goes
     // out before the response — so this is NOT "nothing happened". Lowering the current is
     // benign and overridable on the bike, but the message says the honest thing anyway.
     message.val =
-      `Could not reach the Pi — ${error instanceof Error ? error.message : String(error)}. ` +
+      `${value} A request: could not reach the Pi — ${error instanceof Error ? error.message : String(error)}. ` +
       "This does NOT guarantee nothing was sent — check the dash.";
     console.warn("charge-current: request failed", error);
   } finally {

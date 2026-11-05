@@ -2,8 +2,8 @@
 // ETA qualifications and preserved evidence: docs/charge-eta.md and docs/charge-dashboard.md.
 import van from "../vendor/van-1.6.1.js";
 import { chartTick, isStaleSampled, peek } from "../lib/store.js";
-import { chargeValue, currentChargeMode } from "../lib/charge-display.js";
-import { readingStatus, statusWord } from "../lib/reading-status.js";
+import { currentChargeMode } from "../lib/charge-display.js";
+import { readingStatus, statusWord, freshValue } from "../lib/reading-status.js";
 import { monotonicNow } from "../lib/clock.js";
 import { chargeEta, smoothedChargeKw } from "../lib/charge-eta.js";
 import { GOOD, MUTED, WATCH } from "../lib/colors.js";
@@ -13,7 +13,7 @@ export const SOC_MAX_AGE_MS = 12_000;
 export function ChargeEtaTile() {
   return div({ class: "tile charge-eta" }, () => {
     chartTick.val;
-    const limit = chargeValue("charge_soc_limit_pct", true);
+    const limit = freshValue("charge_soc_limit_pct", true);
     const target = limit === 0 ? 100 : limit;
     const label =
       target === null
@@ -24,7 +24,7 @@ export function ChargeEtaTile() {
     let reason = "Waiting for charge power";
     const active = currentChargeMode(true) !== "none";
     const powerState = readingStatus("pack_kw", true);
-    const incoming = chargeValue("pack_kw", true);
+    const incoming = freshValue("pack_kw", true);
     const soc = peek("soc");
     if (!active) {
       reason = "Charge not established";

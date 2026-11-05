@@ -2,8 +2,9 @@
 // Overview budget, delivery direction and observed temperature graph: docs/charge-dashboard.md.
 import van from "../vendor/van-1.6.1.js";
 import { SubTabs } from "../lib/sub-tabs.js";
-import { chargePowerDisplay, chargeValue, currentChargeMode } from "../lib/charge-display.js";
-import { readingStatus, statusWord } from "../lib/reading-status.js";
+import { chargePowerDisplay, currentChargeMode, displayChargeMode } from "../lib/charge-display.js";
+import { readingStatus, statusWord, freshValue } from "../lib/reading-status.js";
+import { ChargeAcLimits } from "./charge-ac-limits.js";
 import { ChargeGraph } from "./charge-graph.js";
 import { ChargeEtaTile } from "./charge-eta.js";
 import { ChargeStopControl } from "./charge-stop.js";
@@ -18,7 +19,7 @@ export function ChargeView() {
     SubTabs("charge"),
     ChargeHero(),
     ChargeEtaTile(),
-    ChargeGraph(),
+    () => (displayChargeMode.val === "ac" ? ChargeAcLimits() : ChargeGraph()),
     div(
       { class: "tile charge-controller" },
       button(
@@ -48,12 +49,12 @@ function ChargeHero() {
             : `Battery · ${mode.toUpperCase()} session`;
       }),
       div(
-        { class: "charge-soc-number", style: () => `color:${colors.stateOfCharge(chargeValue("soc"))}` },
+        { class: "charge-soc-number", style: () => `color:${colors.stateOfCharge(freshValue("soc"))}` },
         span({ "data-charge-soc": "" }, () => {
-          const value = chargeValue("soc");
+          const value = freshValue("soc");
           return value === null ? statusWord(readingStatus("soc")) : String(Math.round(value));
         }),
-        span({ class: "hero-unit" }, () => (chargeValue("soc") === null ? "" : "%"))
+        span({ class: "hero-unit" }, () => (freshValue("soc") === null ? "" : "%"))
       )
     ),
     div(
@@ -74,8 +75,8 @@ function ChargeHero() {
         span({ class: "unit" }, () => chargePowerDisplay().unit)
       ),
       div({ class: "sub", "data-charge-electrical": "" }, () => {
-        const amps = chargeValue("pack_a"),
-          volts = chargeValue("pack_v");
+        const amps = freshValue("pack_a"),
+          volts = freshValue("pack_v");
         return `${amps === null ? statusWord(readingStatus("pack_a")) : `${Math.abs(amps).toFixed(0)} A`} · ${volts === null ? statusWord(readingStatus("pack_v")) : `${Math.round(volts)} V`}`;
       })
     )

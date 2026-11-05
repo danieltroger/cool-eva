@@ -3,8 +3,8 @@
 import van from "../vendor/van-1.6.1.js";
 import { GOOD, MUTED, WARN, WATCH } from "../lib/colors.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
-import { chargeValue } from "../lib/charge-display.js";
-import { readingStatus, statusWord } from "../lib/reading-status.js";
+
+import { readingStatus, statusWord, freshValue } from "../lib/reading-status.js";
 import { valueOf } from "../lib/store.js";
 import {
   applyWriteStatus,
@@ -122,7 +122,7 @@ export const MAX_PCT = 100;
 /** What the bike says its limit is, or that nobody has asked yet. */
 function CurrentValue() {
   return div({ class: "value", "data-saved-charge-limit": "" }, () => {
-    const limit = chargeValue("charge_soc_limit_pct");
+    const limit = freshValue("charge_soc_limit_pct");
     return limit === null
       ? statusWord(readingStatus("charge_soc_limit_pct"), "Unknown")
       : limit === 0

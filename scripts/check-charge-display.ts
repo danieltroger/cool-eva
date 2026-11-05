@@ -1,3 +1,4 @@
+import { freshValue } from "../public/lib/reading-status.js";
 import assert from "node:assert/strict";
 import { apply, connection, faultState, signalState } from "../public/lib/store.js";
 import type { LiveValue } from "../src/can/signals.ts";
@@ -5,7 +6,7 @@ globalThis.fetch = (async () =>
   new Response(
     JSON.stringify({ status: { enabled: false, chargeAck: null }, result: null, message: null })
   )) as typeof fetch;
-const { chargePowerDisplay, chargeValue, currentChargeMode } = await import("../public/lib/charge-display.js");
+const { chargePowerDisplay, currentChargeMode } = await import("../public/lib/charge-display.js");
 let timestamp = 1_000_000;
 for (const [value, mode, label, magnitude, color] of [
   [11.456, "dc", "CHARGING", "11", "good"],
@@ -40,16 +41,46 @@ faultState("pack_kw").val = null;
 assert.equal(chargePowerDisplay().magnitude, "—");
 assert.equal(chargePowerDisplay().label, "POWER");
 send(11.456, "dc");
-assert.equal(chargeValue("charge_cmd_a"), 32);
+assert.equal(freshValue("charge_cmd_a"), 32);
 assert.equal(
-  chargeValue("charge_soc_limit_pct", true),
+  freshValue("charge_soc_limit_pct", true),
   90,
   "Held onDemand values keep their real last-change timestamps."
 );
 connection.val = "offline";
 assert.equal(chargePowerDisplay().label, "POWER");
-assert.equal(chargeValue("charge_cmd_a"), null);
+assert.equal(freshValue("charge_cmd_a"), null);
 assert.equal(currentChargeMode(), "none");
+const { chargeAttemptText } = await import("../public/lib/charge-command-display.js");
+assert.ok(
+  chargeAttemptText(40, { result: null, message: "Refused", chargeCurrentAttempt: "not-sent" }).includes(
+    "40 A request NOT sent."
+  )
+);
+for (const chargeCurrentAttempt of [undefined, "unknown"] as const) {
+  const text = chargeAttemptText(40, { result: null, message: "Synthetic send failure", chargeCurrentAttempt });
+  assert.equal(text.includes("NOT sent"), false, "A null or legacy result cannot prove that no frame left.");
+  assert.ok(text.includes("delivery uncertain"));
+}
+const { chargeRequestReply } = await import("../public/lib/charge-request-display.js");
+const { chargeAck } = await import("../public/lib/charge-write.js");
+send(0.2, "dc");
+chargeAck.val = {
+  verdict: { kind: "took", fromAmps: 50, toAmps: 32, latencyMs: 100 },
+  message: "32 A request confirmed",
+};
+assert.deepEqual([chargeRequestReply().request, chargeRequestReply().reply], ["32 A", "32 A"]);
+connection.val = "offline";
+assert.deepEqual(
+  [chargeRequestReply().request, chargeRequestReply().reply],
+  ["stale", "stale"],
+  "A link dropout must mark request and reply stale together."
+);
+assert.equal(chargeRequestReply().acknowledgement, null);
+send(0.2, "dc");
+apply({ type: "patch", ts: timestamp, signals: { fast_dc_contactor: reading(193, "", "charge") } });
+assert.equal(currentChargeMode(), "none", "Rejected charge evidence must not keep the accepted previous bit alive.");
+assert.equal(chargePowerDisplay().label, "POWER IN");
 console.log(
   "✓ Fresh accepted signed Charge power, direction colours, small readings, neutral zero, fault/stale/missing/link loss and held onDemand readings"
 );

@@ -2,8 +2,8 @@
 // Framing, exact capped segments and marker meanings: docs/charge-dashboard.md.
 import van from "../vendor/van-1.6.1.js";
 import { chartTick } from "../lib/store.js";
-import { readingStatus, statusWord, worstStatus } from "../lib/reading-status.js";
-import { chargeValue } from "../lib/charge-display.js";
+import { readingStatus, statusWord, worstStatus, freshValue } from "../lib/reading-status.js";
+
 import {
   chargeAllowance,
   chargeCeiling,
@@ -74,17 +74,17 @@ export function ChargeGraph() {
 
 function temperatures() {
   return {
-    outside: chargeValue("ambient_temp", true),
-    physicalLow: chargeValue("batt_temp_lo", true),
-    physicalHigh: chargeValue("batt_temp_hi", true),
-    reportedLow: chargeValue("batt_temp_lo_vcu", true),
-    reportedHigh: chargeValue("batt_temp_hi_vcu", true),
+    outside: freshValue("ambient_temp", true),
+    physicalLow: freshValue("batt_temp_lo", true),
+    physicalHigh: freshValue("batt_temp_hi", true),
+    reportedLow: freshValue("batt_temp_lo_vcu", true),
+    reportedHigh: freshValue("batt_temp_hi_vcu", true),
   };
 }
 
 /** @param {string} key @param {boolean} [unit] */
 function temperatureText(key, unit = true) {
-  const value = chargeValue(key, true);
+  const value = freshValue(key, true);
   return value === null
     ? statusWord(readingStatus(key, true), "missing")
     : `${Math.round(units.temp(value))}${unit ? ` ${units.tempUnit()}` : ""}`;

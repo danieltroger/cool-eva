@@ -4,8 +4,8 @@ import { openDestination } from "../lib/destination.js";
 import van from "../vendor/van-1.6.1.js";
 import { GOOD, MUTED, WARN } from "../lib/colors.js";
 import { chargeType, onChargeSessionEnd, writesEnabled } from "../lib/charge-write.js";
-import { chargeValue } from "../lib/charge-display.js";
-import { chargeAck } from "../lib/charge-write.js";
+
+import { chargeRequestReply } from "../lib/charge-request-display.js";
 import { valueOf } from "../lib/store.js";
 import { request } from "../lib/transport.js";
 
@@ -146,7 +146,7 @@ function ToggleButton(compact = false) {
               ? "Enable"
               : reasonCode.val === REASON_RIDER
                 ? "Resume"
-                : "Pause"
+                : "Switch off for this charge"
             : toggleAction(mode.val, reasonCode.val, floorAmps.val).label
     ),
     ...(compact
@@ -310,8 +310,7 @@ async function toggle(wanted) {
 export function ChargeAutoSummary() {
   return div(
     div({ class: "label" }, () => {
-      const request = chargeAck.val === null ? null : chargeValue("charge_cmd_a");
-      return request === null ? "Request not established" : `Last request · ${request} A`;
+      return `Last request · ${chargeRequestReply().request}`;
     }),
     div({ class: "sub" }, () => {
       if (chargeType.val === "ac") return "Automatic reduction · DC only";
