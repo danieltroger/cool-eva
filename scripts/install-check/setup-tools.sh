@@ -14,15 +14,18 @@ cd "$tools"
 
 fetch() {
     if [ ! -f "$2" ]; then
+        printf 'Fetching pinned source: %s\n' "$2"
         curl --fail --show-error --location --proto '=https' --retry 2 "$1" --output "$2.part"
         mv "$2.part" "$2"
     fi
     actual=$(shasum -a 256 "$2" | cut -d ' ' -f 1)
     [ "$actual" = "$3" ] || { printf 'Checksum mismatch: %s\n' "$2" >&2; exit 1; }
+    printf 'Verified pinned source: %s %s\n' "$2" "$actual"
 }
 
 fetch "https://download.qemu.org/qemu-$qemu_version.tar.xz" "qemu-$qemu_version.tar.xz" "$qemu_sha"
 fetch "https://gitlab.freedesktop.org/slirp/libslirp/-/archive/v$slirp_version/libslirp-v$slirp_version.tar.gz" "libslirp-v$slirp_version.tar.gz" "$slirp_sha"
+if [ "${2:-}" = fetch-only ]; then exit 0; fi
 if [ ! -d "qemu-$qemu_version" ]; then tar -xf "qemu-$qemu_version.tar.xz"; fi
 if [ ! -d "libslirp-v$slirp_version" ]; then tar -xf "libslirp-v$slirp_version.tar.gz"; fi
 if [ ! -x python/bin/python3 ]; then python3 -m venv python; fi

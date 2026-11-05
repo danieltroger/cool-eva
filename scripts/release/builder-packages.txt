@@ -1,0 +1,9 @@
+ca-certificates
+curl
+xz-utils
+zstd
+python3
+make
+g++
+libc6-dev
+binutils

@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { copyBundleArtifacts } from "./release/build.ts";
 import { NPM_CI_ARGUMENTS } from "./release/assemble.ts";
+import { checkBuilderCacheKey } from "./release/cache-check.ts";
 import {
   hashFile,
   selectSourcePaths,
@@ -122,13 +123,14 @@ export async function checkReleaseBundle(): Promise<void> {
   const actions = workflow.split("\n").filter(line => line.includes("uses:"));
   assert(actions.length >= 3);
   for (const action of actions) {
-    assert.match(action, /uses: actions\/[a-z-]+@[a-f0-9]{40} # v\d+\.\d+\.\d+$/);
+    assert.match(action, /uses: actions\/[a-z-]+(?:\/[a-z-]+)?@[a-f0-9]{40} # v\d+\.\d+\.\d+$/);
   }
 
   const temporaryParent = join(root, ".preview-shots");
   await mkdir(temporaryParent, { recursive: true });
   const directory = await mkdtemp(join(temporaryParent, "release-check-"));
   try {
+    await checkBuilderCacheKey(directory, root);
     await checkDependencyPruning(join(directory, "dependencies"));
     await checkRuntimePayload(join(directory, "payload-source"), join(directory, "payload"));
     await mkdir(join(directory, "public"));

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { captureCommand, runCommand } from "./commands.ts";
 import { selectSourcePaths } from "./files.ts";
 import { readBundleInputs, validateBuildIdentity } from "./inputs.ts";
+import { buildBuilderImage } from "./cache.ts";
 
 export async function buildReleaseBundle(sourceDirectory: string, outputDirectory: string): Promise<void> {
   const outputRelative = relative(sourceDirectory, outputDirectory);
@@ -21,7 +22,7 @@ export async function buildReleaseBundle(sourceDirectory: string, outputDirector
     process.env.BUNDLE_BRANCH ?? (await captureCommand("git", ["branch", "--show-current"], commandOptions)).trim();
   const channel = process.env.BUNDLE_CHANNEL ?? "main";
   validateBuildIdentity(commit, channel, branch, epoch);
-  const inputs = await readBundleInputs(sourceDirectory);
+  await readBundleInputs(sourceDirectory);
   const trackedPaths = (await captureCommand("git", ["ls-files", "-z"], commandOptions)).split("\0").filter(Boolean);
   const sourcePaths = selectSourcePaths(trackedPaths);
   await mkdir(outputDirectory, { recursive: true });
@@ -40,27 +41,7 @@ export async function buildReleaseBundle(sourceDirectory: string, outputDirector
     );
     await runCommand("tar", ["-xf", sourceArchive, "-C", stagedSource], commandOptions);
     const builderTag = `cool-eva-builder:${commit.slice(0, 12)}`;
-    await runCommand(
-      "docker",
-      [
-        "build",
-        "--platform=linux/arm64",
-        "--tag",
-        builderTag,
-        "--file",
-        "scripts/release/Dockerfile",
-        "--build-arg",
-        `BUILDER_IMAGE=${inputs.builder.image}`,
-        "--build-arg",
-        `APT_SNAPSHOT=${inputs.builder.aptSnapshot}`,
-        "--build-arg",
-        `NODE_VERSION=${inputs.node.version}`,
-        "--build-arg",
-        `NODE_SHA256=${inputs.node.sha256}`,
-        "scripts/release",
-      ],
-      commandOptions
-    );
+    await buildBuilderImage(sourceDirectory, join(sourceDirectory, "dist/release-inputs"), builderTag);
     await runCommand(
       "docker",
       [
