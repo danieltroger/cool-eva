@@ -33,7 +33,7 @@ A stock bike needs no coolant probes, fan or enabled SPI interface. The [cooling
 
 ### Bluetooth enrollment
 
-The bike's Connectivity Hub holds one authorized-device pairing. Starting the service can enroll the Pi and replace a device already using that slot. Clearing the saved device from the bike's own dashboard allows pairing again. This is separate from CAN diagnostic requests and manual service actions. Read the current README's [before-first-start step](../README.md#5-before-the-first-service-start).
+The bike's Connectivity Hub holds one authorized-device pairing. Starting the service can enroll the Pi and replace a device already using that slot. Clearing the saved device from the bike's own dashboard allows pairing again. This is separate from CAN diagnostic requests and manual service actions. Read the [before-first-start guidance](bike-changes.md#bluetooth-pairing-before-startup).
 
 ## Former README reference
 
@@ -68,4 +68,4 @@ Two caveats worth knowing before you spend money:
 
 - The one thing that _does_ write to the bike is the Bluetooth handshake: enrolling with the Connectivity Hub claims its single authorised-device slot, and after several unanswered attempts the client also tries the hub's own address. If the bike is already paired to something else, that pairing can be replaced, and the way back is clearing the stored device from the bike's own dashboard. `BLE_ENABLED=0` avoids the whole question.
 
-**Historical status:** Bluetooth enrollment is no longer the only bike-changing operation. For CAN actions and the temporary Bluetooth opt-out, use the [current first-start and safety instructions](../README.md#5-before-the-first-service-start).
+**Historical status:** Bluetooth enrollment is no longer the only bike-changing operation. For CAN actions and the temporary Bluetooth opt-out, use the [current first-start and safety instructions](bike-changes.md#bluetooth-pairing-before-startup).

@@ -1,107 +1,69 @@
-# Manual installation
+# Set up the Pi from Windows or macOS
 
-<!-- for-now: #324 -->
+Source-tree `install.sh` is a release template; use the pasted line below for a fresh card.
 
-For now, this is the full manual route behind the [short README setup](../README.md#setup). The planned installer in [#324](https://github.com/danieltroger/cool-eva/issues/324) will handle installation, swap, service startup and checks.
+## Before installing
 
-These steps use the existing installer. Commands run either **on your computer** or **on the Pi**, as labelled. Choose the username **`pi`** below to use the commands unchanged.
+Read [what can change the bike](../README.md#what-can-change-the-bike). Setup starts telemetry; diagnostic reads transmit requests, and automatic DC charge management can act without a per-adjustment prompt. Fresh settings leave the motorcycle's Bluetooth hub unselected and optional cooling hardware off. Selecting a hub later can replace its remembered pairing. Install and use controls with the motorcycle parked.
+
+Keep the Pi on a stable **mains USB supply throughout setup**. Have a microSD/card reader, internet-connected 2.4 GHz Wi-Fi, your computer, both home/hotspot credentials, and an optional recording public key ready. Stock bikes need no probes, fan, SPI enablement or BMS modification.
 
 ## 1. Prepare the phone and card — on your computer
 
-The Zero 2 W supports **2.4 GHz Wi-Fi only**. On an iPhone, enable **Settings → Personal Hotspot → Maximize Compatibility** if available. When the Pi boots, leave the Personal Hotspot settings page visible for about 20 seconds so it can join.
+The Zero 2 W uses **2.4 GHz Wi-Fi**. On iPhone, enable **Personal Hotspot → Maximize Compatibility** if available; leave the hotspot settings page visible for about 20 seconds when the Pi boots.
 
-Use [Raspberry Pi Imager](https://www.raspberrypi.com/software/) to flash **64-bit Raspberry Pi OS**. In its OS customization settings, set:
+Use [Raspberry Pi Imager](https://www.raspberrypi.com/software/) with the **Zero 2 W** selected and its current **Raspberry Pi OS Lite (64-bit)** image. Set:
 
-- Hostname: **`cool-eva`**.
-- Username: **`pi`**, with a password or your SSH public key.
-- **SSH enabled**; this is how you install and maintain a Pi with no screen.
-- Wi-Fi: your phone hotspot's name and password. Do not put these in this repository.
+- Hostname **`cool-eva`**, username **`pi`**, and a password (or your SSH public key).
+- **SSH enabled**.
+- An internet-connected Wi-Fi network and its country setting. Home Wi-Fi is convenient; a compatible phone hotspot also works.
 
-Insert the card, connect the Korlan and power the Pi. Keep the hotspot available while it starts.
+Insert the card, connect the [Korlan to the USB data port](hardware.md#connections), and power the Pi from mains. Keep that network available while it boots. Each software release records the image/package versions it was tested on; setup catches up OS packages on bench power. A different OS version warns and proceeds through native/service checks.
 
 ## 2. Connect — on your computer
 
-Join your computer to the **same phone hotspot as the Pi**. Open **PowerShell on Windows**, or **Terminal on macOS/Linux**, and run:
+Join the computer to the same network as the Pi. Use **Windows PowerShell** or **macOS Terminal**. The line in step 4 makes the SSH connection and runs setup; there is no separate Pi terminal or laptop package installation.
+
+On Windows, **"ssh is not recognized"** means you need to add **OpenSSH Client** under **Settings → Optional features**.
+
+After re-imaging this card, run `ssh-keygen -R cool-eva.local` on your computer before reconnecting; use the IP instead if that is how you connect. This removes the old card's saved host key.
+
+If `cool-eva.local` does not resolve, find the Pi's address in the router/hotspot's connected-device list and replace `pi@cool-eva.local` with `pi@<pi-ip>` in the line. Replace `pi` too if Imager used another username. Accept the host key for this new Pi and enter the Imager password when prompted. If the Pi never joins, check the 2.4 GHz network, credentials and hotspot discoverability before continuing.
+
+## 3. Recording key — on your computer
+
+Open [the recording key page](https://cool-eva-keys.cool-eva.workers.dev). Generate keys, download `ride-log-key.private.pem`, make a recoverable backup away from the Pi, acknowledge that backup and download `ride-log-key.public.pem`. Existing owners can keep their current pair.
+
+Open the **public** file in a text editor and copy the complete `BEGIN PUBLIC KEY` through `END PUBLIC KEY` block for setup. Never paste the private file. No Node installation, project ZIP or key-generation command is needed on the computer. [Key-page details and phone-only handoff](hosted-pages.md#make-recording-keys).
+
+You may leave the public-key prompt blank and configure it later in Settings → Ride recording. The live dashboard works without it, but **no rides are saved**. Losing the private key makes old recordings unreadable; making another pair does not recover them.
+
+## 4. Install and start — on your computer
+
+Paste the same single line into PowerShell or Terminal:
 
 ```sh
-ssh pi@cool-eva.local
+ssh -tt pi@cool-eva.local "sudo install -d -m 700 /var/cache/cool-eva-install && sudo curl -fsSL --proto '=https' --proto-redir '=https' https://github.com/danieltroger/cool-eva/releases/latest/download/install.sh -o /var/cache/cool-eva-install/install.sh && sudo sh /var/cache/cool-eva-install/install.sh"
 ```
 
-Accept the host key for your new Pi and enter the password you chose. You are now typing commands on the Pi. If the name does not resolve, find the Pi's IP address in the hotspot/router's connected-device list and use `ssh pi@<pi-ip>` instead. If it never joins, check the hotspot's 2.4 GHz compatibility and discoverability before continuing.
+Only type **BENCH** with stable mains power and the bike parked. Enter both network names/passwords. Passwords and the public-key paste are not shown on screen: type or paste once and press Enter. Paste only the public key and confirm its backup. Enable optional probes/fan only when already wired. Otherwise press Enter for off.
 
-## 3. Install the software — on the Pi
+Setup repairs/catches up OS packages, checks swap, downloads and verifies its prebuilt bundle, installs/starts/enables the service, and checks it for a continuous healthy minute. It saves both networks and the hotspot name without disconnecting the current setup link. It does not clone Git, rebuild native modules or ask you to edit a unit, set up swap, or run a separate start/check command. [Every absorbed manual step](bundle-installation.md#what-the-installer-absorbs).
 
-### Prepare Node and swap
+On a bundle install, to change saved network credentials, rerun the line and enter the new network name and password, or press Enter at a network-name prompt to keep its saved profile.
 
-```sh
-sudo apt update
-sudo apt install -y build-essential python3 git curl avahi-daemon
-curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
-sudo apt install -y nodejs
-node --version
-```
+**Do not unplug during OS catch-up.** That job keeps running if SSH closes; keep power on and paste the same line again to resume. After an ordinary download/package error, fix the network/power problem and rerun the line. If migration says **stop and ask for help**, do that instead; do not repeatedly retry, start an old writer or erase the card.
 
-`python3` is required by [node-gyp](https://github.com/nodejs/node-gyp/blob/v13.0.0/README.md#on-unix) to build native Node modules. The last command should report **v24.x**. Before the next commands, follow the [Bookworm/Trixie swap instructions](pi-install-prerequisites.md#manual-swap-setup). Native modules can run out of memory on the Zero 2 W without additional swap. Allow several minutes for installation.
+## 5. Results and help
 
-### Install Cool Eva
+A successful run prints **Dashboard ready** with the hostname/IP, the bundle version, service result, and either an encrypted-recording fingerprint or **NOT SAVING RIDES**. No CAN adapter is a concrete USB/data-cable check; a connected but sleeping motorcycle may show waiting/missing readings. Optional coolant/cell data can be absent on a stock bike. Setup can finish without a motorcycle attached; actual CAN, BLE and optional hardware still need checking while parked.
 
-```sh
-git clone https://github.com/danieltroger/cool-eva.git /home/pi/cool-eva
-cd /home/pi/cool-eva
-rm package-lock.json
-npm install
-git checkout -- package-lock.json
-ls node_modules/socketcan/build/Release/can.node
-```
+Open `http://cool-eva.local` or the printed IP on the same network. With the bike awake and parked, check live readings. Add/change settings through the [dashboard configuration guide](configuration.md). [Bluetooth access](connecting-over-bluetooth.md) needs its own configured key; viewing over Wi-Fi needs no internet after installation. Setup/Update downloads do need internet.
 
-Removing the lockfile is for this first Linux installation; [why it is needed](deploy.md#running-it). `git checkout -- package-lock.json` restores the tracked file while leaving the freshly built `node_modules` in place, so Menu → Update can pull later lockfile changes. The final command must find `can.node`. See [build troubleshooting](pi-install-prerequisites.md) if it fails. Do not use `sudo` for the clone or `npm install`.
+Raw CAN capture is off for riders because it is unencrypted. Back up downloaded ride logs and the private key separately. Re-imaging erases settings/history on that SD card; bundle rollback only restores software and cannot repair boot firmware, OS drift or card damage. [Help and private diagnostic details](support.md).
 
-## 4. Enable saved ride history — on your computer
+## Existing checkout or Daniel's bike
 
-You can generate the same PEM pair at [the recording key page](https://cool-eva-keys.cool-eva.workers.dev). See [recording key setup](hosted-pages.md#make-recording-keys) for backup and the phone-only handoff; phone acceptance remains outstanding. The manual laptop route below remains available.
+Keep your existing checkout and its Update button until the migration route is announced. **Never re-image to migrate.** The service owns the one-time settings/data migration and journal; setup verifies it, never moves the data itself, and retains the checkout. Daniel's first migration is a separate [GO-at-the-bike acceptance](bundle-installation.md#daniels-first-real-migration--go-at-the-bike), with off-card backups and a named branch prerelease. No lane may deploy or contact his Pi without that GO.
 
-Keep your Pi session open. Install **Node 24** from [nodejs.org](https://nodejs.org/en/download) on the computer if needed.
-
-On your computer, open the [GitHub repository](https://github.com/danieltroger/cool-eva), choose **Code → Download ZIP**, and extract it (on Windows, use **Extract All**). Find the extracted project folder containing `README.md` and `scripts/`. Open a **second computer terminal** and change to that folder, replacing the example path with its actual location:
-
-```sh
-cd "path/to/extracted/cool-eva-main"
-```
-
-If Git is already installed, you can instead run `git clone https://github.com/danieltroger/cool-eva.git` followed by `cd cool-eva`. An existing checkout also works. From the project folder, run:
-
-```sh
-node --experimental-strip-types scripts/generate-log-key.ts
-```
-
-**Back up `ride-log-key.private.pem` in a password manager before continuing.** It is the only way to read your saved rides; losing it makes them permanently unreadable. Keep it off the Pi. After starting the service below, open Settings → Ride recording on the dashboard and choose the public-key file. Save, explicitly Restart, then verify its active fingerprint and recording state.
-
-Without that public key, the live dashboard still works but **no ride history is saved**. The [ride-log guide](ride-log.md) explains downloads and encryption's limits.
-
-## 5. Before the first service start
-
-Selecting a motorcycle in Settings → Connections and restarting enrolls the Pi with its Bluetooth hub. The hub remembers **one authorized device**, so this can replace the pairing you already use. To pair a previous device again, clear the stored device from the bike's own dashboard first.
-
-<!-- for-now: #317 -->
-
-Fresh settings leave the motorcycle unselected. Open Settings → Connections → Motorcycle connection to select your own bike before enrolment. To disconnect a migrated discover-once install, Forget the saved motorcycle and explicitly restart.
-
-Manual bike changes require deliberate dashboard actions. Automatic DC charge management can act without asking each time; read [what can change the bike](bike-changes.md) before starting. Stock bikes need no coolant probes, fan or SPI enablement.
-
-## 6. Start and check — on the Pi
-
-Back in your **Pi terminal**:
-
-```sh
-cd /home/pi/cool-eva
-printf '{}\n' | sudo "$(command -v node)" --experimental-strip-types scripts/configure-settings.ts
-sudo "$(command -v node)" --experimental-strip-types scripts/setup-service.ts
-sudo systemctl status cool-eva
-sudo journalctl -u cool-eva -f
-```
-
-The installer starts the service and enables it for future boots. Press **q** to leave the status viewer; press **Ctrl+C** to stop following logs. Neither stops the service.
-
-With the **motorcycle awake and parked**, check for a started CAN channel and live readings. For saved history, look for **`ride-log: encrypting to …`**. A **`NO PUBLIC KEY`** message means the key-copy step did not land; fix it and restart with `sudo systemctl restart cool-eva`.
-
-A missing optional `candump`/`can-utils` warning concerns raw developer captures; it does not prevent the phone dashboard or encrypted ride logging. Do not enable SPI unless you have wired the optional probes.
+For an intentional developer checkout, the full [checkout/build recipes](checkout-install.md) remain available. Bundle owners use the dashboard **Update** button; [update/rollback behavior](bundle-updater.md) covers refusals and recovery.

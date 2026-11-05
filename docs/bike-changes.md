@@ -1,6 +1,6 @@
 # What can change the bike
 
-Reading telemetry includes transmitting diagnostic **read requests**; this is not a completely silent tap. Bluetooth enrollment changes the hub's pairing as explained [before first start](manual-install.md#5-before-the-first-service-start).
+Reading telemetry includes transmitting diagnostic **read requests**; this is not a completely silent tap. Bluetooth enrollment changes the hub's pairing as explained [before first start](manual-install.md#before-installing).
 
 Manual charging and service actions use a two-tap arm and vehicle-state checks. They can change charge limits, stop charging, write calibration parameters, set a service point, sync the bike's clock, clear trouble codes or **Reset the VCU** (restart both processors). Parameter writes also require a matching parameter table. Some actions are irreversible; the gates do not establish that a calibration value is suitable for your motorcycle.
 
@@ -16,9 +16,7 @@ For now, use the Charge tab's **"Automatic charge current"** tile (visible durin
 
 The optional fan can start by itself once enabled. Keep hands clear while it has power; see the [cooling hardware guide](cooling-hardware.md).
 
-<!-- for-now: #317 -->
-
-For now, a fitted fan is enabled with `FAN_ENABLED=1`, after the hardware and boot configuration in that guide are complete.
+A fitted fan is enabled through setup or the fan setting only after the hardware and boot configuration in that guide are complete.
 
 ## Bluetooth pairing before startup
 

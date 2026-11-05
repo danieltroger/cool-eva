@@ -148,7 +148,7 @@ Worth recording the other direction too, because it is not written down anywhere
 
 ### Why the app configures `can0` at all, rather than systemd-networkd
 
-The obvious deeper fix is to stop the service owning the interface: a `systemd-networkd` `[CAN]` stanza (`BitRate=`, `RestartSec=`, `ListenOnly=`) applied once when the device appears would mean no service start ever reconfigures anything, and this whole read-compare-skip mechanism would be unnecessary. `INSTALL.md` §1 says the app brings up `can0` itself so that no `/etc/network` or networkd configuration is needed, which reads like a convenience choice.
+The obvious deeper fix is to stop the service owning the interface: a `systemd-networkd` `[CAN]` stanza (`BitRate=`, `RestartSec=`, `ListenOnly=`) applied once when the device appears would mean no service start ever reconfigures anything, and this whole read-compare-skip mechanism would be unnecessary. The [checkout guide §1](checkout-install.md#1-base-os-setup) says the app brings up `can0` itself so that no `/etc/network` or networkd configuration is needed, which reads like a convenience choice.
 
 **It is not taken, and the reason is that `bringUpCan` is also the runtime mode flip.** Nine scripts call it across ten call sites, two of them asking for listen-only, to move the bus between modes for the duration of a run; networkd configures a link at appearance and has no answer for that. Owning the interface in the app is what makes those scripts possible, so the cost is this decision function. Recorded here so the next person to ask does not have to re-derive it.
 

@@ -325,7 +325,7 @@ export function deployHint(streams: string, deploy: DeployContext): string | nul
     return (
       `Files under ${deploy.directory}/.git belong to another user — something ran ` +
       `\`sudo git pull\` here. The pull cannot write refs, so it silently does not happen. ` +
-      `Repair: sudo chown -R ${deploy.ownerUid} ${deploy.directory}. See INSTALL.md §3.`
+      `Repair: sudo chown -R ${deploy.ownerUid} ${deploy.directory}. See docs/checkout-install.md §3.`
     );
   }
   if (/[Uu]nable to create '[^']*\.lock': File exists/.test(streams)) {
@@ -339,7 +339,7 @@ export function deployHint(streams: string, deploy: DeployContext): string | nul
     return (
       "GitHub refused the checkout owner's ssh key. Add their ~/.ssh/id_*.pub as a deploy " +
       "key on the fork, or use an https remote — a public fork needs no key at all. " +
-      "See INSTALL.md §3."
+      "See docs/checkout-install.md §3."
     );
   }
   if (/Host key verification failed/.test(streams)) {
@@ -362,7 +362,7 @@ export function deployHint(streams: string, deploy: DeployContext): string | nul
     return (
       "The https remote wants a login, so this fork is private. Give the Pi an ssh remote " +
       "and a deploy key on the owner's account instead — there is no terminal here to type " +
-      "a password into. See INSTALL.md §3."
+      "a password into. See docs/checkout-install.md §3."
     );
   }
   if (/^sudo:/m.test(streams)) {

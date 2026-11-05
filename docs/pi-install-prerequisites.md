@@ -1,6 +1,8 @@
 # Two things a fresh Pi needs before `npm install` works
 
-The native modules (`better-sqlite3`, `socketcan`, `spi-device`) are compiled on the Pi at install time, and on a small Pi that build has two ways to not happen: it runs out of memory, or npm declines to run it at all. This file contains the [manual swap recipe](#manual-swap-setup) and the research behind the two steps `INSTALL.md` §2.5 and §4 tell you to take — the version boundaries, the traps, and what was measured versus what was reported.
+For developer checkout installs, the native modules (`better-sqlite3`, `socketcan`, `spi-device`) are compiled on the Pi, and on a small Pi that build has two ways to not happen: it runs out of memory, or npm declines to run it at all. This file contains the [manual swap recipe](#manual-swap-setup) and the research behind the two steps in [checkout installation §2.5 and §4](checkout-install.md#25-swap--do-this-before-the-install-not-after-it) — the version boundaries, the traps, and what was measured versus what was reported.
+
+Bundle setup ships prebuilt native modules and manages swap itself; new riders follow [setup](manual-install.md). The recipes and measurements below apply to checkout builds.
 
 ## Where the report came from, and what is actually established
 
@@ -37,7 +39,7 @@ The boundary is npm **12.0.0**, not 11.16.0, and it is one inverted comparison i
 
 `strict-allow-scripts` is `default: false` in both (`@npmcli/config/lib/definitions/definitions.js`), so npm 11.x never hard-fails on this by default — but `--strict-allow-scripts` turns its warning into an error, which is a second way to arrive at a broken install.
 
-⚠️ **No Node release bundles npm 12** — checked 2026-09-15, and the whole CI argument below rests on it, so re-check it rather than trusting this line. Every v24, v25 and v26 in `nodejs.org/dist/index.json` carried an 11.x that day; the highest bundled anywhere was 11.19.1, and Node 24.21.0 shipped npm 11.19.0. So a Pi that follows `INSTALL.md` §2's NodeSource step gets an npm that only warns. Reaching npm 12 takes a deliberate `npm install -g npm`.
+⚠️ **No Node release bundles npm 12** — checked 2026-09-15, and the whole CI argument below rests on it, so re-check it rather than trusting this line. Every v24, v25 and v26 in `nodejs.org/dist/index.json` carried an 11.x that day; the highest bundled anywhere was 11.19.1, and Node 24.21.0 shipped npm 11.19.0. So a Pi that follows [the checkout guide’s NodeSource step](checkout-install.md#2-nodejs-24) gets an npm that only warns. Reaching npm 12 takes a deliberate `npm install -g npm`.
 
 ### Did your native modules actually build? Read the phrase.
 
@@ -212,7 +214,7 @@ sudo nmcli connection modify "<your hotspot SSID>" connection.autoconnect yes
 
 On iOS you have to **open Settings → Personal Hotspot and leave it on screen for ~20 s** at the start of a ride, or the phone won't accept the join. That is an iOS behaviour, not something this app can fix. The Pi Zero 2 W radio is **2.4 GHz only**, so a 5 GHz-only hotspot is invisible to it — on an iPhone 12 or later, Apple's own fix is Settings → Personal Hotspot → **Maximize Compatibility** — which Apple notes costs some hotspot speed and Wi-Fi security.
 
-To add a **second** network later (home Wi-Fi, an Airbnb) while you are sshed in over the first, use `nmcli connection add` rather than `nmcli device wifi connect` — the latter activates what it creates and drops the session you are typing into. Exact command: [INSTALL.md §8](../INSTALL.md).
+To add a **second** network later (home Wi-Fi, an Airbnb) while you are sshed in over the first, use `nmcli connection add` rather than `nmcli device wifi connect` — the latter activates what it creates and drops the session you are typing into. Exact command: [checkout networking §8](checkout-install.md#8-reach-the-dashboard).
 
 **3. Install Node 24.** Raspberry Pi OS's `apt` Node is far too old — the app is TypeScript run directly, which needs `--experimental-strip-types` (Node 22.6.0 at the very oldest; 24 is what this is tested on).
 
@@ -224,7 +226,7 @@ node --version   # must be v22.6 or newer
 
 **4. Clone and install.**
 
-⚠️ **Give the Pi more swap first.** `npm install` compiles three native modules (`better-sqlite3`, `socketcan`, `spi-device`), which takes **several minutes** on a Pi Zero 2 W and wants more than the stock 512 MB — without it the build is OOM-killed and it looks like a crash rather than a memory problem. About 3 GB. How, for both Bookworm and Trixie: [INSTALL.md §2.5](../INSTALL.md).
+⚠️ **Give the Pi more swap first.** `npm install` compiles three native modules (`better-sqlite3`, `socketcan`, `spi-device`), which takes **several minutes** on a Pi Zero 2 W and wants more than the stock 512 MB — without it the build is OOM-killed and it looks like a crash rather than a memory problem. About 3 GB. How, for both Bookworm and Trixie: [checkout swap §2.5](checkout-install.md#25-swap--do-this-before-the-install-not-after-it).
 
 ```bash
 git clone https://github.com/<your-fork>/cool-eva.git ~/cool-eva

@@ -482,7 +482,7 @@ The overlay puts GPIO18 on the SoC's PWM0 channel. The two `gpio=` lines drive t
 
 Reboot after editing; an overlay is not applied at runtime.
 
-**`dtparam=audio` is not part of this on a Zero 2 W**, and there is deliberately no `dtparam=audio=off` above. The overlay README warns that the onboard analogue audio output uses both PWM channels — true on a Pi 3 or 4, whose device tree puts `audio_pins` at `<40 41>` in Alt0, i.e. PWM0/PWM1. `bcm2710-rpi-zero-2-w.dts` declares `audio_pins { brcm,pins = <>; }` — empty — so there is nothing to conflict with and `dtparam=audio` there only toggles HDMI audio. `INSTALL.md` invites any Pi with SPI and USB, so: **if you are on a Pi with analogue audio out, the conflict is real and `dtparam=audio=off` is what resolves it.**
+**`dtparam=audio` is not part of this on a Zero 2 W**, and there is deliberately no `dtparam=audio=off` above. The overlay README warns that the onboard analogue audio output uses both PWM channels — true on a Pi 3 or 4, whose device tree puts `audio_pins` at `<40 41>` in Alt0, i.e. PWM0/PWM1. `bcm2710-rpi-zero-2-w.dts` declares `audio_pins { brcm,pins = <>; }` — empty — so there is nothing to conflict with and `dtparam=audio` there only toggles HDMI audio. The [checkout guide](checkout-install.md#0-hardware) also covers other Pis with SPI and USB, so: **if you are on a Pi with analogue audio out, the conflict is real and `dtparam=audio=off` is what resolves it.**
 
 ### Which `pwmchipN`?
 
@@ -553,7 +553,7 @@ Nothing here ever unexports the channel. Re-exporting an already-exported channe
 
 ### The udev rule
 
-`/sys/class/pwm` is root-only by default. The service currently runs as root (see `INSTALL.md` §7), so it works without this — but if you ever run it unprivileged, or want to poke the files as `pi`, install:
+`/sys/class/pwm` is root-only by default. The service currently runs as root (see [checkout service setup](checkout-install.md#7-install-and-start-the-service)), so it works without this — but if you ever run it unprivileged, or want to poke the files as `pi`, install:
 
 ```sh
 sudo tee /etc/udev/rules.d/99-pwm.rules <<'EOF'
