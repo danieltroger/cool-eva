@@ -1,6 +1,6 @@
 # Cool Eva — Raspberry Pi setup
 
-For Windows PowerShell and macOS Terminal, follow the [complete setup guide](docs/manual-install.md) or [short README setup](README.md#setup). The installer handles swap, package setup, the bundled Node/native modules, service installation/start and health checks; no Git/npm/compiler or laptop Node is needed.
+For a **fresh install** using Windows PowerShell or macOS Terminal, follow the [complete setup guide](docs/manual-install.md) or [short README setup](README.md#setup). The installer handles swap, package setup, the bundled Node/native modules, service installation/start and health checks; no Git/npm/compiler or laptop Node is needed.
 
 ## 0. Hardware
 

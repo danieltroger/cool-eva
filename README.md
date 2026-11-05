@@ -39,6 +39,8 @@ The bike's other CAN connector leaves OBD2 free, but needs a sourced plug and so
 
 ## Setup
 
+These steps are for **fresh installs**. Existing checkout owners: keep your checkout and its Update button until the migration route is announced. **Never re-image to migrate.**
+
 ### 1. Flash the card — on your computer
 
 Use [Raspberry Pi Imager](https://www.raspberrypi.com/software/) with **Raspberry Pi Zero 2 W → current Raspberry Pi OS Lite (64-bit)**. Set hostname **`cool-eva`**, username **`pi`**, a password, **SSH enabled**, and an internet-connected Wi-Fi network. Your computer and Pi must join the same network for setup. The Zero 2 W needs **2.4 GHz**; on iPhone, enable **Personal Hotspot → Maximize Compatibility** if available.
@@ -63,7 +65,7 @@ Accept the new Pi's host key and enter the Imager password when asked. Substitut
 
 When setup prints **“Dashboard ready”**, open that address. It also reports the running bundle, encrypted-recording fingerprint or **“NOT SAVING RIDES”**, and whether CAN is present/waiting. Fresh settings leave the motorcycle hub unselected and optional hardware off unless explicitly enabled. Raw CAN capture is off. With the **bike awake and parked**, verify live readings; missing optional readings on a stock bike are normal. [Results and troubleshooting](docs/manual-install.md#5-results-and-help).
 
-Existing checkout owners: keep your checkout and its Update button until the migration route is announced. **Never re-image to migrate.** [Daniel's first migration and backups](docs/bundle-installation.md#daniels-first-real-migration--go-at-the-bike) are separately gated on his explicit GO.
+[Daniel's first migration and backups](docs/bundle-installation.md#daniels-first-real-migration--go-at-the-bike) are separately gated on his explicit GO.
 
 ## Open the dashboard
 
