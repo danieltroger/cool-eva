@@ -73,6 +73,8 @@ export async function createUpdateFixture(parent: string): Promise<UpdateFixture
     "cut",
     "sleep",
     "sync",
+    "nice",
+    "ionice",
     ...(process.platform === "linux" ? [] : ["realpath", "readlink", "sha256sum", "flock"]),
   ]) {
     await writeFile(join(fixture.commandDirectory, command), commandWrapper(command), { mode: 0o755 });
@@ -103,6 +105,8 @@ export function commandWrapper(command: string): string {
   if (command === "dpkg-query") return trace + 'cat "$UPDATE_FIXTURE/os-packages.txt"\n';
   if (command === "mv" && process.platform === "linux") return trace + 'exec /usr/bin/mv "$@"\n';
   if (["sleep", "sync", "flock"].includes(command)) return trace + "exit 0\n";
+  if (command === "nice") return trace + 'shift 2\nexec "$@"\n';
+  if (command === "ionice") return trace + "exit 0\n";
   if (command === "stat")
     return (
       trace +

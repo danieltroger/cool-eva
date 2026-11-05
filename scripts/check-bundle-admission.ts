@@ -174,7 +174,7 @@ export async function checkBundleAdmission(): Promise<void> {
     );
     assert.match(
       await readFile(join(REPOSITORY, "src/index.ts"), "utf8"),
-      /readVersion: async \(\) => \(await readRunningVersion\(UPDATE_DIR\)\)\.label/
+      /readVersion: async \(\) => \(await readRunningVersion\(UPDATE_DIR, settingsRuntime\.paths\.updaterDirectory\)\)\.label/
     );
     console.log(
       "bundle admission: shared revision/bus reservation, duplicate refusal, motion/busy gates, Bluetooth key handover, release on queue failure and SIGTERM retention passed"

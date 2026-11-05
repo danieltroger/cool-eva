@@ -43,7 +43,7 @@ import { handleVcuProbeEndpoint } from "./http/vcu-probe.ts";
 import { handleVcuWriteEndpoint } from "./http/vcu-write.ts";
 import { createVcuReadRunner } from "./vcu/read-runner.ts";
 import { createVcuWriteRunner } from "./vcu/write-runner.ts";
-import { readRunningVersion } from "./version.ts";
+import { readRunningVersion, beginRunningVersionChecks } from "./version.ts";
 import { startChargeAckWatch } from "./charge/ack-watch.ts";
 import { loadLatestSweep, loadLatestTableType } from "./vcu/snapshot-store.ts";
 import {
@@ -127,10 +127,14 @@ const canObservationStarted = monotonicNow();
 // --- Which commit this is, said out loud before anything else ---
 // A feature that silently does nothing and a feature deployed five days ago look identical
 // from the garage. On 2026-09-07 they were the same thing. See src/version.ts.
-const runningVersion = await readRunningVersion(UPDATE_DIR);
+const runningVersion = await readRunningVersion(UPDATE_DIR, settingsRuntime.paths.updaterDirectory);
 console.log(
   `cool-eva: running ${runningVersion.label}` +
-    (runningVersion.trustworthy ? "" : " — ⚠️ COULD NOT VERIFY THIS AGAINST THE CHECKOUT")
+    (runningVersion.trustworthy
+      ? ""
+      : bundleMetadata
+        ? " — release verification pending"
+        : " — ⚠️ COULD NOT VERIFY THIS AGAINST THE CHECKOUT")
 );
 
 // --- Signal registry ---
@@ -474,7 +478,7 @@ const settingsHttp = {
   restart: settingsRestart,
   codeDirectory: managedCodeRoot(ROOT, bundleMetadata),
   version: runningVersion.label,
-  readVersion: async () => (await readRunningVersion(UPDATE_DIR)).label,
+  readVersion: async () => (await readRunningVersion(UPDATE_DIR, settingsRuntime.paths.updaterDirectory)).label,
   scanHubs: () => scanHubCandidates(() => settingsRuntime.readiness.hub === "Connecting"),
   drainBluetooth: async () => {
     await bleServer?.drain();
@@ -728,6 +732,7 @@ const ws = setupWs(server, undefined, systemStatus);
 // bind it directly rather than relying on dual-stack, which is what left it tcp6-only.
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`HTTP + WebSocket server on http://0.0.0.0:${PORT}`);
+  beginRunningVersionChecks();
 });
 
 // --- The same dashboard over BLE (docs/ble-server.md) ---

@@ -11,7 +11,7 @@ export async function readBundleVersion(directory: string, metadata: RuntimeRele
   let dirty = false;
   let trustworthy = true;
   try {
-    await execFileAsync("sha256sum", ["--check", "--strict", "--quiet", "files.sha256"], {
+    await diagnosticCommand("sha256sum", ["--check", "--strict", "--quiet", "files.sha256"], {
       cwd: directory,
       timeout: 30_000,
     });
@@ -66,7 +66,7 @@ async function loadBundleNotices(directory: string, updaterDirectory: string): P
   try {
     const tested = promotedOsPackages(state, basename(await realpath(directory)));
     if (tested !== null) {
-      const { stdout } = await execFileAsync("dpkg-query", ["-W", "-f=${binary:Package}\t${Version}\n"], {
+      const { stdout } = await diagnosticCommand("dpkg-query", ["-W", "-f=${binary:Package}\t${Version}\n"], {
         timeout: 10_000,
       });
       if (osPackagesChanged(tested, stdout)) {
@@ -118,3 +118,25 @@ export function rollbackNotice(state: unknown): string | null {
 }
 
 const execFileAsync = promisify(execFile);
+
+function diagnosticCommand(
+  executable: string,
+  arguments_: string[],
+  options: { cwd?: string; timeout: number }
+): Promise<{ stdout: string; stderr: string }> {
+  // A priority-setup failure must not impersonate sha256sum's exit 1 (edited).
+  return execFileAsync(
+    "nice",
+    [
+      "-n",
+      "19",
+      "sh",
+      "-c",
+      'ionice -c 3 -p "$$" || exit 125; exec "$@"',
+      "cool-eva-version-check",
+      executable,
+      ...arguments_,
+    ],
+    options
+  );
+}

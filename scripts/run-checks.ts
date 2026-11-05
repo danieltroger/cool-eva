@@ -110,6 +110,11 @@ const CHECKS: SelfCheck[] = [
       "release metadata, service-owned migration health, CSRF guards, fixed updater unit, OS drift text and dashboard polling through a release restart",
   },
   {
+    script: "scripts/check-version-startup.ts",
+    covers:
+      "HTTP readiness while inventory and OS diagnostics wait, unverified/edited/clean release labels, low-priority diagnostics, and one background verification after listening",
+  },
+  {
     script: "scripts/check-can-adapter-rebind.ts",
     covers:
       "recovering a USB2CAN the kernel gave up on at boot (usb_8dev_probe never retries a firmware-version " +
