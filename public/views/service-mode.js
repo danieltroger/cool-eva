@@ -11,6 +11,7 @@ import { ageInWords, duration } from "../lib/format.js";
 import { MUTED } from "../lib/colors.js";
 import { VcuWrite, refreshVcuWrite } from "./vcu-write.js";
 import { download, request } from "../lib/transport.js";
+import { refreshPsuHold } from "../lib/psu-hold.js";
 
 const { a, button, div, h3 } = van.tags;
 
@@ -391,6 +392,7 @@ function performSweep() {
 export function refreshServiceMode(isOpen) {
   sheetIsOpen = isOpen;
   armed.val = "";
+  void refreshPsuHold();
   refreshLifetimeRead();
   refreshFreezeFrameRead();
   void sendVcuRead("GET");
