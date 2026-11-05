@@ -56,6 +56,11 @@ interface SelfCheck {
 /** In script-name order; they are independent, so nothing depends on which runs first. */
 const CHECKS: SelfCheck[] = [
   {
+    script: "scripts/check-fault-summary.ts",
+    covers:
+      "complete active counts despite unknown or capped individual keys, offline/silent unknown, confirmed clear and rising-edge history",
+  },
+  {
     script: "scripts/check-bundle-install.ts",
     covers:
       "cross-shell SSH command, hidden public-only input, charging-gated OS upgrades, network keyfile escaping and release publication guards; pinned-image installation runs separately under QEMU",

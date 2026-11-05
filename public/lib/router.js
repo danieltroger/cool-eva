@@ -39,6 +39,7 @@ export const ROUTES = /** @type {const} */ ([
   { name: "charge-controls", tab: "charge", label: "Controls", hash: "#charge/controls" },
   { name: "all", tab: "all", label: "All", hash: "#all" },
   { name: "faults", tab: "faults", label: "Faults", hash: "#faults" },
+  { name: "fault-report", tab: "faults", label: "Fault report", hash: "#faults/report" },
 ]);
 /** @typedef {(typeof ROUTES)[number]["name"]} ViewName */
 
@@ -113,7 +114,7 @@ export function showView(name) {
   armed.val = "";
   try {
     history.pushState(
-      name === "cells" ? { coolEvaSubview: true, backName: currentViewLabel() } : null,
+      name === "cells" || name === "fault-report" ? { coolEvaSubview: true, backName: currentViewLabel() } : null,
       "",
       hashForView(name)
     );

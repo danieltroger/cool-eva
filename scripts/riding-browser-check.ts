@@ -11,6 +11,12 @@ import { checkFaultRecovery } from "./riding-fault-browser.ts";
 import { checkPowerWords } from "./riding-power-browser.ts";
 import { assertRideContent, checkRideBrowser, checkRideZero } from "./riding-ride-browser.ts";
 import { openPreview, FRAME } from "./riding-preview-page.ts";
+import {
+  assertAllContent,
+  assertFaultsContent,
+  checkFaultsAllCases,
+  checkFaultReportNavigation,
+} from "./riding-faults-all-browser.ts";
 import assert from "node:assert/strict";
 import { ROUTES } from "../public/lib/router.js";
 import { evaluateOnPage, gotoPage, waitOnPage, resizePage, setPageInsets, type HeadlessPage } from "./headless-page.ts";
@@ -23,8 +29,9 @@ const COVERAGE = {
   charge: "fixed",
   "charge-pack": "scrolling",
   "charge-controls": "scrolling",
-  all: "scrolling",
-  faults: "legacy",
+  all: "fixed-landing",
+  faults: "fixed",
+  "fault-report": "scrolling",
 } as const;
 const COOLING_SIGNALS = [
   "coolant_in",
@@ -46,11 +53,11 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
     "Every router view needs an acceptance contract."
   );
   const fixedViews = Object.entries(COVERAGE)
-    .filter(([, policy]) => policy === "fixed")
+    .filter(([, policy]) => policy === "fixed" || policy === "fixed-landing")
     .map(([name]) => name);
   assert.deepEqual(
     fixedViews,
-    ["ride", "cooling", "hypermile", "charge"],
+    ["ride", "cooling", "hypermile", "charge", "all", "faults"],
     "Fixed-view coverage must match the converted screens."
   );
   for (const geometry of [
@@ -82,10 +89,14 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
             await assertChargeContent(page);
           } else if (route.name === "hypermile") {
             await assertRangeContent(page);
+          } else if (route.name === "all") {
+            await assertAllContent(page);
+          } else if (route.name === "faults") {
+            await assertFaultsContent(page);
           } else {
             await assertCoolingContent(page);
           }
-          await assertFixedLayout(page);
+          await assertFixedLayout(page, route.name === "all");
         } else if (route.name === "cells") {
           await assertCellsContent(page);
         }
@@ -102,6 +113,9 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
       await checkChargeCases(page, previewFile, assertFixedLayout, theme);
       await checkChargeReviewCases(page, previewFile, theme);
       await checkNoticeStates(page, previewFile, theme, "#charge");
+      await checkNoticeStates(page, previewFile, theme, "#all");
+      await checkNoticeStates(page, previewFile, theme, "#faults");
+      await checkFaultsAllCases(page, previewFile, theme);
       await checkRideBrowser(page, previewFile, assertFixedLayout, theme);
       await checkPowerWords(page, previewFile, assertFixedLayout, theme);
     }
@@ -117,6 +131,7 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
   await checkHistoryAndGestures(page, previewFile);
   await checkCellsNavigation(page, previewFile);
   await checkChargeNavigation(page, previewFile);
+  await checkFaultReportNavigation(page, previewFile);
   await checkChargeActions(page, previewFile);
   await checkCoolingFailures(page, previewFile);
   await checkCoolingFan(page, previewFile, assertFixedLayout);
@@ -124,7 +139,7 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
     await checkFaultRecovery(page, previewFile, assertFixedLayout, theme);
   }
   console.log(
-    `  ✓ riding: real PWA/native insets, ${layoutClearance()}px minimum Ride/Cooling/Range/Charge clearance, complete content, notices/Connect, history/reload and both gestures`
+    `  ✓ riding: real PWA/native insets, ${layoutClearance()}px minimum riding-landing clearance, complete content, notices/Connect, history/reload and both gestures`
   );
 }
 
@@ -277,7 +292,7 @@ async function checkNoticeStates(page: HeadlessPage, file: string, theme: string
       assert.equal(notice.overflow, false);
       assert.ok(notice.name.includes("Open Settings"));
       assert.equal(notice.connect, link === "ble-connect");
-      await assertFixedLayout(page);
+      await assertFixedLayout(page, hash === "#all");
       if (link === "ble-connect" && state === "reload") {
         await evaluateOnPage(page, "document.querySelector('.brand-slot').style.maxWidth='44px'");
         await evaluateOnPage(page, FRAME);
@@ -313,7 +328,7 @@ async function checkNoticeStates(page: HeadlessPage, file: string, theme: string
     );
     assert.equal(
       await evaluateOnPage(page, "document.querySelector('.header .menu').textContent"),
-      hash === "#ride" ? "‹ Ride" : hash === "#hypermile" ? "‹ Range" : hash === "#charge" ? "‹ Charge" : "‹ Cooling"
+      `‹ ${ROUTES.find(route => route.hash === hash)?.label}`
     );
     await evaluateOnPage(
       page,
@@ -346,7 +361,7 @@ async function checkNoticeStates(page: HeadlessPage, file: string, theme: string
       true,
       "The restored brand must fit without ellipsis."
     );
-    await assertFixedLayout(page);
+    await assertFixedLayout(page, hash === "#all");
   }
 }
 

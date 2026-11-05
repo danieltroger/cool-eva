@@ -1,8 +1,8 @@
 // @ts-check
-export const REGEN_CEILING_A = 120;
-
 import { peek, valueOf } from "./store.js";
 import { readingStatus } from "./reading-status.js";
+
+export const REGEN_CEILING_A = 120;
 
 export function rangeEnergyKey() {
   return readingStatus("bms_remaining_energy_wh") === "fault" || (valueOf("bms_remaining_energy_wh") ?? 0) > 0
