@@ -10,8 +10,8 @@ Current dashboard with synthetic sample data; coolant readings use the optional 
 
 | Ride | Charge | Faults |
 | :-: | :-: | :-: |
-| [<img src="docs/images/dashboard-ride-dark.png" width="180" alt="Ride screen with DRIVE power, the Edge limit band, battery and coolant readings">](docs/images/dashboard-ride-dark.png) | [<img src="docs/images/dashboard-charge-dark.png" width="180" alt="Charge screen with the observed current curve and a 36 A automatic request above the 35 A minimum">](docs/images/dashboard-charge-dark.png) | [<img src="docs/images/dashboard-faults-dark.png" width="180" alt="Faults summary with the whole count, expected split and two named previews">](docs/images/dashboard-faults-dark.png) |
-| Speed, power and Edge limits. | Charging, temperature curve and current request. | Counts and named trouble codes; full report one tap away. |
+| [<img src="docs/images/dashboard-ride-dark.png" width="180" alt="Ride screen showing speed, drive power, available power and coolant readings">](docs/images/dashboard-ride-dark.png) | [<img src="docs/images/dashboard-charge-dark.png" width="180" alt="Charge screen showing delivered power, estimated arrival, current request and observed temperature limits">](docs/images/dashboard-charge-dark.png) | [<img src="docs/images/dashboard-faults-dark.png" width="180" alt="Faults summary with the whole count, expected split and two named previews">](docs/images/dashboard-faults-dark.png) |
+| Speed, power and power limits. | Charging, temperature curve and current request. | Counts and named trouble codes; full report one tap away. |
 
 | Cooling | Range | Cells | All |
 | :-: | :-: | :-: | :-: |
