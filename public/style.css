@@ -2411,3 +2411,97 @@ body {
 .compact-auto-toggle .action {
   max-width: 176px;
 }
+
+/* Fault summary and All landing envelopes: docs/fault-report.md. */
+.riding-heading {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 18px;
+  font-weight: 600;
+}
+.faults-count {
+  height: 136px;
+  justify-content: space-between;
+}
+.faults-number {
+  font-size: 64px;
+  line-height: 1.05;
+}
+.fault-previews {
+  display: grid;
+  gap: 8px;
+}
+.fault-preview {
+  height: 128px;
+  padding: 12px;
+  border-left: 4px solid var(--bad);
+  justify-content: space-between;
+}
+.fault-preview-name {
+  font-size: 18px;
+  line-height: 1.35;
+  font-weight: 500;
+}
+.fault-report-action {
+  display: flex;
+  height: 44px;
+  justify-content: flex-end;
+}
+.fault-report-action .settings-button {
+  max-width: 100%;
+  white-space: nowrap;
+}
+.faults-footnote {
+  height: 50px;
+  padding: 8px 4px;
+}
+.fault-report-heading {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.all-view {
+  display: block;
+  padding: 0;
+}
+.all-landing {
+  display: grid;
+  gap: 8px;
+}
+.all-snapshot-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  height: 104px;
+}
+.all-snapshot-pair > .tile {
+  height: 104px;
+  padding: 10px 12px;
+  justify-content: space-between;
+}
+.all-landing .filter {
+  padding: 0;
+  height: 48px;
+}
+.all-landing .filter input {
+  height: 48px;
+  margin: 0;
+}
+.all-history-row {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.all-raw {
+  padding: 0 8px 8px;
+}
+.all-snapshot-pair .label {
+  text-transform: none;
+  letter-spacing: 0;
+}

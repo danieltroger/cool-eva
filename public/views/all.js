@@ -1,8 +1,9 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, faultState, groupOf, knownKeys, isStale, signalState } from "../lib/store.js";
-import { STALE_MS } from "../lib/tiles.js";
+import { chartTick, faultState, groupOf, knownKeys, signalState } from "../lib/store.js";
+import { readingIsStale } from "../lib/reading-status.js";
+import { AllLanding } from "./all-landing.js";
 import { MUTED } from "../lib/colors.js";
 // A 30 ms press is one frame of a 60 Hz display, so a signal whose edges are the event
 // cannot be watched as a raw 1/0. getsLatchedTile() picks the tile below, per KEY rather
@@ -16,13 +17,7 @@ import { STATE_KEY, SUBSTATE_KEY, hasStateVocabulary, labelFor } from "../lib/st
 
 const { div, input, span } = van.tags;
 
-// Every signal the bike is producing, grouped and searchable.
-//
-// This is the debugging view, and it is deliberately not designed: it exists so
-// that when something looks wrong on one of the other screens there is somewhere to
-// go and see the raw number. With ~230 signals now arriving — 81 cell voltages
-// among them — the old flat alphabetical grid had stopped being usable, so this one
-// groups and filters.
+// Snapshot, raw groups and lifetime/filter constraints: docs/fault-report.md.
 
 const filter = van.state("");
 
@@ -31,74 +26,68 @@ export function AllView() {
   // when somebody looks at this tab rather than on every page load.
   void loadLifetimeStats();
   return div(
-    { class: "view" },
-    LifetimeBlock(),
-    div(
-      { class: "filter" },
-      input({
-        type: "search",
-        // Named for the same DevTools issue as the two write controls; there is nothing to
-        // autofill a signal filter from, and a remembered list over it would only be in the way.
-        name: "signal-filter",
-        autocomplete: "off",
-        placeholder: "filter signals…",
-        value: filter,
-        oninput: (/** @type {Event} */ event) => {
-          const target = event.target;
-          if (target instanceof HTMLInputElement) {
-            filter.val = target.value.toLowerCase();
-          }
-        },
-      })
+    { class: "view all-view" },
+    AllLanding(
+      div(
+        { class: "filter" },
+        input({
+          type: "search",
+          // Named for the same DevTools issue as the two write controls; there is nothing to
+          // autofill a signal filter from, and a remembered list over it would only be in the way.
+          name: "signal-filter",
+          autocomplete: "off",
+          placeholder: "Filter raw signals…",
+          "aria-label": "Filter raw signals",
+          value: filter,
+          oninput: (/** @type {Event} */ event) => {
+            const target = event.target;
+            if (target instanceof HTMLInputElement) {
+              filter.val = target.value.toLowerCase();
+            }
+          },
+        })
+      )
     ),
-    () => {
-      const needle = filter.val;
-      const keys = knownKeys.val.filter(key => key.includes(needle));
-      if (keys.length === 0) {
-        return div({ class: "missing", style: `color:${MUTED}` }, "nothing matches");
-      }
-      /** @type {Map<string, string[]>} */
-      const byGroup = new Map();
-      for (const key of keys) {
-        // groupOf(), not signalState(key).val: reading the state here would
-        // subscribe this one binding to all ~230 signals, so any patch — pack_a
-        // arrives at frame rate with no deadband — would tear down and rebuild
-        // the entire grid, losing any text selection with it.
-        const group = groupOf(key);
-        const list = byGroup.get(group) ?? [];
-        list.push(key);
-        byGroup.set(group, list);
-      }
-      return div(
-        ...[...byGroup.entries()]
-          .sort((a, b) => a[0].localeCompare(b[0]))
-          .map(([group, groupKeys]) =>
-            div(
-              div({ class: "section" }, `${group} · ${groupKeys.length}`),
+    div(
+      { class: "all-raw" },
+      () => {
+        const needle = filter.val;
+        const keys = knownKeys.val.filter(key => key.includes(needle));
+        if (keys.length === 0) {
+          return div({ class: "missing", style: `color:${MUTED}` }, "nothing matches");
+        }
+        /** @type {Map<string, string[]>} */
+        const byGroup = new Map();
+        for (const key of keys) {
+          // groupOf(), not signalState(key).val: reading the state here would
+          // subscribe this one binding to all ~230 signals, so any patch — pack_a
+          // arrives at frame rate with no deadband — would tear down and rebuild
+          // the entire grid, losing any text selection with it.
+          const group = groupOf(key);
+          const list = byGroup.get(group) ?? [];
+          list.push(key);
+          byGroup.set(group, list);
+        }
+        return div(
+          ...[...byGroup.entries()]
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([group, groupKeys]) =>
               div(
-                { class: "raw-grid" },
-                ...groupKeys.map(key => (getsLatchedTile(key, group) ? ButtonTile(key) : RawTile(key)))
+                div({ class: "section" }, `${group} · ${groupKeys.length}`),
+                div(
+                  { class: "raw-grid" },
+                  ...groupKeys.map(key => (getsLatchedTile(key, group) ? ButtonTile(key) : RawTile(key)))
+                )
               )
             )
-          )
-      );
-    }
+        );
+      },
+      LifetimeBlock()
+    )
   );
 }
 
-/**
- * The bike's lifetime battery statistics, above the grid.
- *
- * ⚠️ PINNED RATHER THAN A SECTION OF THE GRID, and the reason is not layout: these are
- * not signals. They have no arrival time and no staleness, so `groupOf` and
- * `isStale(key, STALE_MS)` — which every tile below depends on — have nothing true to
- * say about them, and a "lifetime" group sorting alphabetically between `gps` and
- * `motor` would be findable only by somebody who already knew it was there.
- *
- * It still OBEYS the filter, so the one interaction this view has keeps working: type
- * anything and these rows narrow with the rest, and the block disappears when none of
- * them match. docs/dashboard-decisions.md § "The lifetime block".
- */
+// Stored statistics are separate from live signals; rationale: docs/fault-report.md.
 /** @param {boolean} [showAll] */
 export function LifetimeBlock(showAll = false) {
   return () => {
@@ -169,8 +158,8 @@ function RawTile(key) {
   const state = signalState(key);
   const fault = faultState(key);
   return div(
-    { class: () => `raw${state.val && isStale(key, STALE_MS) ? " stale" : ""}` },
-    div({ class: "raw-key" }, key),
+    { class: () => `raw${readingIsStale(key) ? " stale" : ""}` },
+    div({ class: "raw-key" }, key === "pack_kw" ? "pack_kw (raw)" : key),
     div({ class: "raw-value" }, () => {
       const reading = state.val;
       if (!reading) {
@@ -185,6 +174,7 @@ function RawTile(key) {
       // already says the only thing known about this signal.
       return rejected && state.val ? div({ class: "raw-fault" }, `rejected ${rejected.value}`) : span();
     },
+    key === "pack_kw" ? div({ class: "raw-sub" }, "− out · + in") : null,
     StateLabelLine(key)
   );
 }
@@ -247,7 +237,7 @@ function ButtonTile(key) {
   // seconds. Same tile, same classes, same layout — only the nouns change.
   const flasher = isFlasher(key);
   return div(
-    { class: () => `raw${tracker.lit.val ? " pressed" : ""}${state.val && isStale(key, STALE_MS) ? " stale" : ""}` },
+    { class: () => `raw${tracker.lit.val ? " pressed" : ""}${readingIsStale(key) ? " stale" : ""}` },
     div({ class: "raw-key" }, key),
     div({ class: "raw-value" }, () => {
       if (!state.val) {
@@ -311,6 +301,9 @@ function formatAgo(seconds) {
  * @param {number} value
  */
 function formatValue(key, value) {
+  if (key === "pack_kw") {
+    return `${value > 0 ? "+" : ""}${reading(value)}`;
+  }
   if (key === "key_fob_id") {
     // Ten digits of decimal overflow the cell, and hex is what you would compare
     // against the E-LOCK's paired-key list anyway.

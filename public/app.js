@@ -15,6 +15,7 @@ import { ChargeControlsView } from "./views/charge-controls.js";
 import { ChargeView } from "./views/charge.js";
 import { AllView } from "./views/all.js";
 import { FaultsView } from "./views/faults.js";
+import { FaultReportView } from "./views/fault-report.js";
 import { Sheet, hasTroubleCodes, installWaypointRefresh, refreshStatus } from "./views/sheet.js";
 import { Header } from "./views/header.js";
 import { CoolingView } from "./views/cooling.js";
@@ -61,6 +62,7 @@ const VIEWS = {
   "charge-controls": ChargeControlsView,
   all: AllView,
   faults: FaultsView,
+  "fault-report": FaultReportView,
 };
 
 // Routing before anything else: startRouting() sets the tab from the URL, so the first

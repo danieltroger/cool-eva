@@ -222,6 +222,13 @@ check(
   "Cells advances to Charge, outside the six-stop cycle",
   nextViewAfter("cells") === "charge" && RIDING_CYCLE.length === 6
 );
+check(
+  "Fault report is a pinned Faults subview and advances to Ride",
+  canonicalHash("#faults/report").view === "fault-report" &&
+    canonicalHash("#faults/report").tab === "faults" &&
+    canonicalHash("#faults/report").rewriteTo === null &&
+    nextViewAfter("fault-report") === "ride"
+);
 console.log("");
 if (failures > 0) {
   console.error(`FAILED — ${failures} assertion${failures === 1 ? "" : "s"}`);

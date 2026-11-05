@@ -29,9 +29,10 @@ if (ridingFixture.get("fixture") === "all-installed") {
     charge_manager_state: [0, "", "charge"],
     fast_dc_limit_max_a: [75, "A", "charge"],
     charge_soc_limit_pct: [90, "%", "charge"],
-    dtc_list_count: [0, "", "diagnostics"],
-    dtc_count: [0, "", "diagnostics"],
-    mil: [0, "", "diagnostics"],
+    dtc_list_count: [3, "", "diagnostics"],
+    dtc_count: [7, "", "diagnostics"],
+    dtc_unrecognised_count: [0, "", "diagnostics"],
+    mil_on: [1, "", "diagnostics"],
     gps_speed_kmh: [87, "km/h", "gps"],
     speed_can_kmh: [89, "km/h", "drive"],
     pack_a: [-142, "A", "battery"],
@@ -61,6 +62,32 @@ if (ridingFixture.get("fixture") === "all-installed") {
     high_beam: [0, "", "buttons"],
     btn_cruise_set: [0, "", "buttons"],
   });
+  const longestFaultKey = Object.entries(__TABLES["/dtc-table"].codes).sort(
+    (left, right) => right[1].description.length - left[1].description.length
+  )[0][0];
+  SCENE.expectedFaults = [[44, 0]];
+  SCENE.storedComponents = [
+    [34, 0],
+    [35, 0],
+    [39, 0],
+    [44, 0],
+    [54, 11],
+    [60, 0],
+    [62, 0],
+  ];
+  for (const key of new Set([longestFaultKey, "dtc_0044_0", "dtc_0002_0"])) {
+    LIVE[key] = [1, "", "diagnostics"];
+  }
+  if (["clear", "missing"].includes(ridingFixture.get("fault-state"))) {
+    for (const key of Object.keys(LIVE).filter(key => /^dtc_\d+_\d+$/.test(key))) {
+      LIVE[key][0] = 0;
+    }
+    LIVE.dtc_list_count[0] = 0;
+    LIVE.dtc_unrecognised_count[0] = 0;
+    if (ridingFixture.get("fault-state") === "missing") {
+      delete LIVE.dtc_list_count;
+    }
+  }
   if (ridingFixture.get("ride-state") === "charging") {
     Object.assign(LIVE, {
       pack_kw: [15, "kW", "battery"],

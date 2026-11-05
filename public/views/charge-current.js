@@ -1,10 +1,8 @@
 // @ts-check
-import { readingStatus, statusWord, freshValue } from "../lib/reading-status.js";
-
 import van from "../vendor/van-1.6.1.js";
+import { readingStatus, statusWord, freshValue } from "../lib/reading-status.js";
 import { GOOD, MUTED, WARN, WATCH } from "../lib/colors.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
-
 import { chargeRequestReply } from "../lib/charge-request-display.js";
 import { chargeAttemptText } from "../lib/charge-command-display.js";
 import { chargeCeiling } from "../lib/charge-curve.js";
@@ -124,7 +122,7 @@ function Situation() {
     const type = chargeType.val;
     if (type === null) return "Charge state changing";
     const cap = liveCeiling(type);
-    const command = `${type.toUpperCase()} command ceiling ${cap === null ? "unavailable" : `${cap} A`}${ceilingIsFallback(type) ? " (default — may be ignored)" : ""}`;
+    const command = `${type.toUpperCase()} command ceiling ${cap === null ? "unavailable — check CAN" : `${cap} A`}${ceilingIsFallback(type) ? " (default — may be ignored)" : ""}`;
     if (type === "ac") {
       return div(
         div(command),

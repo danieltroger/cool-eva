@@ -1,6 +1,6 @@
 // @ts-check
 import van from "../vendor/van-1.6.1.js";
-import { destination, destinationSection, openRidingTab, destinationName } from "../lib/destination.js";
+import { destination, destinationSection, openRidingView, destinationName } from "../lib/destination.js";
 import { AccessLink } from "./settings-access.js";
 import { SettingsPage } from "./settings-page.js";
 import { TripStats } from "./trip-stats.js";
@@ -41,10 +41,10 @@ export function DestinationPage() {
           {
             class: "menu-link",
             onclick: () => {
-              openRidingTab("faults");
+              openRidingView("fault-report");
             },
           },
-          "Fault details → Faults"
+          "Fault details → Full report"
         )
       );
     case "battery-cooling":

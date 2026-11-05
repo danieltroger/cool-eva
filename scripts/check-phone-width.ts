@@ -398,7 +398,9 @@ async function measureTab(page: HeadlessPage, previewFile: string, scene: string
     measured.innerWidth === PHONE.width
   );
   if (scene === "faults" && tab === "faults") {
-    checkStoredCodeRows(measured);
+    await evaluateOnPage(page, "document.querySelector('.fault-report-action button').click()");
+    await waitOnPage(page, "!!document.querySelector('.code-line-text')", "the relocated full Fault report");
+    checkStoredCodeRows(asMeasurement(await evaluateOnPage(page, MEASURE)));
     const probed = asProbeWidths(await evaluateOnPage(page, PROBE), "tile");
     check(
       `content that cannot wrap does not widen the stored-codes tile (${probed.measured} ≤ ${probed.viewport})`,
