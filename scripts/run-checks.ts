@@ -56,16 +56,6 @@ interface SelfCheck {
 /** In script-name order; they are independent, so nothing depends on which runs first. */
 const CHECKS: SelfCheck[] = [
   {
-    script: "scripts/check-fault-summary.ts",
-    covers:
-      "complete active counts despite unknown or capped individual keys, offline/silent unknown, confirmed clear and rising-edge history",
-  },
-  {
-    script: "scripts/check-bundle-install.ts",
-    covers:
-      "cross-shell SSH command, hidden public-only input, charging-gated OS upgrades, network keyfile escaping and release publication guards; pinned-image installation runs separately under QEMU",
-  },
-  {
     script: "scripts/check-a8-block.ts",
     covers:
       "the 25 bank-1 parameters A8's own firmware table serves that params.ecf does not describe (#219): their " +
@@ -80,14 +70,111 @@ const CHECKS: SelfCheck[] = [
       "while the poller parks stopping the read",
   },
   {
+    script: "scripts/check-all-view-tiles.ts",
+    covers:
+      "which tile each signal gets on the dashboard's ALL page: that every key public/lib/latched.js names is a real " +
+      "signal, is not already in the buttons group, carries no deadband and is gated to 0…1 by bounds.js, that the " +
+      "two momentary signals outside that group (`horn` and `ignition_button`) and every member of the group do get " +
+      "the latched tile — a raw 1/0 readout of a 30 ms press cannot be watched at all — and that the beam lamps, the " +
+      'vehicle states and the brake-pressure measurement do NOT, since that tile says "PRESSED" and "3 presses"',
+  },
+  {
+    script: "scripts/check-arming.ts",
+    covers:
+      "the two-tap arm/dwell in front of every control that writes to the bike — public/lib/arming.js, which had no " +
+      "coverage at all until 2026-08-30 and is the whole of what stands between a double-tap and a write to a " +
+      "calibration EEPROM. On a clock the check hands in: that one tap arms and cannot also fire, that a second at " +
+      "399 ms is refused and one at exactly 400 ms is not, that a refused tap is IGNORED rather than disarming — " +
+      "the distinction the caption depends on — that arming a second control re-stamps rather than inheriting a " +
+      "dwell that elapsed ten seconds ago, that a clock which jumped backwards hands out no dwell, and that a held " +
+      "Enter is cancelled while a held ArrowDown is not. Then the parts no single module holds: that the charge " +
+      "tab's two now CO-VISIBLE controls do not share a key, that a status refresh landing under an armed button " +
+      "disarms it (run for real against a stubbed fetch), and that re-opening the menu sheet disarms — the only " +
+      "disarm the two Pi actions have, since neither fetches a status to land under one. Then: that all eleven " +
+      "firing sites still test their own key, then " +
+      "the dwell, then clear, then act — in that order, with the refused branch doing nothing but return — and " +
+      "that no module outside arming.js ever sets `armed` to a non-empty key, which is what makes the dwell " +
+      "unskippable. Plus the production defaults nothing else exercises: the same gate on the real performance.now()",
+  },
+  {
+    script: "scripts/check-attitude.ts",
+    covers:
+      "the attitude pair on 0x102 b4-7, which had no assertion anywhere in this suite until the bike fell onto " +
+      "its right side on 2026-09-13: that six fixtures still decode to the degrees they were logged as — four " +
+      "of them frames captured off the bike's own bus, two only counts from the ride log and labelled as such, " +
+      "since a fixture the decoder itself produced is circular against a wrong scale but still guards the " +
+      "LAYOUT (offsets, endianness, axis order, ÷10); that decodeFrame still ROUTES 0x102 b4-7 to that decoder " +
+      "rather than only the decoder working when called directly; that the " +
+      "±1800 band is inclusive at the limit and drops counts past it on BOTH signs, since a bare `>` would " +
+      "let −180.1° through; that one bad axis never mutes the other; that the warning needs five " +
+      "CONSECUTIVE frames, is rationed to one per axis per process, restarts after a good frame, and comes back " +
+      "after resetAttitudeDecoder(); that bounds.js gates both keys to exactly attitude.ts's own MAX_DECIDEGREES " +
+      "÷ 10, asked of bounds.js rather than copied, and that gps_course_deg is gated at all — 3 of " +
+      "105 118 archived rows read past 360°, two of them on 2026-08-08; and lie_down_detected (0x102 b3 bit 5), " +
+      "CONFIRMED against the Pi's own capture of the fall — one transition in 60 s, 0.669 s after the roll peak " +
+      "and 0.551 s before the VCU cut the drive, and still clear AT that peak, so it is not a threshold on the " +
+      "angle. ⚠ The guard is EXERCISED today by check-derived-signals.ts, whose byte " +
+      "sweep makes both warnings print on every run — it was never ASSERTED, which is the gap this closes",
+  },
+  {
+    script: "scripts/check-ble-client.ts",
+    covers:
+      "the actual browser/server link: exact origins and native scheme, normalized CSPRNG keys, production HELLO replay, advisory recovery without re-entering the key, same-radio service restart and fresh read/write chains, authenticated download liveness and request inactivity cleanup without POST replay",
+  },
+  {
+    script: "scripts/check-ble-gatt.ts",
+    covers:
+      "actual D-Bus watcher and advertisement exports behind a fake bus: trusted device/removal/adapter/daemon signals, registration recovery, bounded read-only owner liveness and no advertised name",
+  },
+  {
+    script: "scripts/check-ble-hardening.ts",
+    covers:
+      "stateless pre-auth framing, no refusal backlog, proof-before-owner-read, per-device ownership/MTU, zero-payload storage guard, stale handshake commits, independent admission/output/seal budgets and suppression accounting",
+  },
+  {
+    script: "scripts/check-ble-retry-policy.ts",
+    covers:
+      "what the service does while the Pi's Bluetooth adapter is wedged (#299), which on 2026-09-15..19 was 27 % " +
+      "of the wall clock and 14.9 % of every journal line: that the backoff still climbs 5 \u2192 10 \u2192 20 " +
+      "\u2192 30 s, that an 11 h 42 min episode prints at most one line a minute AND that the suppressed failures " +
+      "survive as counts summing back to the total, that a changed message flushes the old count and prints at " +
+      "once, that the power-cycle fires only on the busy reply and never on the three other failures that reach " +
+      "the same catch, that its cooldown governs FAILED remedies only \u2014 a connect clears it, since a " +
+      "bounce a connect followed did not need retrying, which is what that floor is for \u2014 " +
+      "that stop() emits the final partial window, and that the journal probe never throws, since its error would " +
+      "replace the busy reply the whole gate is keyed on. Plus the one thing a synthetic clock cannot see: that " +
+      "client.ts passes monotonicNow() and not Date.now()",
+  },
+  {
+    script: "scripts/check-ble-server.ts",
+    covers:
+      "the real BLE server with a stand-in radio and loopback: generated-key startup, immediate recovery after a wrong proof, unchanged HTTP header/body gates, whole paced downloads, replay rejection, telemetry coalescing and unsubscribe cleanup",
+  },
+  {
+    script: "scripts/check-ble-wire.ts",
+    covers:
+      "the BLE wire format shared by the dashboard and the Pi (public/lib/ble-wire.js): frames round-trip at MTUs " +
+      "20, 182, 244 and 512 across every boundary length, a message cut short is reported and the next survives, " +
+      "an oversized message is refused, messages keep kind, header and body, the HELLO proof and session key " +
+      "agree only on the same secret and nonces, a sealed envelope refuses the wrong key, direction, counter or " +
+      "one flipped bit, and compression still shrinks a telemetry snapshot",
+  },
+  {
+    script: "scripts/check-brake-lane.ts",
+    covers:
+      "the ride-summary dashboard's Brake lane, run out of the dashboard JSON against a database built by the real " +
+      "src/db.ts writer, over three windows: that the retired `brake` rows still feed it up to the day " +
+      "front_brake/rear_brake started, that the eleven-day overlap where both exist is read once rather than twice, " +
+      "that a release under a still-held second circuit stays yes — the carry-forward the OR needs, since both " +
+      "halves are log-on-change — that the lane comes back down at all, which the obvious running-MAX spelling " +
+      "never does, that a window OPENING MID-APPLICATION opens at yes rather than drawing `no` over a squeezed " +
+      "lever, that a half nobody ever logged does not read as a held brake, and that every signal key the query " +
+      "names still exists",
+  },
+  {
     script: "scripts/check-bundle-admission.ts",
     covers:
       "bundle queueing through the shared settings revision and bus restart reservation, busy/motion/Bluetooth handover refusal, duplicate admission and cleanup without a second app restart",
-  },
-  {
-    script: "scripts/check-bundle-stop.ts",
-    covers:
-      "stop-time localhost shared reservation; movement, busy bus, stale revision and Bluetooth-key refusal leave the app running; verified download reuse and reservation held through SIGTERM",
   },
   {
     script: "scripts/check-bundle-boundaries.ts",
@@ -95,14 +182,14 @@ const CHECKS: SelfCheck[] = [
       "valid-checksum archive link/traversal refusals and configured data paths blocking release cleanup before any data deletion",
   },
   {
+    script: "scripts/check-bundle-install.ts",
+    covers:
+      "cross-shell SSH command, hidden public-only input, charging-gated OS upgrades, network keyfile escaping and release publication guards; pinned-image installation runs separately under QEMU",
+  },
+  {
     script: "scripts/check-bundle-recovery.ts",
     covers:
       "shell updater interrupted trials, explicit rollback targets, restart causes, late settings compatibility, repeat recovery and locally edited releases; real systemd behavior has its own Linux CI lane",
-  },
-  {
-    script: "scripts/check-bundle-update.ts",
-    covers:
-      "bundle download and checksum gate, promotion, failed trial, next update, edit archive, migration gate and helper replacement without Git or npm; commands are fixture adapters and the archive is real",
   },
   {
     script: "scripts/check-bundle-runtime.ts",
@@ -110,9 +197,19 @@ const CHECKS: SelfCheck[] = [
       "release metadata, service-owned migration health, CSRF guards, fixed updater unit, OS drift text and dashboard polling through a release restart",
   },
   {
-    script: "scripts/check-version-startup.ts",
+    script: "scripts/check-bundle-stop.ts",
     covers:
-      "HTTP readiness while inventory and OS diagnostics wait, unverified/edited/clean release labels, low-priority diagnostics, and one background verification after listening",
+      "stop-time localhost shared reservation; movement, busy bus, stale revision and Bluetooth-key refusal leave the app running; verified download reuse and reservation held through SIGTERM",
+  },
+  {
+    script: "scripts/check-bundle-update.ts",
+    covers:
+      "bundle download and checksum gate, promotion, failed trial, next update, edit archive, migration gate and helper replacement without Git or npm; commands are fixture adapters and the archive is real",
+  },
+  {
+    script: "scripts/check-button-decode.ts",
+    covers:
+      "the handlebar-button bits on 0x102 b0 and 0x400 b2, the day/night flag on 0x400 b5 and the fast-charge contactor monitor on 0x102 b3, against frames captured 2026-08-04, plus the RX filter, short frames, and the registry and bounds entries a button needs to reach the dashboard",
   },
   {
     script: "scripts/check-can-adapter-rebind.ts",
@@ -146,6 +243,11 @@ const CHECKS: SelfCheck[] = [
       "[Service] where systemd ignores it, and that the script parses as POSIX sh",
   },
   {
+    script: "scripts/check-can-decoders.ts",
+    covers:
+      "the broadcast frame decoders against frames captured 2026-08-02, plus three properties of the decoder set as a whole: that every id which decodes is in the kernel RX filter, that every emitted key is declared in the registry, and that no 1/0 flag carries a deadband big enough to swallow its own transitions",
+  },
+  {
     script: "scripts/check-capture-behaviour.ts",
     covers:
       "what capture.sh DOES, by running it under stubbed ip/candump/df/split/sleep in a temp directory — the " +
@@ -157,6 +259,13 @@ const CHECKS: SelfCheck[] = [
       "loud, and that a missing binary leaves NO empty capture behind",
   },
   {
+    script: "scripts/check-capture-pruner.ts",
+    covers:
+      "the fixed non-interactive capture deletion helper: no arguments, capture-only basenames, " +
+      "current-boot and symlink refusal, protected root-owned directories, exact sudoers rule " +
+      "and the SSH client's legacy/new-layout selection",
+  },
+  {
     script: "scripts/check-capture-reader.ts",
     covers:
       "the one reader that opens a compressed capture: that the concatenated 64 kB gzip members capture.sh now " +
@@ -164,84 +273,6 @@ const CHECKS: SelfCheck[] = [
       "Pi, not hand-built with zlib — that a capture cut by a power cut yields its whole prefix with one warning " +
       "and no throw, NUL-tailed (the ext4 delalloc signature) or cleanly, that an uncompressed .log still reads, " +
       "and that a missing or unreadable file still THROWS rather than passing for an empty capture",
-  },
-  {
-    script: "scripts/check-free-pi-captures.ts",
-    covers:
-      "the gate that deletes raw captures off the bike's SD card, against the rows that were really wrong on " +
-      "2026-09-19: that a verified, complete, day-old capture is deletable and every guard refuses on its own — a " +
-      "name that is not a capture (capture.sh.superseded, the ORIGINAL untracked capture script, is a manifest " +
-      "row), a source_state that is not exactly complete including unknown ones, a size that moved under a live " +
-      "capture, the boot that is running now, either the mtime or the filename reading under 24 h on a Pi with no " +
-      "RTC, a verified copy that is missing or the wrong size, and a sha256 that disagrees under --strict",
-  },
-  {
-    script: "scripts/check-attitude.ts",
-    covers:
-      "the attitude pair on 0x102 b4-7, which had no assertion anywhere in this suite until the bike fell onto " +
-      "its right side on 2026-09-13: that six fixtures still decode to the degrees they were logged as — four " +
-      "of them frames captured off the bike's own bus, two only counts from the ride log and labelled as such, " +
-      "since a fixture the decoder itself produced is circular against a wrong scale but still guards the " +
-      "LAYOUT (offsets, endianness, axis order, ÷10); that decodeFrame still ROUTES 0x102 b4-7 to that decoder " +
-      "rather than only the decoder working when called directly; that the " +
-      "±1800 band is inclusive at the limit and drops counts past it on BOTH signs, since a bare `>` would " +
-      "let −180.1° through; that one bad axis never mutes the other; that the warning needs five " +
-      "CONSECUTIVE frames, is rationed to one per axis per process, restarts after a good frame, and comes back " +
-      "after resetAttitudeDecoder(); that bounds.js gates both keys to exactly attitude.ts's own MAX_DECIDEGREES " +
-      "÷ 10, asked of bounds.js rather than copied, and that gps_course_deg is gated at all — 3 of " +
-      "105 118 archived rows read past 360°, two of them on 2026-08-08; and lie_down_detected (0x102 b3 bit 5), " +
-      "CONFIRMED against the Pi's own capture of the fall — one transition in 60 s, 0.669 s after the roll peak " +
-      "and 0.551 s before the VCU cut the drive, and still clear AT that peak, so it is not a threshold on the " +
-      "angle. ⚠ The guard is EXERCISED today by check-derived-signals.ts, whose byte " +
-      "sweep makes both warnings print on every run — it was never ASSERTED, which is the gap this closes",
-  },
-  {
-    script: "scripts/check-ble-retry-policy.ts",
-    covers:
-      "what the service does while the Pi's Bluetooth adapter is wedged (#299), which on 2026-09-15..19 was 27 % " +
-      "of the wall clock and 14.9 % of every journal line: that the backoff still climbs 5 \u2192 10 \u2192 20 " +
-      "\u2192 30 s, that an 11 h 42 min episode prints at most one line a minute AND that the suppressed failures " +
-      "survive as counts summing back to the total, that a changed message flushes the old count and prints at " +
-      "once, that the power-cycle fires only on the busy reply and never on the three other failures that reach " +
-      "the same catch, that its cooldown governs FAILED remedies only \u2014 a connect clears it, since a " +
-      "bounce a connect followed did not need retrying, which is what that floor is for \u2014 " +
-      "that stop() emits the final partial window, and that the journal probe never throws, since its error would " +
-      "replace the busy reply the whole gate is keyed on. Plus the one thing a synthetic clock cannot see: that " +
-      "client.ts passes monotonicNow() and not Date.now()",
-  },
-  {
-    script: "scripts/check-ble-server.ts",
-    covers:
-      "the real BLE server with a stand-in radio and loopback: generated-key startup, immediate recovery after a wrong proof, unchanged HTTP header/body gates, whole paced downloads, replay rejection, telemetry coalescing and unsubscribe cleanup",
-  },
-  {
-    script: "scripts/check-ble-hardening.ts",
-    covers:
-      "stateless pre-auth framing, no refusal backlog, proof-before-owner-read, per-device ownership/MTU, zero-payload storage guard, stale handshake commits, independent admission/output/seal budgets and suppression accounting",
-  },
-  {
-    script: "scripts/check-ble-client.ts",
-    covers:
-      "the actual browser/server link: exact origins and native scheme, normalized CSPRNG keys, production HELLO replay, advisory recovery without re-entering the key, same-radio service restart and fresh read/write chains, authenticated download liveness and request inactivity cleanup without POST replay",
-  },
-  {
-    script: "scripts/check-ble-gatt.ts",
-    covers:
-      "actual D-Bus watcher and advertisement exports behind a fake bus: trusted device/removal/adapter/daemon signals, registration recovery, bounded read-only owner liveness and no advertised name",
-  },
-  {
-    script: "scripts/check-ble-wire.ts",
-    covers:
-      "the BLE wire format shared by the dashboard and the Pi (public/lib/ble-wire.js): frames round-trip at MTUs " +
-      "20, 182, 244 and 512 across every boundary length, a message cut short is reported and the next survives, " +
-      "an oversized message is refused, messages keep kind, header and body, the HELLO proof and session key " +
-      "agree only on the same secret and nonces, a sealed envelope refuses the wrong key, direction, counter or " +
-      "one flipped bit, and compression still shrinks a telemetry snapshot",
-  },
-  {
-    script: "scripts/check-can-decoders.ts",
-    covers:
-      "the broadcast frame decoders against frames captured 2026-08-02, plus three properties of the decoder set as a whole: that every id which decodes is in the kernel RX filter, that every emitted key is declared in the registry, and that no 1/0 flag carries a deadband big enough to swallow its own transitions",
   },
   {
     script: "scripts/check-charge-ack.ts",
@@ -253,6 +284,24 @@ const CHECKS: SelfCheck[] = [
       "first-crossing test really would have scored two of the failures as successes (which is why the envelope " +
       "exists), that the settle grace changes no verdict, that a binding command still reads waiting halfway " +
       "through its window, that the ride-log codes are distinct, and that nothing in the adjudicator reads pack_a",
+  },
+  {
+    script: "scripts/check-charge-archive.ts",
+    covers:
+      "the same controller against EVERY DC session on record rather than three hand-picked stops: that a reading " +
+      "coming back out of the 54 °C band is never read as permission to raise — 31 of the 50 charging crossings in " +
+      "the archive return 55 -> 54 inside a minute with ~50 A still flowing, which is the hottest cell's saw-tooth " +
+      "and is how a train of crossings forms — asserted as a fixture and as a pinned count over 18 sessions x 60 " +
+      "tick phases; and, on a two-node plant MEASURED from the same archive and run at both ends of its fitted " +
+      "constants, that the controller crosses 55 °C on no session more often than doing nothing and forms no " +
+      "train; that what it PAYS for that is bounded — it delivers 3.7 % LESS charge than letting the pack derate, " +
+      "and the bound is what stops that cost growing unnoticed — and that every session which stayed four degrees " +
+      "below the setpoint was left entirely alone",
+  },
+  {
+    script: "scripts/check-charge-attempt.ts",
+    covers:
+      "real HTTP charge-current attempt metadata distinguishes zero-frame refusals from partial or failed transmission without changing command guards",
   },
   {
     script: "scripts/check-charge-auto-live.ts",
@@ -283,34 +332,6 @@ const CHECKS: SelfCheck[] = [
       "not drifted from the enum",
   },
   {
-    script: "scripts/check-charge-archive.ts",
-    covers:
-      "the same controller against EVERY DC session on record rather than three hand-picked stops: that a reading " +
-      "coming back out of the 54 °C band is never read as permission to raise — 31 of the 50 charging crossings in " +
-      "the archive return 55 -> 54 inside a minute with ~50 A still flowing, which is the hottest cell's saw-tooth " +
-      "and is how a train of crossings forms — asserted as a fixture and as a pinned count over 18 sessions x 60 " +
-      "tick phases; and, on a two-node plant MEASURED from the same archive and run at both ends of its fitted " +
-      "constants, that the controller crosses 55 °C on no session more often than doing nothing and forms no " +
-      "train; that what it PAYS for that is bounded — it delivers 3.7 % LESS charge than letting the pack derate, " +
-      "and the bound is what stops that cost growing unnoticed — and that every session which stayed four degrees " +
-      "below the setpoint was left entirely alone",
-  },
-  {
-    script: "scripts/check-soc-rate.ts",
-    covers:
-      "the SOC rate's LOWER-BOUND invariant, against continuous trajectories rather than against hand-written " +
-      "instances: that across four shapes a DC charge takes — a measured constant rate, a ramp-up, the taper and a " +
-      "stall — the estimate never exceeds the rate the trajectory ITSELF rose at over the span the estimator " +
-      "claims to have measured, which is the direction the session-ahead veto lives by, since over-stating it " +
-      "shortens the horizon and suppresses more steps down; that every trajectory reaches the property rather than " +
-      "answering null through it; that the crossing-instant precondition underneath the bound is real — a ring led " +
-      "by a reading kept mid-plateau, or by a downward crossing, DOES over-state, and by no more than the one whole " +
-      "count a whole-percent reading can hide; that a pack LOSING charge gets no rate at all rather than a negative " +
-      "one, which would come back as a negative horizon and suppress a step down on a pack that is not charging; " +
-      "and that the controller says so in the journal when it keeps a first SOC reading with no crossing behind it, " +
-      "which is the start-up ordering in src/index.ts made audible rather than assumed",
-  },
-  {
     script: "scripts/check-charge-command.ts",
     covers:
       "the charge-current transmitter against the dash's OWN frames, captured off the bus during a real DC fast " +
@@ -321,17 +342,14 @@ const CHECKS: SelfCheck[] = [
       "dash's own measured 4.2-10.1 ms",
   },
   {
-    script: "scripts/check-charge-soc-limit.ts",
+    script: "scripts/check-charge-curve.ts",
     covers:
-      "the SOC charge-limit command and decoder against frames the BIKE put on the bus: that the builder " +
-      "reproduces all three of the dash's own menu confirms byte for byte (40 % on 2026-08-02, 0 and 80 % on " +
-      "2026-09-19) and the 90 % written on-bike that evening; that it emits ONE frame on 0x120 and never the " +
-      "0x121 half, which is the bike's own answer and spoofing it moves the dash display without committing " +
-      "anything; that the write carries bit 7 SET and the read bit 7 CLEAR with b2 = 0, the direction bit being " +
-      "the difference between a read-back and silently writing 'no limit'; that the decoder reads every captured " +
-      "and live replies back, 0 included since 0 is a legal value here; that neither it nor the charge-current " +
-      "decoder reads the other's opcodes on the shared id; and that the endpoint's confirmation carries the " +
-      "percentage, with 0 needing a word of its own",
+      "exact observed charge-current interpolation/cap, both reported extremes, adaptive/fallback framing, truthful command replies and shared status priority",
+  },
+  {
+    script: "scripts/check-charge-display.ts",
+    covers:
+      "fresh signed Charge direction, small incoming/outgoing power, neutral zero, invalid/unavailable readings and held onDemand values",
   },
   {
     script: "scripts/check-charge-eta.ts",
@@ -348,6 +366,17 @@ const CHECKS: SelfCheck[] = [
       "spike and falls back to the newest reading when the window is thin, which on AC it legitimately often is",
   },
   {
+    script: "scripts/check-charge-mode.ts",
+    covers:
+      "the dashboard's one charge rule, driven by real frames through the real decoders: that a parked bike and a " +
+      "ridden one are not a charge however the AC charger's frames are behaving, that an AC session reads AC, that " +
+      "a DC session reads DC even though the BMS reports Idle for the whole of one and survives the late heartbeat " +
+      "a steady boolean's freshness depends on, that the same Idle at the tail of an AC session is not mistaken " +
+      "for a fast charge, and that no answer ever names DC without the contactor bit under it — plus that every " +
+      "signal the rule consults is still a registered stream signal, since a renamed one would leave it answering " +
+      "'not charging' for ever in silence",
+  },
+  {
     script: "scripts/check-charge-soc-limit-runner.ts",
     covers:
       "the SOC charge-limit ACTIONS against a stand-in bike — the round trip the pure check cannot reach. " +
@@ -362,31 +391,17 @@ const CHECKS: SelfCheck[] = [
       "the Pi's, which no build step can enforce across a .js/.ts boundary",
   },
   {
-    script: "scripts/check-freeze-frame-values.ts",
+    script: "scripts/check-charge-soc-limit.ts",
     covers:
-      "the whole-bike freeze-frame read and what is shown from it: that a 0x18 list carrying padding, a component " +
-      "outside 1…63 and a duplicate is filtered BEFORE anything is asked — one bad record must cost that record " +
-      "and not the components already read — that a positive reply echoing another component is filed as a " +
-      "failure rather than counted as an answer, that the deadline stops the read while a whole worst-case " +
-      "component still fits inside the OBD poller's hold and that no shipping call site can inject the clock it " +
-      "is measured on, that a 0x18 which fails asks nothing and stores nothing, that the store refuses to lose a " +
-      "component the bike still lists while still accepting a genuinely shorter list and a genuinely empty one " +
-      "(and refusing a garbled list that merely looks empty), that all 34 committed replies decode with their " +
-      "cycles-since-stored byte placed, and that none of the 211 captured field slots is drawn as a fault while a " +
-      "0xFFFF sentinel still is",
-  },
-  {
-    script: "scripts/check-clear-dtcs.ts",
-    covers:
-      'OBD Mode 04 and the read-back that is the only thing separating "the bike said 44" from "the bike erased ' +
-      'its fault memory": that the OBD poller is parked BEFORE any frame goes out and released on every path out ' +
-      "including a refusal and a silence, that a poller which will not park sends nothing at all, that PID 01 and " +
-      "PID 31 are read on both sides of the frame and the stored list and freeze frame after it, that a positive " +
-      "44 with PID 31 unmoved is reported as ERASED NOTHING rather than as success (the 2026-08-08 and 2026-09-11 " +
-      "shape), that a counter which could not be read becomes null rather than zero, that the fresh list reaches " +
-      "the snapshot /stored-dtcs serves so the pre-clear list cannot be shown after the button, that a bike going " +
-      "unsafe during the read-back no longer makes the gate watchdog announce an abort it did not perform, and " +
-      "which gate states do and do not raise the cable caution",
+      "the SOC charge-limit command and decoder against frames the BIKE put on the bus: that the builder " +
+      "reproduces all three of the dash's own menu confirms byte for byte (40 % on 2026-08-02, 0 and 80 % on " +
+      "2026-09-19) and the 90 % written on-bike that evening; that it emits ONE frame on 0x120 and never the " +
+      "0x121 half, which is the bike's own answer and spoofing it moves the dash display without committing " +
+      "anything; that the write carries bit 7 SET and the read bit 7 CLEAR with b2 = 0, the direction bit being " +
+      "the difference between a read-back and silently writing 'no limit'; that the decoder reads every captured " +
+      "and live replies back, 0 included since 0 is a legal value here; that neither it nor the charge-current " +
+      "decoder reads the other's opcodes on the shared id; and that the endpoint's confirmation carries the " +
+      "percentage, with 0 needing a word of its own",
   },
   {
     script: "scripts/check-charge-write-polling.ts",
@@ -419,102 +434,17 @@ const CHECKS: SelfCheck[] = [
       "paths still raise busy around the pre-arm refresh, which is the double-tap guard (#107)",
   },
   {
-    script: "scripts/check-pack-resistance.ts",
+    script: "scripts/check-clear-dtcs.ts",
     covers:
-      "the pack-resistance estimator that replaced the BMS's own unusable 0x206 figure, driven by real 0x200 " +
-      "frames re-encoded from the 2026-09-07 ride: that a genuine load window fits the resistance those same " +
-      "frames were measured to have, that an at-rest window falls back to the modelled curve instead of " +
-      "reporting a stale measurement, that the hold expires on the stated interval, that only pairs from ONE " +
-      "frame enter the buffer (a missing half, a stamp skew and the 5 s heartbeat's repeat are each refused), " +
-      "that the modelled curve is monotone and holds its endpoints, that the answer is never null so no " +
-      "consumer needs a null branch, and that store.js hands the buffer only readings which passed the same " +
-      "plausibility gate the rest of the dashboard uses — the sign of the slope and the same-frame rule are " +
-      "the two ways this can be silently wrong, and a wrong sign yields a plausible-looking ~1 mOhm",
-  },
-  {
-    script: "scripts/check-charge-mode.ts",
-    covers:
-      "the dashboard's one charge rule, driven by real frames through the real decoders: that a parked bike and a " +
-      "ridden one are not a charge however the AC charger's frames are behaving, that an AC session reads AC, that " +
-      "a DC session reads DC even though the BMS reports Idle for the whole of one and survives the late heartbeat " +
-      "a steady boolean's freshness depends on, that the same Idle at the tail of an AC session is not mistaken " +
-      "for a fast charge, and that no answer ever names DC without the contactor bit under it — plus that every " +
-      "signal the rule consults is still a registered stream signal, since a renamed one would leave it answering " +
-      "'not charging' for ever in silence",
-  },
-  {
-    script: "scripts/check-ride-log-clock.ts",
-    covers:
-      "the ride log against a Pi with no RTC (#188) and the seal that parking buys (#57): that splitByTrust cuts " +
-      "contiguous runs, keeps their order and is BOUNDED — five alternating runs collapse to one carrying the most " +
-      "pessimistic trust, so a flapping clock cannot put an X25519 keygen and an fdatasync per flap on the event " +
-      "loop; that a reading sealed under an unconfirmed clock goes to rides-boot-<session>.celog and a trusted one " +
-      "to rides-<date>.celog, both untrusted seals sharing ONE file; that a buffer spanning the step seals as TWO " +
-      "labelled segments — the case a seal-time sample gets wrong for the median boot, whose clock steps 15.9 s in " +
-      "against a 30 s timer — with no timestamp rewritten to make them agree; that the header is v3 and a v2 " +
-      "segment beside it still decodes and reports no trust rather than a good one; that a seal failing on its " +
-      "SECOND run re-queues both runs ahead of what was buffered while it ran, writing every reading exactly once " +
-      "and in the order recorded; and that the park seal fires on an observed entry into state 60 but not on the " +
-      "first sample nor an unrelated change, and still seals the new readings when a seal is already in flight",
-  },
-  {
-    script: "scripts/check-ride-log-status.ts",
-    covers:
-      "what /status reports about the ride log, and about the CAN sources: that the log count is read " +
-      "off the directory rather than capped or hardcoded (13 files, sized, past the 10 that was reported as stuck), " +
-      "that five real seals through src/storage/encrypted-log.ts still land in one day file — so a file is not a " +
-      "segment, and a caption that comes back may not call it one — that a group nothing has ever been heard from " +
-      "reads [0, n] rather than being left out of the payload, that a group is dropped from the summary only when " +
-      "every signal in it is written on request, that a group which does reach the payload is one the check names " +
-      "on purpose, and that a talking bus counts each key once — plus that a sealed segment opens with the matching " +
-      "private key and with no other, which is the only security property anything here is allowed to claim",
-  },
-  {
-    script: "scripts/check-vcu-params.ts",
-    covers:
-      "VCU parameter table — including that it is Energica's table 16407, the one the bike itself names at " +
-      "parameter 276, and that a bike naming any other one is shouted about rather than silently mislabelled — " +
-      "request encoding and the read-only guard, framing against frames captured 2026-08-08, " +
-      "that the multi-frame segmenter emits byte for byte the Single Frame buildRequestFrame did, so routing reads " +
-      "through that transport moved nothing on the wire; the DWORD storage type and the 4-byte record it makes " +
-      "readable, the generated write targets' datatype bounds against literal per-type ranges, " +
-      "the live bank-1 reads, interpretation, the snapshot diff, the KWP transport against a simulated micro — " +
-      "including a 4-byte bank-1 record and the captured bank-2 0x2001 reply assembling through flow control, a " +
-      "stalled transfer and a reply over the payload cap coming back as two different outcomes, and no flow " +
-      "control going out for a reply that already fitted one frame — and — " +
-      "since the service-write PR — the write allowlist and its per-parameter ranges, the refusal of every " +
-      "non-allowlisted identifier, the table-type gate that refuses a parameter write until the bike has itself " +
-      "named a table this software encodes (refused when never read, refused when mismatched, permitted when " +
-      "confirmed — in the codec as well as the runner, and not applied to the service actions, which address no " +
-      "index), the seed→key algorithm against four seed/key pairs captured off this bike's own " +
-      "bus, the 0x120 clock frame against two frames that really went out, the service-stamp decode, Mode 04 and the bus lease",
-  },
-  {
-    script: "scripts/check-button-decode.ts",
-    covers:
-      "the handlebar-button bits on 0x102 b0 and 0x400 b2, the day/night flag on 0x400 b5 and the fast-charge contactor monitor on 0x102 b3, against frames captured 2026-08-04, plus the RX filter, short frames, and the registry and bounds entries a button needs to reach the dashboard",
-  },
-  {
-    script: "scripts/check-theme-contrast.ts",
-    covers:
-      "both of style.css's palettes, parsed out of the file itself rather than restated: every ink colors.js " +
-      "hands the dashboard exists in both, values clear 11:1 and text and status inks 6:1 against both the page " +
-      "and the tile they land on, and no two steps of the good→watch→warn→bad ramp are closer than 15 in the a*b* " +
-      "plane — the light theme buys its contrast by compressing that ramp, so the trade is pinned at both ends. " +
-      "Plus the power meter's own marks, which are sized by visibility rather than readability and so were named " +
-      "here and measured nowhere until 2026-09-08: the solid track against the card it is drawn on, and the " +
-      "DASHED stretch that says the BMS has taken that scale away — averaged at the dash pattern's own duty " +
-      "cycle, imported from the module that draws it, against both the card and the solid track beside it. And " +
-      "--flow, the meter's fill, against every other ink rather than one named partner",
-  },
-  {
-    script: "scripts/check-all-view-tiles.ts",
-    covers:
-      "which tile each signal gets on the dashboard's ALL page: that every key public/lib/latched.js names is a real " +
-      "signal, is not already in the buttons group, carries no deadband and is gated to 0…1 by bounds.js, that the " +
-      "two momentary signals outside that group (`horn` and `ignition_button`) and every member of the group do get " +
-      "the latched tile — a raw 1/0 readout of a 30 ms press cannot be watched at all — and that the beam lamps, the " +
-      'vehicle states and the brake-pressure measurement do NOT, since that tile says "PRESSED" and "3 presses"',
+      'OBD Mode 04 and the read-back that is the only thing separating "the bike said 44" from "the bike erased ' +
+      'its fault memory": that the OBD poller is parked BEFORE any frame goes out and released on every path out ' +
+      "including a refusal and a silence, that a poller which will not park sends nothing at all, that PID 01 and " +
+      "PID 31 are read on both sides of the frame and the stored list and freeze frame after it, that a positive " +
+      "44 with PID 31 unmoved is reported as ERASED NOTHING rather than as success (the 2026-08-08 and 2026-09-11 " +
+      "shape), that a counter which could not be read becomes null rather than zero, that the fresh list reaches " +
+      "the snapshot /stored-dtcs serves so the pre-clear list cannot be shown after the button, that a bike going " +
+      "unsafe during the read-back no longer makes the gate watchdog announce an abort it did not perform, and " +
+      "which gate states do and do not raise the cable caution",
   },
   {
     script: "scripts/check-cluster-frames.ts",
@@ -534,33 +464,6 @@ const CHECKS: SelfCheck[] = [
       "ceiling rather than restating it",
   },
   {
-    script: "scripts/check-brake-lane.ts",
-    covers:
-      "the ride-summary dashboard's Brake lane, run out of the dashboard JSON against a database built by the real " +
-      "src/db.ts writer, over three windows: that the retired `brake` rows still feed it up to the day " +
-      "front_brake/rear_brake started, that the eleven-day overlap where both exist is read once rather than twice, " +
-      "that a release under a still-held second circuit stays yes — the carry-forward the OR needs, since both " +
-      "halves are log-on-change — that the lane comes back down at all, which the obvious running-MAX spelling " +
-      "never does, that a window OPENING MID-APPLICATION opens at yes rather than drawing `no` over a squeezed " +
-      "lever, that a half nobody ever logged does not read as a held brake, and that every signal key the query " +
-      "names still exists",
-  },
-  {
-    script: "scripts/check-derived-signals.ts",
-    covers:
-      "that no broadcast decoder emits a flag computed from other flags on the same frame — the rule `brake` = " +
-      "front_brake | rear_brake broke from June until 2026-08-30. Every stream id is decoded over every value of " +
-      "every byte at every DLC, against both a 0x00 and a 0xFF background, plus 2000 seeded random frames, and each " +
-      "moving 0/1 signal is tested against every identity, inverse, OR and AND of the others on its frame. The " +
-      "payload count, the number of flags that moved and the number of combinations tried each have to clear a " +
-      "floor, so a sweep that reaches nothing fails instead of reporting zero hits out of zero tries",
-  },
-  {
-    script: "scripts/check-handlebar-gestures.ts",
-    covers:
-      "the two handlebar gestures — double-click cruise-set for the next tab, long-press indicator-cancel to save a waypoint — replayed through the recognisers the phone runs, including the deadline wakeup without which a hold could only ever fire on release. Most cases are real durations that must fire NOTHING: the 140 ms median press, the 30 ms shortest, the 920 ms longest ordinary press on any handlebar button, and the only 1794 ms cruise-set press in the corpus. Plus the threshold margins and the binding itself — registered, deadband-free, and not the cruise-arm switch, whose every recorded press armed cruise control",
-  },
-  {
     script: "scripts/check-connection.ts",
     covers:
       "when the dashboard has a WebSocket open and what it does when it should not: that hiding the page closes the " +
@@ -578,6 +481,33 @@ const CHECKS: SelfCheck[] = [
       "FAILS still does end it, rather than leaving a live process with nothing listening for systemd to call healthy",
   },
   {
+    script: "scripts/check-coolant-heat.ts",
+    covers:
+      "the watts the coolant loop is carrying away — ṁ·cp·ΔT, one multiplication, which is why nothing checked it " +
+      "for a year and why nothing in scripts/ imported derive.js at all until this file. #187 put the number on " +
+      "the riding screen beside the Charge tab's, so one constant decides what two screens say and every way it " +
+      "can be wrong is a plausible-looking number: the multiplier is asserted against the arithmetic written out " +
+      "by hand — the Bosch PAD's rated 850 L/h, glycol's 3800 J/(kg·K) and 1.05 kg/L — and against water's " +
+      "figures, which are the substitution a reader would never catch on screen. Then the function driven through " +
+      "the REAL store and apply(), because coolantDelta() reads through valueOf() rather than a passed-in reader: " +
+      "the worked 0.07 °C → 65.95 W, the riding fixture's 4.70 °C → 4428 W so the screenshot's number is the " +
+      "checked one, a reversed ΔT keeping its sign since dropping it would report a loop working hardest when it " +
+      "has stopped, an unfitted probe answering null rather than 0 W, and the failed-PT100 −242 °C leaving the last " +
+      "good reading standing instead of reaching a multiplier that would turn it " +
+      "into −259 kW of cooling. Every comparison carries a tolerance, since the delta of a 0.07 step is " +
+      "0.07000000000000028",
+  },
+  {
+    script: "scripts/check-derived-signals.ts",
+    covers:
+      "that no broadcast decoder emits a flag computed from other flags on the same frame — the rule `brake` = " +
+      "front_brake | rear_brake broke from June until 2026-08-30. Every stream id is decoded over every value of " +
+      "every byte at every DLC, against both a 0x00 and a 0xFF background, plus 2000 seeded random frames, and each " +
+      "moving 0/1 signal is tested against every identity, inverse, OR and AND of the others on its frame. The " +
+      "payload count, the number of flags that moved and the number of combinations tried each have to clear a " +
+      "floor, so a sweep that reaches nothing fails instead of reporting zero hits out of zero tries",
+  },
+  {
     script: "scripts/check-endpoint-headers.ts",
     covers:
       "the X-Cool-Eva header in front of the menu sheet's two Pi-maintenance actions, which had no guard at all " +
@@ -592,6 +522,25 @@ const CHECKS: SelfCheck[] = [
       "the cross-origin form and cross-origin fetch, and stops nobody with a curl and the wifi password. \u26a0 " +
       "/update never gets a real server (it arms `sudo systemctl restart cool-eva` on `finish`) and /can-restart " +
       "gets one aimed at an interface no machine has, so `ip link` runs against nothing and can0 is never touched",
+  },
+  {
+    script: "scripts/check-fan-banner.ts",
+    covers:
+      "that the phone's fan banner names the duty the fan was actually ASKED for. `fan_auto_mode` and " +
+      "`fan_target_pct` are published by two different files and the banner is worded from BOTH — the mode picks " +
+      "the sentence, the duty fills in the number — so they are a pair, and src/can/signals.ts flushes one batch " +
+      "per microtask, which makes two records separated by an `await` two WebSocket patches. A mode published " +
+      "ahead of its duty therefore arrives beside the duty of the mode BEFORE it: #199, where a hold said " +
+      "'Fan: manual 68 %' over a fan at 100 %, and off a cold pack said 'Fan: off' over a fan going to full and " +
+      "then raised a second banner when the duty caught up. Driven through the REAL batch sequence — onChange() " +
+      "subscribed the way src/ws.ts subscribes, replayed one patch at a time through public/lib/store.js's own " +
+      "apply() and public/lib/announce.js's own foldFanAnnouncement(), because sampling latestValue() afterwards " +
+      "is exactly what cannot see this: both signals are right a few milliseconds later and it is the ARRIVAL " +
+      "ORDER that lies. Every step of the cycle must raise exactly ONE banner and it must name 100 %, 0 % or " +
+      "automatic — held against a settled curve duty AND against one still inside its 1500 ms kick-start, which " +
+      "are two different bugs and fail separately. Then the property under the wording: the duty reaches the wire " +
+      "in the mode's batch or an earlier one, never a later one, and a duty commanded mid-kick is published " +
+      "rather than held for the rest of the kick",
   },
   {
     script: "scripts/check-fan-curve.ts",
@@ -616,6 +565,22 @@ const CHECKS: SelfCheck[] = [
       "each tick's promise and an escaped rejection would end the whole service every two seconds",
   },
   {
+    script: "scripts/check-fan-endpoint.ts",
+    covers:
+      "both ends of the /fan wire: that the X-Cool-Eva header stands in front of every POST — the only thing " +
+      "between a cross-origin form on any page the rider's phone opens and a spinning blade, since a custom header " +
+      "name is what makes the request non-simple — refusing a missing one, a wrong one, the service-write value, " +
+      "and a duplicated one that joins to `fan, fan`, with each refusal shown to have commanded nothing, while a " +
+      "GET needs no header because it touches no hardware; every branch of parseFanRequest(), including the " +
+      "duty-and-mode-together 400 the endpoint refuses rather than guesses at and the 1e2 / 0x40 notations it does " +
+      "accept; and the page's half, public/lib/fan-command-queue.js, driven with a recording sender: that a " +
+      "five-move drag reaches the Pi as TWO POSTs with the last value intact, that the first move goes at once " +
+      "from a clock of any origin including zero, that a send slower than the interval never overlaps the next " +
+      "one, and that one that throws does not wedge the slider for the rest of the session — plus §4, the queue " +
+      "run with NO clock and NO timer injected, since the two `??` defaults are what actually ships and " +
+      "everything above replaces them",
+  },
+  {
     script: "scripts/check-fan-fun.ts",
     covers:
       "fun mode — the rider's throttle driving the radiator fan — and above all the gate in front of it, which is " +
@@ -636,76 +601,6 @@ const CHECKS: SelfCheck[] = [
       "throw away fourteen steps in fifteen",
   },
   {
-    script: "scripts/check-hold-gestures.ts",
-    covers:
-      "the two handlebar HOLD gestures the Pi now recognises for itself — a 1200 ms hold of MODE ENTER stepping " +
-      "the fan round manual 100 % → off → automatic, and a 500 ms hold of the indicator-cancel switch saving a " +
-      "waypoint. Above all the freshness rule, planted rather than argued: a press followed by twenty minutes of " +
-      "silence NEVER fires however long the bus has been quiet, because the press is abandoned the moment the " +
-      "sample goes stale; a 300 ms press fires nothing; and a 1.3 s hold fires exactly once, while the thumb is " +
-      "still down rather than on the release — which is what keeps a thumb clear of the hazard lights the cancel " +
-      "switch turns on at or before 2.011 s. Then the thresholds against the whole 268-file archive: 1200 ms " +
-      "clears the longest MODE ENTER press ever recorded (290 ms, over 160 presses, the only decoded handlebar " +
-      "bit with no long press anywhere) by more than 4×, and 500 ms clears the longest ordinary indicator-cancel " +
-      "press outside one afternoon's experiment (330 ms over 770 of 779) by 1.5×. Then the cycle end to end " +
-      "bridge: it walks all three states in the rider's own direction — quiet is ONE hold from the manual 100 % he " +
-      "rides in — SKIPS the quiet state above the 15 km/h ceiling so a false fire while riding can only " +
-      "land on the thermally safe side, reverts its own *off* when the bike moves but never a manual 0 the slider " +
-      "set, and leaves the fan off when the bus goes silent — because that silence is the AC charge the state " +
-      "exists for. Finally the waypoint's gates, including the 2026-08-09 defect: a fix 8 000 km from the one " +
-      "before it is refused with a code the phone can turn back into the red banner the move to the Pi would " +
-      "otherwise have taken away",
-  },
-  {
-    script: "scripts/check-wifi-recover.ts",
-    covers:
-      "the automatic wifi recovery and the handlebar hold that overrides it (#290). The fault clock first, " +
-      "because it has three states and an earlier design had two: a CONNECTED poll clears it, the fault shape " +
-      "(disconnected AND the hotspot in the scan) runs it, and EVERYTHING ELSE suspends it — out of range, radio " +
-      "unavailable, or an activation of our own in flight. That third arm is the one that bites twice over: a bike " +
-      "parked out of range would otherwise bank fault time it never spent trying and fire a ladder on the first " +
-      "poll the hotspot reappeared, racing NetworkManager's own autoconnect; and our own `connection up` reads as " +
-      "CONNECTING, so without it an attempt would reset the very clock that paces attempts and the backoff could " +
-      "never advance. Then the backoff, which is a SAFETY property rather than politeness — every attempt that " +
-      "reaches an association failure spends one of `connection.auth-retries`, and exhausting that budget is " +
-      "precisely what raises NO_SECRETS and latches the profile, so an over-eager watchdog would create the fault " +
-      "it exists to escape — capped rather than growing, and forgiven only by a connection that HOLDS for two " +
-      "polls, because one poll of CONNECTED is a flap and forgiving on it would pin the backoff at its floor " +
-      "through exactly the flapping episode it should be pacing. Then that the rejoin cadence is NOT the dump " +
-      "cadence: at #291's one-dump-per-15-minutes a 20-minute outage would have got a single attempt. Then the " +
-      "guard rule — a hold ALWAYS dumps, but while the link is UP the first one leaves it alone and arms a 60 s " +
-      "window, so a curious hold cannot drop the link the rider is watching the dashboard on. Then ONE HOLD IS ONE " +
-      "ACTION, replayed through the shipped recogniser at the real 29 664 ms press from the ride log — the press " +
-      "that nearly disqualified this button — which must fire exactly once where a broken latch fires once per " +
-      "50 ms beat. Finally the binding and its evidence: 5000 ms clears the capture archive's 300 ms worst by " +
-      "16x and does NOT clear that 29 664 ms one, which is asserted rather than hidden; and the margin that " +
-      "governs is 0x400's own worst intra-press frame gap of 160.2 ms against SAMPLE_MAX_AGE_MS, not 0x102's 14 ms",
-  },
-  {
-    script: "scripts/check-wifi-diag.ts",
-    covers:
-      "the wifi logging and the dump builder behind #290, where NetworkManager latched the hotspot profile out of " +
-      "autoconnect on 2026-09-19 and sat disconnected for twenty minutes while the Pi — reachable only over that " +
-      "very wifi — could not be asked why. The parsing traps first, both captured off the Pi rather than imagined: " +
-      "`nmcli -t` escapes the separator INSIDE a value, so a BSSID prints as `CC\\:BA\\:BD\\:34\\:31\\:92` and a naive " +
-      '`split(":")` reads six fields out of a three-field row — and an SSID may contain a colon too, which a ' +
-      "hotspot rename can produce at any time; and `GENERAL.STATE` is a NUMBER AND A WORD (`100 (connected)`), so " +
-      "`Number()` of the whole value is NaN. Then the fold itself, against libnm's own constants read out of " +
-      "nm-dbus-interface.h: FAILED (120) and DEACTIVATING (110) are DISCONNECTED and not UNAVAILABLE, because the " +
-      "radio worked throughout the 2026-09-19 silence and naming that 'unavailable' names the wrong fault. Then the " +
-      "reading the whole feature turns on — the hotspot IS in range and we are NOT on it — which neither half says " +
-      "alone. Then the dump: a fixture CARRYING a real-looking PSK must come out with that string absent while the " +
-      "setting it sat on is still visible (a redaction test whose input has nothing to redact passes with the " +
-      "redactor deleted), and a failed, timed-out or truncated command must say so rather than looking complete. " +
-      "Then the rail that a dump is safe to take at any moment: every collected command is a READ, no `connection " +
-      "up`, no forced rescan, and never `--show-secrets`. Finally two contracts that are invisible from either side " +
-      "on its own — each wifi_* key's bound resolved from its REGISTRY ENTRY rather than spelled, so moving the " +
-      "group back to `diag` (where a blank-unit code is silently gated to [0,1] and `wifi_link_state = 3` draws as " +
-      "a dead sensor) turns it red; and the poll interval read off src/http/status.ts's own FRESH_MS, because a " +
-      '`source: "poll"` signal slower than that window reads dark on a healthy Pi and `live === 0` is what a ' +
-      "reader of /status filters on to find a dead source",
-  },
-  {
     script: "scripts/check-fan-off-ceiling.ts",
     covers:
       "the fan's *off* step at a creep, and the hand-back when a creep becomes a departure. Daniel silenced the " +
@@ -724,62 +619,6 @@ const CHECKS: SelfCheck[] = [
       "which is what stops the phone promising a ceiling over a duty a thumb chose. Finally " +
       "the safety price, since this moved one: the five ENTER presses recorded at 47-118 km/h still cannot " +
       "reach *off*, and a Pi with no fan driver refuses the mode rather than claiming it",
-  },
-  {
-    script: "scripts/check-fan-banner.ts",
-    covers:
-      "that the phone's fan banner names the duty the fan was actually ASKED for. `fan_auto_mode` and " +
-      "`fan_target_pct` are published by two different files and the banner is worded from BOTH — the mode picks " +
-      "the sentence, the duty fills in the number — so they are a pair, and src/can/signals.ts flushes one batch " +
-      "per microtask, which makes two records separated by an `await` two WebSocket patches. A mode published " +
-      "ahead of its duty therefore arrives beside the duty of the mode BEFORE it: #199, where a hold said " +
-      "'Fan: manual 68 %' over a fan at 100 %, and off a cold pack said 'Fan: off' over a fan going to full and " +
-      "then raised a second banner when the duty caught up. Driven through the REAL batch sequence — onChange() " +
-      "subscribed the way src/ws.ts subscribes, replayed one patch at a time through public/lib/store.js's own " +
-      "apply() and public/lib/announce.js's own foldFanAnnouncement(), because sampling latestValue() afterwards " +
-      "is exactly what cannot see this: both signals are right a few milliseconds later and it is the ARRIVAL " +
-      "ORDER that lies. Every step of the cycle must raise exactly ONE banner and it must name 100 %, 0 % or " +
-      "automatic — held against a settled curve duty AND against one still inside its 1500 ms kick-start, which " +
-      "are two different bugs and fail separately. Then the property under the wording: the duty reaches the wire " +
-      "in the mode's batch or an earlier one, never a later one, and a duty commanded mid-kick is published " +
-      "rather than held for the rest of the kick",
-  },
-  {
-    script: "scripts/check-fan-race.ts",
-    covers:
-      "the other half of that pair: what the phone is told when a MODE PUBLISH races a command already in " +
-      "flight, which is a different mechanism from the banner's own wording and was split out of " +
-      "check-fan-banner.ts when that file passed the ~400-line line with both subjects in it. A bridge that " +
-      "never answers must leave the loop's mode readable rather than ending the process — the documented cost " +
-      "of publishing after an awaited command. A tap back to Auto landing INSIDE a slider command must not be " +
-      "overwritten with the MANUAL reason by the command it interrupted, which would put 'The slider is driving " +
-      "the fan.' under Automatic until the next tick. And #206: a /fan?mode=manual tap landing inside a CURVE " +
-      "command, in both directions — inside a bring-up it used to raise 'Fan: off' over a fan being given 68 % " +
-      "and then a second banner when the duty caught up, and inside a stop 'Fan: manual 68 %' over a fan being " +
-      "stopped. Driven against a bridge PARKED mid-command rather than merely slowed, because a timing race " +
-      "that resolves the wrong way leaves the ordering accidentally correct and the section green having " +
-      "exercised nothing; the parked state is asserted as a premise before each tap. And the SIGNATURE a " +
-      "wedged bridge leaves on the wire, which is what docs/fan-control.md §9 rests its refutation of #282 " +
-      "on: publishDecision() is synchronous and above evaluate()'s first await, so a bridge that never " +
-      "answers freezes fan_duty_pct and fan_target_pct while fan_auto_reason goes on moving — the opposite " +
-      "of what #282 reported, and the symptom #287 would present with. Moving that publish below the await, " +
-      "which reads like a tidy-up, inverts it and takes the proof with it",
-  },
-  {
-    script: "scripts/check-fan-endpoint.ts",
-    covers:
-      "both ends of the /fan wire: that the X-Cool-Eva header stands in front of every POST — the only thing " +
-      "between a cross-origin form on any page the rider's phone opens and a spinning blade, since a custom header " +
-      "name is what makes the request non-simple — refusing a missing one, a wrong one, the service-write value, " +
-      "and a duplicated one that joins to `fan, fan`, with each refusal shown to have commanded nothing, while a " +
-      "GET needs no header because it touches no hardware; every branch of parseFanRequest(), including the " +
-      "duty-and-mode-together 400 the endpoint refuses rather than guesses at and the 1e2 / 0x40 notations it does " +
-      "accept; and the page's half, public/lib/fan-command-queue.js, driven with a recording sender: that a " +
-      "five-move drag reaches the Pi as TWO POSTs with the last value intact, that the first move goes at once " +
-      "from a clock of any origin including zero, that a send slower than the interval never overlaps the next " +
-      "one, and that one that throws does not wedge the slider for the rest of the session — plus §4, the queue " +
-      "run with NO clock and NO timer injected, since the two `??` defaults are what actually ships and " +
-      "everything above replaces them",
   },
   {
     script: "scripts/check-fan-ordering.ts",
@@ -817,104 +656,30 @@ const CHECKS: SelfCheck[] = [
       "old first-occurrence index assertions passed, since every other section reports against that counter",
   },
   {
-    script: "scripts/check-preview-fixtures.ts",
+    script: "scripts/check-fan-race.ts",
     covers:
-      "that the design preview still stands in for the bike the Pi describes: each NAMED fixture — five of the eleven " +
-      "replies it writes, the other six being built inline from the request — is lifted out of the template into a " +
-      "throwaway .ts annotated with the type its endpoint serves and handed to tsc, so a field the Pi always sends and " +
-      "the fixture lacks is red, and so are a field it invents, a wrong scalar, a wrong array element and a union arm " +
-      "satisfied on the wrong discriminant. Plus every scene reading's unit and group against src/can/registry.ts, " +
-      "since a tuple of the right shape can still file range_km under a section the bike does not use, and every path " +
-      "public/ fetches having an answer. Written after VcuWriteStatus gained runningVersion in #153 and the fixture " +
-      "did not: vcu-write.js destructures it, so the binding threw, the service sheet froze on its loading ellipsis, " +
-      "and twelve days of screenshots silently lacked the safety-gate line and the running commit — with the annotated " +
-      "sheet throwing once per panel while reporting zero failures. It never runs the page; §11.7 says what it misses",
+      "the other half of that pair: what the phone is told when a MODE PUBLISH races a command already in " +
+      "flight, which is a different mechanism from the banner's own wording and was split out of " +
+      "check-fan-banner.ts when that file passed the ~400-line line with both subjects in it. A bridge that " +
+      "never answers must leave the loop's mode readable rather than ending the process — the documented cost " +
+      "of publishing after an awaited command. A tap back to Auto landing INSIDE a slider command must not be " +
+      "overwritten with the MANUAL reason by the command it interrupted, which would put 'The slider is driving " +
+      "the fan.' under Automatic until the next tick. And #206: a /fan?mode=manual tap landing inside a CURVE " +
+      "command, in both directions — inside a bring-up it used to raise 'Fan: off' over a fan being given 68 % " +
+      "and then a second banner when the duty caught up, and inside a stop 'Fan: manual 68 %' over a fan being " +
+      "stopped. Driven against a bridge PARKED mid-command rather than merely slowed, because a timing race " +
+      "that resolves the wrong way leaves the ordering accidentally correct and the section green having " +
+      "exercised nothing; the parked state is asserted as a premise before each tap. And the SIGNATURE a " +
+      "wedged bridge leaves on the wire, which is what docs/fan-control.md §9 rests its refutation of #282 " +
+      "on: publishDecision() is synchronous and above evaluate()'s first await, so a bridge that never " +
+      "answers freezes fan_duty_pct and fan_target_pct while fan_auto_reason goes on moving — the opposite " +
+      "of what #282 reported, and the symptom #287 would present with. Moving that publish below the await, " +
+      "which reads like a tidy-up, inverts it and takes the proof with it",
   },
   {
-    script: "scripts/check-preview-harness.ts",
+    script: "scripts/check-fault-summary.ts",
     covers:
-      "that the two preview templates still SHARE one harness rather than carrying two copies of it. " +
-      "After #170 merged them, a name declared by both templates is a copy by definition, and so is a name a " +
-      "template declares that scripts/preview-harness-*.js already declares — so this needs no threshold: it " +
-      "asserts that every page-contract name is declared by both pages, that nothing else is, that no template " +
-      "shadows a harness name, and that nothing is declared twice across the harness parts in one of the two " +
-      "ways that redeclare SILENTLY (a function, or a window.* assignment — const/let/class throw at parse and " +
-      "check-service-preview.ts already catches those). Written for the dead settle(): copied into the second " +
-      "template when 85b8643 created it, never called there, improved in one copy only, and unnoticed for three " +
-      "weeks. It reads source and never runs a page; docs/diagnostics-and-checks.md §11.10",
-  },
-  {
-    script: "scripts/check-service-gate-charging.ts",
-    covers:
-      "whether a charging motorcycle may be serviced, on real bytes replayed through the decoders: the two " +
-      "fixtures the ruling names — episode E0 (a settled AC state with an empty inlet, which must be REFUSED " +
-      "with the cable named rather than the drive) and the 2026-08-09 14:42:53-14:44:52 DC handshake (which " +
-      "must be ALLOWED) — then each of the three charge witnesses excusing an energized bike on its own, a " +
-      "nine-row truth table crossed with reads, parameter writes, reset-vcu, charge-current and charge-stop, " +
-      "that the gate's sampler asks for every signal the decision reads and every one of them is a registered " +
-      "signal (the bug that left the charging escape dead on the bike for its whole life), that the gate's " +
-      "charge window can never outlive the one reset-vcu refuses on, and that the per-action policy table is " +
-      "total over all ten ServiceWriteRequest kinds",
-  },
-  {
-    script: "scripts/check-service-preview.ts",
-    covers:
-      "that scripts/build-service-preview.ts produces a file whose script blocks actually parse — the one failure mode nothing else here can see, since no other check executes generated output — plus the handles the annotated sheet's close-ups hold the shipped page by: every PANEL_BLOCK marker is read out of the template and asserted to be built EXACTLY ONCE across public/views/, tag and whole class token, so a rename goes red — uniqueness being what makes one visible at all — and every panel kind has a marker to be scoped by. It proves that and nothing more: it parses the generated page rather than running it, so it cannot see a dead panel. docs/diagnostics-and-checks.md §11.6 says what that cost and what the runtime asserts instead",
-  },
-  {
-    script: "scripts/check-service-stamp.ts",
-    covers:
-      "the last-service read, whose bug was PLACEMENT and not text: that the read-stamp control is still passed an " +
-      "outcome node to render — deleting that argument is issue #154 exactly, the answer rendering three sections up " +
-      "an overflow-y sheet while the button appeared to do nothing — that `message.val` is rendered only by the two " +
-      "components that own it and never by the service-actions block, since a third binding puts the same sentence " +
-      "on screen twice, and that the answer is dropped when the sheet reopens and when 31 FC overwrites the block it " +
-      "reports. Plus the evidence itself against the REAL 2026-09-08 payload (four zero WORDs), including that the " +
-      "fields shown are exactly the identifiers that are read, so a fifth word cannot silently drop out, and that " +
-      "the implausible note is NOT repeated under the sentence that already carries it. Finally that no tracked " +
-      "file re-asserts that these four were unread — a claim that lived in five places, one of them a " +
-      "refusal a rider reads at the bike, and that a grep found four of. \u26a0 It asserts the WIRING, not the " +
-      "rendering: the suite has no browser, so that the outcome node reaches a phone is what the screenshots cover",
-  },
-  {
-    script: "scripts/check-write-audit.ts",
-    covers:
-      "the audit journal's reader \u2014 the only record of what has been done to this motorcycle, and untested " +
-      "until 2026-09-08. A power cut leaves the block allocated and the write lost, and U+0000 is not JS " +
-      "whitespace, so those bytes reached JSON.parse and threw a STACK TRACE ON EVERY GET AND POST to " +
-      "/vcu-write, which the dashboard polls. Three shapes follow and \u00a75 is the fence between them: NULs " +
-      "alone are a hole with nothing to recover; NULs then bytes that will not parse are a hole whose " +
-      "neighbour was torn too, skipped with one line; and NULs then bytes that DO parse are a hole that ended " +
-      "on a record boundary \u2014 the record is KEPT, because skipping it would lower the count of what was " +
-      "done to this bike, and the one on this Pi is an ECUReset of both micros. \u26a0 A NUL anywhere but a " +
-      "contiguous LEADING run stays an ordinary damaged line, which is what stops this widening into " +
-      "\u201cskip anything with a NUL in it\u201d, and salvaged bytes need an `at` and an `action` before " +
-      "they count as a record. Each injury is named ONCE PER PROCESS rather than once per request, with a " +
-      "second, different injury still getting its own line so the dedupe cannot degenerate into once ever. " +
-      "Plus blank lines, ordinary corruption, a torn last line logged rather than warned, the precedence when " +
-      "a holed line is also the last one, newest-first order, the limit, an absent journal reading as no " +
-      "records rather than an unreadable one, and a round trip through appendAuditRecord carrying the stamp " +
-      "read's rawHex. \u26a0 Every section gets its OWN temp directory: the reader's once-per-process key is " +
-      "per file and line, so sections sharing one would claim each other's and \u00a73's warning COUNT read " +
-      "zero instead of one",
-  },
-  {
-    script: "scripts/check-write-status-split.ts",
-    covers:
-      "the /vcu-write payload as a LIST plus ONE DETAIL (#107). summariseTarget ran for all 269 allowlist " +
-      "entries on every request and armWrite() fetches before every arm, so the arming gesture of the controls " +
-      "that change this motorcycle carried a 256 582-byte round trip — 249 878 of it targets — on garage wifi " +
-      "on a Pi Zero. Through the real runner and the real page: that a bare GET still answers the whole " +
-      "allowlist, that `detail=NAME` answers one target in full and an unknown name answers no detail rather " +
-      "than an error, that `list=0` omits the listing as NULL rather than as [] — the page keeps its own copy, " +
-      "and \u201cyou already have it\u201d must not be confusable with \u201cthis bike has nothing " +
-      "writable\u201d — and that a refresh holding the names does not empty the picker while a response naming " +
-      "a different parameter table discards them, since a sweep finishing under this very sheet re-selects it. " +
-      "\u26a0 The scary one: selectedTarget() is now ONE object the Pi hands over rather than a find over an " +
-      "array carrying its own names, and it decides `action=bit` vs `action=parameter` and the compare-and-swap " +
-      "`expected=` \u2014 so a detail whose name is not the selection's is refused, or a coherent-looking write " +
-      "lands against the wrong parameter. Plus that armWrite() still raises `busy` before its refresh, which is " +
-      "the double-tap guard itself",
+      "complete active counts despite unknown or capped individual keys, offline/silent unknown, confirmed clear and rising-edge history",
   },
   {
     script: "scripts/check-flag-bounds.ts",
@@ -927,6 +692,30 @@ const CHECKS: SelfCheck[] = [
       "byte so a state this bike has not reached yet renders as a state rather than as a dead sensor",
   },
   {
+    script: "scripts/check-free-pi-captures.ts",
+    covers:
+      "the gate that deletes raw captures off the bike's SD card, against the rows that were really wrong on " +
+      "2026-09-19: that a verified, complete, day-old capture is deletable and every guard refuses on its own — a " +
+      "name that is not a capture (capture.sh.superseded, the ORIGINAL untracked capture script, is a manifest " +
+      "row), a source_state that is not exactly complete including unknown ones, a size that moved under a live " +
+      "capture, the boot that is running now, either the mtime or the filename reading under 24 h on a Pi with no " +
+      "RTC, a verified copy that is missing or the wrong size, and a sha256 that disagrees under --strict",
+  },
+  {
+    script: "scripts/check-freeze-frame-values.ts",
+    covers:
+      "the whole-bike freeze-frame read and what is shown from it: that a 0x18 list carrying padding, a component " +
+      "outside 1…63 and a duplicate is filtered BEFORE anything is asked — one bad record must cost that record " +
+      "and not the components already read — that a positive reply echoing another component is filed as a " +
+      "failure rather than counted as an answer, that the deadline stops the read while a whole worst-case " +
+      "component still fits inside the OBD poller's hold and that no shipping call site can inject the clock it " +
+      "is measured on, that a 0x18 which fails asks nothing and stores nothing, that the store refuses to lose a " +
+      "component the bike still lists while still accepting a genuinely shorter list and a genuinely empty one " +
+      "(and refusing a garbled list that merely looks empty), that all 34 committed replies decode with their " +
+      "cycles-since-stored byte placed, and that none of the 211 captured field slots is drawn as a fault while a " +
+      "0xFFFF sentinel still is",
+  },
+  {
     script: "scripts/check-freeze-frame.ts",
     covers:
       "the 120 infokey fields and 155 per-fault shortlists against dtc-table.ts, the 0x17 request encoding and its read-only guard, extended-addressed ISO-TP reassembly and the freeze-frame layout against CONSTRUCTED transfers (no 0x17 payload has ever been captured), plus the refused, wrong-component, gapped, short, oversized, truncated, surplus and foreign replies they must reject — and that every rejection still carries the bytes that caused it",
@@ -937,22 +726,51 @@ const CHECKS: SelfCheck[] = [
       "the GPS clock gate against the four corrupt frames in rides.db and two real cold boots, replayed again ten years on to prove the rule has no expiry date, plus the recoverable cooldown, the week-rollover floor, the two's-complement altitude and the blended-fix guard",
   },
   {
-    script: "scripts/check-arming.ts",
+    script: "scripts/check-handlebar-gestures.ts",
     covers:
-      "the two-tap arm/dwell in front of every control that writes to the bike — public/lib/arming.js, which had no " +
-      "coverage at all until 2026-08-30 and is the whole of what stands between a double-tap and a write to a " +
-      "calibration EEPROM. On a clock the check hands in: that one tap arms and cannot also fire, that a second at " +
-      "399 ms is refused and one at exactly 400 ms is not, that a refused tap is IGNORED rather than disarming — " +
-      "the distinction the caption depends on — that arming a second control re-stamps rather than inheriting a " +
-      "dwell that elapsed ten seconds ago, that a clock which jumped backwards hands out no dwell, and that a held " +
-      "Enter is cancelled while a held ArrowDown is not. Then the parts no single module holds: that the charge " +
-      "tab's two now CO-VISIBLE controls do not share a key, that a status refresh landing under an armed button " +
-      "disarms it (run for real against a stubbed fetch), and that re-opening the menu sheet disarms — the only " +
-      "disarm the two Pi actions have, since neither fetches a status to land under one. Then: that all eleven " +
-      "firing sites still test their own key, then " +
-      "the dwell, then clear, then act — in that order, with the refused branch doing nothing but return — and " +
-      "that no module outside arming.js ever sets `armed` to a non-empty key, which is what makes the dwell " +
-      "unskippable. Plus the production defaults nothing else exercises: the same gate on the real performance.now()",
+      "the two handlebar gestures — double-click cruise-set for the next tab, long-press indicator-cancel to save a waypoint — replayed through the recognisers the phone runs, including the deadline wakeup without which a hold could only ever fire on release. Most cases are real durations that must fire NOTHING: the 140 ms median press, the 30 ms shortest, the 920 ms longest ordinary press on any handlebar button, and the only 1794 ms cruise-set press in the corpus. Plus the threshold margins and the binding itself — registered, deadband-free, and not the cruise-arm switch, whose every recorded press armed cruise control",
+  },
+  {
+    script: "scripts/check-hold-gestures.ts",
+    covers:
+      "the two handlebar HOLD gestures the Pi now recognises for itself — a 1200 ms hold of MODE ENTER stepping " +
+      "the fan round manual 100 % → off → automatic, and a 500 ms hold of the indicator-cancel switch saving a " +
+      "waypoint. Above all the freshness rule, planted rather than argued: a press followed by twenty minutes of " +
+      "silence NEVER fires however long the bus has been quiet, because the press is abandoned the moment the " +
+      "sample goes stale; a 300 ms press fires nothing; and a 1.3 s hold fires exactly once, while the thumb is " +
+      "still down rather than on the release — which is what keeps a thumb clear of the hazard lights the cancel " +
+      "switch turns on at or before 2.011 s. Then the thresholds against the whole 268-file archive: 1200 ms " +
+      "clears the longest MODE ENTER press ever recorded (290 ms, over 160 presses, the only decoded handlebar " +
+      "bit with no long press anywhere) by more than 4×, and 500 ms clears the longest ordinary indicator-cancel " +
+      "press outside one afternoon's experiment (330 ms over 770 of 779) by 1.5×. Then the cycle end to end " +
+      "bridge: it walks all three states in the rider's own direction — quiet is ONE hold from the manual 100 % he " +
+      "rides in — SKIPS the quiet state above the 15 km/h ceiling so a false fire while riding can only " +
+      "land on the thermally safe side, reverts its own *off* when the bike moves but never a manual 0 the slider " +
+      "set, and leaves the fan off when the bus goes silent — because that silence is the AC charge the state " +
+      "exists for. Finally the waypoint's gates, including the 2026-08-09 defect: a fix 8 000 km from the one " +
+      "before it is refused with a code the phone can turn back into the red banner the move to the Pi would " +
+      "otherwise have taken away",
+  },
+  {
+    script: "scripts/check-import-ride-log.ts",
+    covers:
+      "the orchestration of `scripts/import-ride-log.ts` \u2014 decrypt, re-run the waypoint recovery, " +
+      "materialise the track, and only then replace the live database \u2014 which is the only part of " +
+      "that step that moves gigabytes and was the only part nothing tested. The two child processes " +
+      "are injected, so every branch runs here in milliseconds against real but tiny SQLite files: " +
+      'decrypt exit 2 CARRYING ON, because "N segments could not be decrypted, the rest is intact" is ' +
+      "the normal case on a real dump and treating it as fatal would make the archive unimportable; " +
+      "any other non-zero code from any stage refusing WITHOUT a swap and leaving the staging file on " +
+      "disk; a staging file from an earlier run stopping the next one before it does anything; an " +
+      "import that covers fewer readings or a shorter span than the database it would replace being " +
+      "refused unless --allow-shrink says so; a non-empty `<out>-wal` stopping the swap because " +
+      "something still has that database open; and the `-wal`/`-shm` siblings moving WITH their " +
+      "database, since SQLite never checks that a WAL belongs to the file it finds it beside and a " +
+      "stranded one is silent corruption of the file the import just spent twenty minutes building. " +
+      "Plus the finished file being left in rollback journal mode, which is what the datasource " +
+      "wants (grafana/README.md measured WAL blanking 3 of 85 panel queries), and the one assertion " +
+      "that holds `commitRecovered` to refusing an empty verdict set \u2014 the precondition the " +
+      'step\'s "nothing to commit" no-op depends on, which nothing held it to before',
   },
   {
     script: "scripts/check-installer-service.ts",
@@ -972,16 +790,6 @@ const CHECKS: SelfCheck[] = [
     script: "scripts/check-kwp-multiframe.ts",
     covers:
       "the multi-frame half of the VCU's custom-KWP channel: the five read services and the guard that keeps every write unexpressible, ISO-TP segmentation against the 0x35 request frame captured 2026-08-08 and flow control in both directions, the one multi-frame reply with real bytes behind it (A8 bank-2 0x2001, reconstructed from two independent live records), the gapped / short / oversized / foreign / flooding replies the transport must abandon rather than complete, and the whole 0x35/0x36/0x37 bulk sequence with its block cap, cancellation and bus lease",
-  },
-  {
-    script: "scripts/check-obd-poller-hold.ts",
-    covers:
-      "the OBD poller's hold, against the real poll loop with no channel so nothing reaches a bus: that it is " +
-      "granted only once the loop has PARKED and no trouble-code transfer is in flight at that point, that a second " +
-      "holder is refused by name rather than stealing it, that releasing twice is safe, and — the one that matters — " +
-      "that a hold nobody releases is taken back BY THE LOOP at its cap and leaves the poller usable. A leaked hold " +
-      "would take speed, rpm, the temperatures and the whole DTC list off the dashboard and out of the log with a " +
-      "healthy-looking journal, on a bike parked where there is no reception",
   },
   {
     script: "scripts/check-lifetime-read.ts",
@@ -1039,117 +847,31 @@ const CHECKS: SelfCheck[] = [
       "dashboard gate requires",
   },
   {
-    script: "scripts/check-coolant-heat.ts",
-    covers:
-      "the watts the coolant loop is carrying away — ṁ·cp·ΔT, one multiplication, which is why nothing checked it " +
-      "for a year and why nothing in scripts/ imported derive.js at all until this file. #187 put the number on " +
-      "the riding screen beside the Charge tab's, so one constant decides what two screens say and every way it " +
-      "can be wrong is a plausible-looking number: the multiplier is asserted against the arithmetic written out " +
-      "by hand — the Bosch PAD's rated 850 L/h, glycol's 3800 J/(kg·K) and 1.05 kg/L — and against water's " +
-      "figures, which are the substitution a reader would never catch on screen. Then the function driven through " +
-      "the REAL store and apply(), because coolantDelta() reads through valueOf() rather than a passed-in reader: " +
-      "the worked 0.07 °C → 65.95 W, the riding fixture's 4.70 °C → 4428 W so the screenshot's number is the " +
-      "checked one, a reversed ΔT keeping its sign since dropping it would report a loop working hardest when it " +
-      "has stopped, an unfitted probe answering null rather than 0 W, and the failed-PT100 −242 °C leaving the last " +
-      "good reading standing instead of reaching a multiplier that would turn it " +
-      "into −259 kW of cooling. Every comparison carries a tolerance, since the delta of a 0.07 step is " +
-      "0.07000000000000028",
-  },
-  {
-    script: "scripts/check-ride-power.ts",
-    covers:
-      "Ride's fixed horizontal power axis, sign, voltage-derived limits, genuine zero, partial unknown/fault/stale limits and charging presentation",
-  },
-  {
-    script: "scripts/check-charge-display.ts",
-    covers:
-      "fresh signed Charge direction, small incoming/outgoing power, neutral zero, invalid/unavailable readings and held onDemand values",
-  },
-  {
-    script: "scripts/check-charge-attempt.ts",
-    covers:
-      "real HTTP charge-current attempt metadata distinguishes zero-frame refusals from partial or failed transmission without changing command guards",
-  },
-  {
-    script: "scripts/check-charge-curve.ts",
-    covers:
-      "exact observed charge-current interpolation/cap, both reported extremes, adaptive/fallback framing, truthful command replies and shared status priority",
-  },
-  {
-    script: "scripts/check-range-cells.ts",
-    covers:
-      "Range zero/fault reading guards and all 81 physical cell slots, module order, missing/stale/fault masking, true extrema and a balanced pack",
-  },
-  {
-    script: "scripts/check-reading-status.ts",
-    covers:
-      "registry-derived onDemand freshness, shared 60 s fault memory and recovery, newest-rejection retention, and a future measured fan sensor that keeps its age gate",
-  },
-  {
-    script: "scripts/check-capture-pruner.ts",
-    covers:
-      "the fixed non-interactive capture deletion helper: no arguments, capture-only basenames, " +
-      "current-boot and symlink refusal, protected root-owned directories, exact sudoers rule " +
-      "and the SSH client's legacy/new-layout selection",
-  },
-  {
-    script: "scripts/check-settings-storage.ts",
-    covers:
-      "literal effective-environment migration, private settings modes and serial writers, " +
-      "learned hub state without pending/revision churn, untouched future/corrupt settings, " +
-      "additive-field preservation, concurrent atomic replacements and selective orphan cleanup",
-  },
-  {
-    script: "scripts/check-settings-first-boot.ts",
-    covers:
-      "injected Pi first-boot privileges/probe/order, partial recording pause, refusal archive modes, field-level migration and marker recovery",
-  },
-  {
     script: "scripts/check-mutation-guard.ts",
     covers: "the real HTTP CSRF guard, cached-dashboard reload instruction and non-mutating spoken Siri compatibility",
   },
   {
-    script: "scripts/check-settings-cutover.ts",
-    covers: "legacy instruction removal, unit cutover ordering, CSRF waypoint client and GPS command seams",
+    script: "scripts/check-obd-poller-hold.ts",
+    covers:
+      "the OBD poller's hold, against the real poll loop with no channel so nothing reaches a bus: that it is " +
+      "granted only once the loop has PARKED and no trouble-code transfer is in flight at that point, that a second " +
+      "holder is refused by name rather than stealing it, that releasing twice is safe, and — the one that matters — " +
+      "that a hold nobody releases is taken back BY THE LOOP at its cap and leaves the poller usable. A leaked hold " +
+      "would take speed, rpm, the temperatures and the whole DTC list off the dashboard and out of the log with a " +
+      "healthy-looking journal, on a bike parked where there is no reception",
   },
   {
-    script: "scripts/check-settings-discovery.ts",
+    script: "scripts/check-pack-resistance.ts",
     covers:
-      "bounded read-only candidate scanning, handshake/single-flight refusal and cleanup without pairing or resets",
-  },
-  {
-    script: "scripts/check-settings-http.ts",
-    covers:
-      "settings redaction, strict HTTP mutations, pending/active state, canonical public keys and Bluetooth key handover",
-  },
-  {
-    script: "scripts/check-settings-phone.ts",
-    covers:
-      "phone drafts scoped to the confirmed Pi, stale edit CAS, active/learned revision semantics and disarm on process changes",
-  },
-  {
-    script: "scripts/check-settings-restart.ts",
-    covers:
-      "revision/bus reservation, bounded BLE drain and restart expiry, generation idempotence and existing motion rules",
-  },
-  {
-    script: "scripts/check-settings-runtime.ts",
-    covers:
-      "fresh and migrated service starts, durable pre-move capture, interrupted startup, degraded faults, M8 and M12",
-  },
-  {
-    script: "scripts/check-settings-data-move.ts",
-    covers:
-      "the single journalled move of default ride/service/wifi/capture data, interruption at " +
-      "every persisted boundary, compatibility links, archive-group access, untouched explicit " +
-      "paths/conflicting destinations, public-key retry and canonical migration precedence",
-  },
-  {
-    script: "scripts/check-settings-migration-guards.ts",
-    covers:
-      "archive symlink/hard-link refusal before every rename, untouched sources and journal on interrupted attempts, " +
-      "named migration faults, shared logger/import parsing of newline/BOM/text-prefixed public keys, " +
-      "and refusal of foreign or released locks before journal/data writes",
+      "the pack-resistance estimator that replaced the BMS's own unusable 0x206 figure, driven by real 0x200 " +
+      "frames re-encoded from the 2026-09-07 ride: that a genuine load window fits the resistance those same " +
+      "frames were measured to have, that an at-rest window falls back to the modelled curve instead of " +
+      "reporting a stale measurement, that the hold expires on the stated interval, that only pairs from ONE " +
+      "frame enter the buffer (a missing half, a stamp skew and the 5 s heartbeat's repeat are each refused), " +
+      "that the modelled curve is monotone and holds its endpoints, that the answer is never null so no " +
+      "consumer needs a null branch, and that store.js hands the buffer only readings which passed the same " +
+      "plausibility gate the rest of the dashboard uses — the sign of the slope and the same-frame rule are " +
+      "the two ways this can be silently wrong, and a wrong sign yields a plausible-looking ~1 mOhm",
   },
   {
     script: "scripts/check-power-cut-durability.ts",
@@ -1174,13 +896,294 @@ const CHECKS: SelfCheck[] = [
       "proves the code path and the ordering — the durability claim is an ext4-on-Linux one",
   },
   {
+    script: "scripts/check-preview-fixtures.ts",
+    covers:
+      "that the design preview still stands in for the bike the Pi describes: each NAMED fixture — five of the eleven " +
+      "replies it writes, the other six being built inline from the request — is lifted out of the template into a " +
+      "throwaway .ts annotated with the type its endpoint serves and handed to tsc, so a field the Pi always sends and " +
+      "the fixture lacks is red, and so are a field it invents, a wrong scalar, a wrong array element and a union arm " +
+      "satisfied on the wrong discriminant. Plus every scene reading's unit and group against src/can/registry.ts, " +
+      "since a tuple of the right shape can still file range_km under a section the bike does not use, and every path " +
+      "public/ fetches having an answer. Written after VcuWriteStatus gained runningVersion in #153 and the fixture " +
+      "did not: vcu-write.js destructures it, so the binding threw, the service sheet froze on its loading ellipsis, " +
+      "and twelve days of screenshots silently lacked the safety-gate line and the running commit — with the annotated " +
+      "sheet throwing once per panel while reporting zero failures. It never runs the page; §11.7 says what it misses",
+  },
+  {
+    script: "scripts/check-preview-harness.ts",
+    covers:
+      "that the two preview templates still SHARE one harness rather than carrying two copies of it. " +
+      "After #170 merged them, a name declared by both templates is a copy by definition, and so is a name a " +
+      "template declares that scripts/preview-harness-*.js already declares — so this needs no threshold: it " +
+      "asserts that every page-contract name is declared by both pages, that nothing else is, that no template " +
+      "shadows a harness name, and that nothing is declared twice across the harness parts in one of the two " +
+      "ways that redeclare SILENTLY (a function, or a window.* assignment — const/let/class throw at parse and " +
+      "check-service-preview.ts already catches those). Written for the dead settle(): copied into the second " +
+      "template when 85b8643 created it, never called there, improved in one copy only, and unnoticed for three " +
+      "weeks. It reads source and never runs a page; docs/diagnostics-and-checks.md §11.10",
+  },
+  {
+    script: "scripts/check-range-cells.ts",
+    covers:
+      "Range zero/fault reading guards and all 81 physical cell slots, module order, missing/stale/fault masking, true extrema and a balanced pack",
+  },
+  {
+    script: "scripts/check-reading-status.ts",
+    covers:
+      "registry-derived onDemand freshness, shared 60 s fault memory and recovery, newest-rejection retention, and a future measured fan sensor that keeps its age gate",
+  },
+  {
+    script: "scripts/check-recover-waypoints.ts",
+    covers:
+      "reconstructing, from a decoded ride log, the waypoints a handlebar hold asked for and never got — the " +
+      "phone dropped eight of them on 2026-09-07 because a hidden page recognises nothing, and the beat dropped " +
+      "four more on 2026-09-09 from holds that ended before the beat that would have fired them \u2014 two of the " +
+      "four had not even cleared the 1000 ms threshold then in force. Above all that the recovery reproduces what the BIKE would have done rather than deciding afresh: " +
+      "presses pair WITHIN one session and ordered by seq, since ts is wall clock and the Pi steps it; a press " +
+      "opens only on a watched 0\u21921, so a session whose first row is already 1 contributes nothing \u2014 the " +
+      "rule src/gestures/long-press.ts enforces, and the one that miscounted these holds twice; a press still " +
+      "open when a session ends is discarded rather than closed by the next boot's first row; a live waypoint " +
+      "vouches for ONE press and only forward in time, because matching by nearest instant lets one waypoint " +
+      "excuse several holds; the position is the last gps_lat/gps_lon row at or before the fire, which is exact " +
+      "to within one deadband at ANY row age because src/can/signals.ts compares against the last LOGGED value; " +
+      "freshness is witnessed by gps_epoch_s and never by the position rows, since that bound cannot see a " +
+      "receiver that went silent while the bike kept moving; and the jump gate is TWO rules, exclusive by Δt — " +
+      "an implied speed at or above MIN_FIX_INTERVAL_MS, a distance below it, which is where most of this hub's " +
+      "pairs land — so the verdict names the rule that judged rather than claiming a test that never ran. " +
+      "⚠ The floor fixture INVERTED with #241: a 130.3° longitude 500 ms after a good fix used to be " +
+      "recovered with nothing looking at it, which is the exact shape that issue was filed for, and is now refused; " +
+      "an ordinary 19 m step at the same cadence sits beside it, or the assertion is satisfied by a rule that " +
+      "refuses 93 % of this hub's pairs",
+  },
+  {
+    script: "scripts/check-release-bundle.ts",
+    covers:
+      "pinned release inputs, tracked-source boundaries, private data and escaping symlinks, ARM64 ELF rejection, " +
+      "the shell-readable manifest and the extracted file inventory; native builds and loads run in ARM64 release CI",
+  },
+  {
+    script: "scripts/check-ride-log-clock.ts",
+    covers:
+      "the ride log against a Pi with no RTC (#188) and the seal that parking buys (#57): that splitByTrust cuts " +
+      "contiguous runs, keeps their order and is BOUNDED — five alternating runs collapse to one carrying the most " +
+      "pessimistic trust, so a flapping clock cannot put an X25519 keygen and an fdatasync per flap on the event " +
+      "loop; that a reading sealed under an unconfirmed clock goes to rides-boot-<session>.celog and a trusted one " +
+      "to rides-<date>.celog, both untrusted seals sharing ONE file; that a buffer spanning the step seals as TWO " +
+      "labelled segments — the case a seal-time sample gets wrong for the median boot, whose clock steps 15.9 s in " +
+      "against a 30 s timer — with no timestamp rewritten to make them agree; that the header is v3 and a v2 " +
+      "segment beside it still decodes and reports no trust rather than a good one; that a seal failing on its " +
+      "SECOND run re-queues both runs ahead of what was buffered while it ran, writing every reading exactly once " +
+      "and in the order recorded; and that the park seal fires on an observed entry into state 60 but not on the " +
+      "first sample nor an unrelated change, and still seals the new readings when a seal is already in flight",
+  },
+  {
+    script: "scripts/check-ride-log-status.ts",
+    covers:
+      "what /status reports about the ride log, and about the CAN sources: that the log count is read " +
+      "off the directory rather than capped or hardcoded (13 files, sized, past the 10 that was reported as stuck), " +
+      "that five real seals through src/storage/encrypted-log.ts still land in one day file — so a file is not a " +
+      "segment, and a caption that comes back may not call it one — that a group nothing has ever been heard from " +
+      "reads [0, n] rather than being left out of the payload, that a group is dropped from the summary only when " +
+      "every signal in it is written on request, that a group which does reach the payload is one the check names " +
+      "on purpose, and that a talking bus counts each key once — plus that a sealed segment opens with the matching " +
+      "private key and with no other, which is the only security property anything here is allowed to claim",
+  },
+  {
+    script: "scripts/check-ride-map.ts",
+    covers:
+      "the laptop-side map viewer in `map/` \u2014 its UNBOUNDED queries and its pure track builder, " +
+      "run against a SYNTHETIC ride log (scripts/map-fixture.ts) because the real archive can neither " +
+      "be committed nor screenshotted. The queries are IMPORTED from map/src/lib/server/queries.ts " +
+      "rather than restated, so a pass is a claim about what the server will really run. " +
+      "\u26a0 The viewer has no `$__to`, so `ts < 2000000000000` is the ONLY thing left excluding the " +
+      "49 772 readings a corrupt GPS frame stamped in 2060 \u2014 the dashboard had that guard AND a " +
+      "relative window, and dropping the window dropped the second one. A 2060-stamped waypoint is " +
+      "planted and asserted absent, so the guard is proven to BITE rather than merely to be present " +
+      "in the SQL text. Every assertion here was mutation-tested: deleting the gap split, the " +
+      "one-vertex filter, the band split, the 2060 guard or the charge-splits-a-ride clause each " +
+      "turns it red. The charge one only does so since the fixture's gaps were shortened \u2014 with " +
+      "35 minutes after each stop the gap rule split those rides anyway and that assertion could " +
+      "not fail",
+  },
+  {
+    script: "scripts/check-ride-power.ts",
+    covers:
+      "Ride's fixed horizontal power axis, sign, voltage-derived limits, genuine zero, partial unknown/fault/stale limits and charging presentation",
+  },
+  {
+    script: "scripts/check-route-disarm.ts",
+    covers: "tab taps, gesture navigation and URL/history restoration discard an armed action's old confirmation",
+  },
+  {
+    script: "scripts/check-route-map-sql.ts",
+    covers:
+      "the route map's charge-stop position, by RUNNING the dashboard's own SQL — the queries are read " +
+      "out of grafana/dashboards/route-map.json rather than restated, so a green check is a claim " +
+      "about what Grafana will execute. Nothing covered that file before; #173 was found by reading " +
+      "it. A charge stop inherits its position from the last fix before plug-in, because the hub " +
+      "sleeps while charging, and that newest row is the one row a despiker can never see: a lone " +
+      "excursion is only visible from its NEIGHBOURS, and the lookup's own `r.ts <= sess.start_ts` " +
+      "forbids looking at the one after it. Asserted here: that a clean map is untouched; that a " +
+      "leading-digit excursion last before plug-in is stepped over on EITHER axis; that it is still " +
+      "stepped over when the receiver falls silent straight afterwards, which is the mechanism the " +
+      "issue describes and the one a forward-only clause cannot reach; that an excursion of 0.0025° " +
+      "— the size the threshold actually decides, where a 100° fixture would pass at any threshold — " +
+      "is caught; that a bike genuinely carried three degrees across a six-hour gap is NOT; that two " +
+      "runs whose rows interleave because the Pi stepped its clock do not contradict each other, " +
+      "which is what the session predicate is for; that an excursion among the 110 654 rows carrying " +
+      "no session at all is still caught, because `=` there would satisfy NOT EXISTS and switch the " +
+      "gate off silently over a third of the archive; and that a row stamped 2060 reaches neither. " +
+      "⚠️ Every excursion case also asserts that the query WITHOUT the clause returns the corrupt " +
+      "row, so no fixture can be one the old query would have got right anyway. And the two tiles " +
+      "are asserted to contain the table's body verbatim, because they select COUNT() and SUM() and " +
+      "no behavioural assertion can notice the clause going missing from them",
+  },
+  {
+    script: "scripts/check-route-track.ts",
+    covers:
+      "the route map's TRACK, which is no longer rebuilt on every dashboard load: " +
+      "scripts/route-track.ts materialises it into `route_track` at import time and the panel reads " +
+      "that table (5 152 ms \u2192 78 ms for the map, 4 474 ms \u2192 66 ms for the tile that counts " +
+      "it). The rules did not change, so this check runs the SHIPPED build against fixtures for each " +
+      "of them \u2014 a latitude logged alone paired with the longitude carried onto it, two fixes 1 ms " +
+      "apart collapsed to the last of their second, a lone excursion between two AGREEING neighbours " +
+      "rejected while the parked jitter that the 220 m floor saves is kept, a row stamped 2060 never " +
+      "reaching the table, and an out-of-range speed stored as NULL rather than clamped \u2014 and then " +
+      "reads the result back through the dashboard's own SQL, lifted out of route-map.json rather " +
+      "than restated. \u26a0 The assertion the whole change rests on is the one a careless fixture " +
+      "cannot make: a fix inserted into `reading` AFTER the build is not drawn, because every other " +
+      "assertion here would pass just as well if the panel still carried the six-CTE pipeline over " +
+      "the readings. Also that F contains A verbatim so the count cannot drift from the map, that " +
+      "the 12 000-point render budget still binds and still derives its stride from the window, and " +
+      "that `route_track_second` \u2014 a unique index on `ts / 1000`, because the INTEGER PRIMARY KEY on " +
+      "a MILLISECOND column could never fire \u2014 makes the per-second collapse a thing the build " +
+      "fails on rather than a thing the query is trusted to have done",
+  },
+  {
+    script: "scripts/check-service-gate-charging.ts",
+    covers:
+      "whether a charging motorcycle may be serviced, on real bytes replayed through the decoders: the two " +
+      "fixtures the ruling names — episode E0 (a settled AC state with an empty inlet, which must be REFUSED " +
+      "with the cable named rather than the drive) and the 2026-08-09 14:42:53-14:44:52 DC handshake (which " +
+      "must be ALLOWED) — then each of the three charge witnesses excusing an energized bike on its own, a " +
+      "nine-row truth table crossed with reads, parameter writes, reset-vcu, charge-current and charge-stop, " +
+      "that the gate's sampler asks for every signal the decision reads and every one of them is a registered " +
+      "signal (the bug that left the charging escape dead on the bike for its whole life), that the gate's " +
+      "charge window can never outlive the one reset-vcu refuses on, and that the per-action policy table is " +
+      "total over all ten ServiceWriteRequest kinds",
+  },
+  {
+    script: "scripts/check-service-preview.ts",
+    covers:
+      "that scripts/build-service-preview.ts produces a file whose script blocks actually parse — the one failure mode nothing else here can see, since no other check executes generated output — plus the handles the annotated sheet's close-ups hold the shipped page by: every PANEL_BLOCK marker is read out of the template and asserted to be built EXACTLY ONCE across public/views/, tag and whole class token, so a rename goes red — uniqueness being what makes one visible at all — and every panel kind has a marker to be scoped by. It proves that and nothing more: it parses the generated page rather than running it, so it cannot see a dead panel. docs/diagnostics-and-checks.md §11.6 says what that cost and what the runtime asserts instead",
+  },
+  {
+    script: "scripts/check-service-stamp.ts",
+    covers:
+      "the last-service read, whose bug was PLACEMENT and not text: that the read-stamp control is still passed an " +
+      "outcome node to render — deleting that argument is issue #154 exactly, the answer rendering three sections up " +
+      "an overflow-y sheet while the button appeared to do nothing — that `message.val` is rendered only by the two " +
+      "components that own it and never by the service-actions block, since a third binding puts the same sentence " +
+      "on screen twice, and that the answer is dropped when the sheet reopens and when 31 FC overwrites the block it " +
+      "reports. Plus the evidence itself against the REAL 2026-09-08 payload (four zero WORDs), including that the " +
+      "fields shown are exactly the identifiers that are read, so a fifth word cannot silently drop out, and that " +
+      "the implausible note is NOT repeated under the sentence that already carries it. Finally that no tracked " +
+      "file re-asserts that these four were unread — a claim that lived in five places, one of them a " +
+      "refusal a rider reads at the bike, and that a grep found four of. \u26a0 It asserts the WIRING, not the " +
+      "rendering: the suite has no browser, so that the outcome node reaches a phone is what the screenshots cover",
+  },
+  {
+    script: "scripts/check-settings-cutover.ts",
+    covers: "legacy instruction removal, unit cutover ordering, CSRF waypoint client and GPS command seams",
+  },
+  {
+    script: "scripts/check-settings-data-move.ts",
+    covers:
+      "the single journalled move of default ride/service/wifi/capture data, interruption at " +
+      "every persisted boundary, compatibility links, archive-group access, untouched explicit " +
+      "paths/conflicting destinations, public-key retry and canonical migration precedence",
+  },
+  {
+    script: "scripts/check-settings-discovery.ts",
+    covers:
+      "bounded read-only candidate scanning, handshake/single-flight refusal and cleanup without pairing or resets",
+  },
+  {
+    script: "scripts/check-settings-first-boot.ts",
+    covers:
+      "injected Pi first-boot privileges/probe/order, partial recording pause, refusal archive modes, field-level migration and marker recovery",
+  },
+  {
+    script: "scripts/check-settings-http.ts",
+    covers:
+      "settings redaction, strict HTTP mutations, pending/active state, canonical public keys and Bluetooth key handover",
+  },
+  {
+    script: "scripts/check-settings-migration-guards.ts",
+    covers:
+      "archive symlink/hard-link refusal before every rename, untouched sources and journal on interrupted attempts, " +
+      "named migration faults, shared logger/import parsing of newline/BOM/text-prefixed public keys, " +
+      "and refusal of foreign or released locks before journal/data writes",
+  },
+  {
+    script: "scripts/check-settings-phone.ts",
+    covers:
+      "phone drafts scoped to the confirmed Pi, stale edit CAS, active/learned revision semantics and disarm on process changes",
+  },
+  {
+    script: "scripts/check-settings-restart.ts",
+    covers:
+      "revision/bus reservation, bounded BLE drain and restart expiry, generation idempotence and existing motion rules",
+  },
+  {
+    script: "scripts/check-settings-runtime.ts",
+    covers:
+      "fresh and migrated service starts, durable pre-move capture, interrupted startup, degraded faults, M8 and M12",
+  },
+  {
+    script: "scripts/check-settings-storage.ts",
+    covers:
+      "literal effective-environment migration, private settings modes and serial writers, " +
+      "learned hub state without pending/revision churn, untouched future/corrupt settings, " +
+      "additive-field preservation, concurrent atomic replacements and selective orphan cleanup",
+  },
+  {
+    script: "scripts/check-shutdown.ts",
+    covers:
+      "requested SIGTERM/SIGINT exits successfully through cleanup errors or late fatal errors; later cleanup runs and unrequested crashes remain failures",
+  },
+  {
+    script: "scripts/check-soc-rate.ts",
+    covers:
+      "the SOC rate's LOWER-BOUND invariant, against continuous trajectories rather than against hand-written " +
+      "instances: that across four shapes a DC charge takes — a measured constant rate, a ramp-up, the taper and a " +
+      "stall — the estimate never exceeds the rate the trajectory ITSELF rose at over the span the estimator " +
+      "claims to have measured, which is the direction the session-ahead veto lives by, since over-stating it " +
+      "shortens the horizon and suppresses more steps down; that every trajectory reaches the property rather than " +
+      "answering null through it; that the crossing-instant precondition underneath the bound is real — a ring led " +
+      "by a reading kept mid-plateau, or by a downward crossing, DOES over-state, and by no more than the one whole " +
+      "count a whole-percent reading can hide; that a pack LOSING charge gets no rate at all rather than a negative " +
+      "one, which would come back as a negative horizon and suppress a step down on a pack that is not charging; " +
+      "and that the controller says so in the journal when it keeps a first SOC reading with no crossing behind it, " +
+      "which is the start-up ordering in src/index.ts made audible rather than assumed",
+  },
+  {
     script: "scripts/check-tab-routing.ts",
     covers:
       "the dashboard's tab URLs — that each tab still lives at the address every bookmark holds, that a fragment naming no tab (empty, unknown, malformed, or a path) lands on the riding screen instead of throwing before the first render, and that the tab ring the high-beam gesture advances through closes",
   },
   {
-    script: "scripts/check-route-disarm.ts",
-    covers: "tab taps, gesture navigation and URL/history restoration discard an armed action's old confirmation",
+    script: "scripts/check-theme-contrast.ts",
+    covers:
+      "both of style.css's palettes, parsed out of the file itself rather than restated: every ink colors.js " +
+      "hands the dashboard exists in both, values clear 11:1 and text and status inks 6:1 against both the page " +
+      "and the tile they land on, and no two steps of the good→watch→warn→bad ramp are closer than 15 in the a*b* " +
+      "plane — the light theme buys its contrast by compressing that ramp, so the trade is pinned at both ends. " +
+      "Plus the power meter's own marks, which are sized by visibility rather than readability and so were named " +
+      "here and measured nowhere until 2026-09-08: the solid track against the card it is drawn on, and the " +
+      "DASHED stretch that says the BMS has taken that scale away — averaged at the dash pattern's own duty " +
+      "cycle, imported from the module that draws it, against both the card and the solid track beside it. And " +
+      "--flow, the meter's fill, against every other ink rather than one named partner",
   },
   {
     script: "scripts/check-update-endpoint.ts",
@@ -1198,14 +1201,24 @@ const CHECKS: SelfCheck[] = [
       "the user switch is proved on the argv, which is the only part testable without a second uid",
   },
   {
-    script: "scripts/check-virtual-clock.ts",
+    script: "scripts/check-vcu-params.ts",
     covers:
-      "scripts/virtual-clock.ts itself, against real setTimeout as the oracle: that same-instant timers fire in " +
-      "arm order, that a promise chain resumed by one timer runs before the next fires, and that a nested or " +
-      "async callback orders the same way — the properties check-fan-endpoint.ts §3 rests on and which could all " +
-      "be deleted while it stayed green. Plus the divergence that is deliberate (a callback reads its OWN " +
-      "deadline, not the end of the step) and the three inputs that would silently corrupt the clock: a NaN " +
-      "delay, a self-rearming zero-delay timer, and two advance() calls in flight at once",
+      "VCU parameter table — including that it is Energica's table 16407, the one the bike itself names at " +
+      "parameter 276, and that a bike naming any other one is shouted about rather than silently mislabelled — " +
+      "request encoding and the read-only guard, framing against frames captured 2026-08-08, " +
+      "that the multi-frame segmenter emits byte for byte the Single Frame buildRequestFrame did, so routing reads " +
+      "through that transport moved nothing on the wire; the DWORD storage type and the 4-byte record it makes " +
+      "readable, the generated write targets' datatype bounds against literal per-type ranges, " +
+      "the live bank-1 reads, interpretation, the snapshot diff, the KWP transport against a simulated micro — " +
+      "including a 4-byte bank-1 record and the captured bank-2 0x2001 reply assembling through flow control, a " +
+      "stalled transfer and a reply over the payload cap coming back as two different outcomes, and no flow " +
+      "control going out for a reply that already fitted one frame — and — " +
+      "since the service-write PR — the write allowlist and its per-parameter ranges, the refusal of every " +
+      "non-allowlisted identifier, the table-type gate that refuses a parameter write until the bike has itself " +
+      "named a table this software encodes (refused when never read, refused when mismatched, permitted when " +
+      "confirmed — in the codec as well as the runner, and not applied to the service actions, which address no " +
+      "index), the seed→key algorithm against four seed/key pairs captured off this bike's own " +
+      "bus, the 0x120 clock frame against two frames that really went out, the service-stamp decode, Mode 04 and the bus lease",
   },
   {
     script: "scripts/check-vehicle-state-labels.ts",
@@ -1240,151 +1253,19 @@ const CHECKS: SelfCheck[] = [
       "arriving with a product name still attached to it",
   },
   {
-    script: "scripts/check-recover-waypoints.ts",
+    script: "scripts/check-version-startup.ts",
     covers:
-      "reconstructing, from a decoded ride log, the waypoints a handlebar hold asked for and never got — the " +
-      "phone dropped eight of them on 2026-09-07 because a hidden page recognises nothing, and the beat dropped " +
-      "four more on 2026-09-09 from holds that ended before the beat that would have fired them \u2014 two of the " +
-      "four had not even cleared the 1000 ms threshold then in force. Above all that the recovery reproduces what the BIKE would have done rather than deciding afresh: " +
-      "presses pair WITHIN one session and ordered by seq, since ts is wall clock and the Pi steps it; a press " +
-      "opens only on a watched 0\u21921, so a session whose first row is already 1 contributes nothing \u2014 the " +
-      "rule src/gestures/long-press.ts enforces, and the one that miscounted these holds twice; a press still " +
-      "open when a session ends is discarded rather than closed by the next boot's first row; a live waypoint " +
-      "vouches for ONE press and only forward in time, because matching by nearest instant lets one waypoint " +
-      "excuse several holds; the position is the last gps_lat/gps_lon row at or before the fire, which is exact " +
-      "to within one deadband at ANY row age because src/can/signals.ts compares against the last LOGGED value; " +
-      "freshness is witnessed by gps_epoch_s and never by the position rows, since that bound cannot see a " +
-      "receiver that went silent while the bike kept moving; and the jump gate is TWO rules, exclusive by Δt — " +
-      "an implied speed at or above MIN_FIX_INTERVAL_MS, a distance below it, which is where most of this hub's " +
-      "pairs land — so the verdict names the rule that judged rather than claiming a test that never ran. " +
-      "⚠ The floor fixture INVERTED with #241: a 130.3° longitude 500 ms after a good fix used to be " +
-      "recovered with nothing looking at it, which is the exact shape that issue was filed for, and is now refused; " +
-      "an ordinary 19 m step at the same cadence sits beside it, or the assertion is satisfied by a rule that " +
-      "refuses 93 % of this hub's pairs",
+      "HTTP readiness while inventory and OS diagnostics wait, unverified/edited/clean release labels, low-priority diagnostics, and one background verification after listening",
   },
   {
-    script: "scripts/check-release-bundle.ts",
+    script: "scripts/check-virtual-clock.ts",
     covers:
-      "pinned release inputs, tracked-source boundaries, private data and escaping symlinks, ARM64 ELF rejection, " +
-      "the shell-readable manifest and the extracted file inventory; native builds and loads run in ARM64 release CI",
-  },
-  {
-    script: "scripts/check-waypoint-endpoint.ts",
-    covers:
-      "GET /waypoint, which had no check at all until it saved a position 7 000 km from the bike (#157): three " +
-      "of the five refusal sentences a rider actually hears \u2014 no fix, a clock that has never synced, and, " +
-      "new here, a fix that is not a position on Earth \u2014 plus that a refusal records NOTHING and does not consume a " +
-      "sequence number, that a save copies the held fix rather than inferring one and stamps all three signals " +
-      "with a single timestamp, and that Siri's contract survives: no Accept header (or any other) gets one line " +
-      "of text/plain with 200, because Siri never speaks a non-2xx body. The clock is corroborated with real " +
-      "readings rather than faked with GPS_TIME_SYNC=0, which would delete the clock refusal instead of testing " +
-      "it; the verdict is in-agreement, so `date` is never spawned. \u26a0 Two sentences are NOT covered: the " +
-      "30-second stale fix, whose age comes from a monotonic mark taken inside record(), so reaching it means " +
-      "waiting 31 real seconds against a suite that runs in ten; and the clock's `contested` wording, which needs " +
-      "a corroborated time contradicting one already trusted \u2014 check-gps-clock.ts drives that gate directly",
-  },
-  {
-    script: "scripts/check-route-map-sql.ts",
-    covers:
-      "the route map's charge-stop position, by RUNNING the dashboard's own SQL — the queries are read " +
-      "out of grafana/dashboards/route-map.json rather than restated, so a green check is a claim " +
-      "about what Grafana will execute. Nothing covered that file before; #173 was found by reading " +
-      "it. A charge stop inherits its position from the last fix before plug-in, because the hub " +
-      "sleeps while charging, and that newest row is the one row a despiker can never see: a lone " +
-      "excursion is only visible from its NEIGHBOURS, and the lookup's own `r.ts <= sess.start_ts` " +
-      "forbids looking at the one after it. Asserted here: that a clean map is untouched; that a " +
-      "leading-digit excursion last before plug-in is stepped over on EITHER axis; that it is still " +
-      "stepped over when the receiver falls silent straight afterwards, which is the mechanism the " +
-      "issue describes and the one a forward-only clause cannot reach; that an excursion of 0.0025° " +
-      "— the size the threshold actually decides, where a 100° fixture would pass at any threshold — " +
-      "is caught; that a bike genuinely carried three degrees across a six-hour gap is NOT; that two " +
-      "runs whose rows interleave because the Pi stepped its clock do not contradict each other, " +
-      "which is what the session predicate is for; that an excursion among the 110 654 rows carrying " +
-      "no session at all is still caught, because `=` there would satisfy NOT EXISTS and switch the " +
-      "gate off silently over a third of the archive; and that a row stamped 2060 reaches neither. " +
-      "⚠️ Every excursion case also asserts that the query WITHOUT the clause returns the corrupt " +
-      "row, so no fixture can be one the old query would have got right anyway. And the two tiles " +
-      "are asserted to contain the table's body verbatim, because they select COUNT() and SUM() and " +
-      "no behavioural assertion can notice the clause going missing from them",
-  },
-  {
-    script: "scripts/check-ride-map.ts",
-    covers:
-      "the laptop-side map viewer in `map/` \u2014 its UNBOUNDED queries and its pure track builder, " +
-      "run against a SYNTHETIC ride log (scripts/map-fixture.ts) because the real archive can neither " +
-      "be committed nor screenshotted. The queries are IMPORTED from map/src/lib/server/queries.ts " +
-      "rather than restated, so a pass is a claim about what the server will really run. " +
-      "\u26a0 The viewer has no `$__to`, so `ts < 2000000000000` is the ONLY thing left excluding the " +
-      "49 772 readings a corrupt GPS frame stamped in 2060 \u2014 the dashboard had that guard AND a " +
-      "relative window, and dropping the window dropped the second one. A 2060-stamped waypoint is " +
-      "planted and asserted absent, so the guard is proven to BITE rather than merely to be present " +
-      "in the SQL text. Every assertion here was mutation-tested: deleting the gap split, the " +
-      "one-vertex filter, the band split, the 2060 guard or the charge-splits-a-ride clause each " +
-      "turns it red. The charge one only does so since the fixture's gaps were shortened \u2014 with " +
-      "35 minutes after each stop the gap rule split those rides anyway and that assertion could " +
-      "not fail",
-  },
-  {
-    script: "scripts/check-route-track.ts",
-    covers:
-      "the route map's TRACK, which is no longer rebuilt on every dashboard load: " +
-      "scripts/route-track.ts materialises it into `route_track` at import time and the panel reads " +
-      "that table (5 152 ms \u2192 78 ms for the map, 4 474 ms \u2192 66 ms for the tile that counts " +
-      "it). The rules did not change, so this check runs the SHIPPED build against fixtures for each " +
-      "of them \u2014 a latitude logged alone paired with the longitude carried onto it, two fixes 1 ms " +
-      "apart collapsed to the last of their second, a lone excursion between two AGREEING neighbours " +
-      "rejected while the parked jitter that the 220 m floor saves is kept, a row stamped 2060 never " +
-      "reaching the table, and an out-of-range speed stored as NULL rather than clamped \u2014 and then " +
-      "reads the result back through the dashboard's own SQL, lifted out of route-map.json rather " +
-      "than restated. \u26a0 The assertion the whole change rests on is the one a careless fixture " +
-      "cannot make: a fix inserted into `reading` AFTER the build is not drawn, because every other " +
-      "assertion here would pass just as well if the panel still carried the six-CTE pipeline over " +
-      "the readings. Also that F contains A verbatim so the count cannot drift from the map, that " +
-      "the 12 000-point render budget still binds and still derives its stride from the window, and " +
-      "that `route_track_second` \u2014 a unique index on `ts / 1000`, because the INTEGER PRIMARY KEY on " +
-      "a MILLISECOND column could never fire \u2014 makes the per-second collapse a thing the build " +
-      "fails on rather than a thing the query is trusted to have done",
-  },
-  {
-    script: "scripts/check-import-ride-log.ts",
-    covers:
-      "the orchestration of `scripts/import-ride-log.ts` \u2014 decrypt, re-run the waypoint recovery, " +
-      "materialise the track, and only then replace the live database \u2014 which is the only part of " +
-      "that step that moves gigabytes and was the only part nothing tested. The two child processes " +
-      "are injected, so every branch runs here in milliseconds against real but tiny SQLite files: " +
-      'decrypt exit 2 CARRYING ON, because "N segments could not be decrypted, the rest is intact" is ' +
-      "the normal case on a real dump and treating it as fatal would make the archive unimportable; " +
-      "any other non-zero code from any stage refusing WITHOUT a swap and leaving the staging file on " +
-      "disk; a staging file from an earlier run stopping the next one before it does anything; an " +
-      "import that covers fewer readings or a shorter span than the database it would replace being " +
-      "refused unless --allow-shrink says so; a non-empty `<out>-wal` stopping the swap because " +
-      "something still has that database open; and the `-wal`/`-shm` siblings moving WITH their " +
-      "database, since SQLite never checks that a WAL belongs to the file it finds it beside and a " +
-      "stranded one is silent corruption of the file the import just spent twenty minutes building. " +
-      "Plus the finished file being left in rollback journal mode, which is what the datasource " +
-      "wants (grafana/README.md measured WAL blanking 3 of 85 panel queries), and the one assertion " +
-      "that holds `commitRecovered` to refusing an empty verdict set \u2014 the precondition the " +
-      'step\'s "nothing to commit" no-op depends on, which nothing held it to before',
-  },
-  {
-    script: "scripts/check-waypoint-list.ts",
-    covers:
-      "the menu sheet's waypoint list — every waypoint saved this boot and every press refused, which the " +
-      "phone could not show before because the bike threw the events away and kept only a counter. ⚠️ What this " +
-      "guards is that the list cannot quietly be SHORT, since every way it loses a place is silent: the cap " +
-      "evicts the oldest REFUSAL and reaches a save only when there is none left to drop (fifty refusals at a " +
-      "no-fix cold boot would otherwise evict the whole ride while the counters stayed correct), the rows are " +
-      "the served order REVERSED and never sorted by `at` — which is wall clock on a Pi that steps its own — and " +
-      "both truncations, the bike's cap and the view's six-row preview, are named in the sentence under the list " +
-      "rather than left to be noticed. Then the refresh: /status is fetched again when `waypoint_seq` CHANGES, " +
-      "folded on the value because src/ws.ts heartbeats a full snapshot every 5 s and store.js assigns a freshly " +
-      "parsed object each time, so an unfolded derive would walk the ride-log directory every five seconds " +
-      "forever; the memory advances with the sheet shut so opening it does not fetch twice; and the derive is " +
-      "read off its own source for the two facts a pure function cannot see — module scope, and `sheetOpen.rawVal` " +
-      "rather than `.val`. Plus a coordinate out of bounds SHOWN as a fault with its row intact rather than " +
-      'dropped or clamped (both axes), a refusal the Pi could not date saying "at an unknown time" instead of ' +
-      "printing one off a clock it disowns, and every WAYPOINT_REFUSAL code worded from announce.js's own map so " +
-      "a row and the banner that appeared when it happened cannot say different things",
+      "scripts/virtual-clock.ts itself, against real setTimeout as the oracle: that same-instant timers fire in " +
+      "arm order, that a promise chain resumed by one timer runs before the next fires, and that a nested or " +
+      "async callback orders the same way — the properties check-fan-endpoint.ts §3 rests on and which could all " +
+      "be deleted while it stayed green. Plus the divergence that is deliberate (a callback reads its OWN " +
+      "deadline, not the end of the step) and the three inputs that would silently corrupt the clock: a NaN " +
+      "delay, a self-rearming zero-delay timer, and two advance() calls in flight at once",
   },
   {
     script: "scripts/check-waypoint-corroboration.ts",
@@ -1414,9 +1295,139 @@ const CHECKS: SelfCheck[] = [
       "gate, so the check counts change events and asserts the deadband suppressed it",
   },
   {
+    script: "scripts/check-waypoint-endpoint.ts",
+    covers:
+      "GET /waypoint, which had no check at all until it saved a position 7 000 km from the bike (#157): three " +
+      "of the five refusal sentences a rider actually hears \u2014 no fix, a clock that has never synced, and, " +
+      "new here, a fix that is not a position on Earth \u2014 plus that a refusal records NOTHING and does not consume a " +
+      "sequence number, that a save copies the held fix rather than inferring one and stamps all three signals " +
+      "with a single timestamp, and that Siri's contract survives: no Accept header (or any other) gets one line " +
+      "of text/plain with 200, because Siri never speaks a non-2xx body. The clock is corroborated with real " +
+      "readings rather than faked with GPS_TIME_SYNC=0, which would delete the clock refusal instead of testing " +
+      "it; the verdict is in-agreement, so `date` is never spawned. \u26a0 Two sentences are NOT covered: the " +
+      "30-second stale fix, whose age comes from a monotonic mark taken inside record(), so reaching it means " +
+      "waiting 31 real seconds against a suite that runs in ten; and the clock's `contested` wording, which needs " +
+      "a corroborated time contradicting one already trusted \u2014 check-gps-clock.ts drives that gate directly",
+  },
+  {
+    script: "scripts/check-waypoint-list.ts",
+    covers:
+      "the menu sheet's waypoint list — every waypoint saved this boot and every press refused, which the " +
+      "phone could not show before because the bike threw the events away and kept only a counter. ⚠️ What this " +
+      "guards is that the list cannot quietly be SHORT, since every way it loses a place is silent: the cap " +
+      "evicts the oldest REFUSAL and reaches a save only when there is none left to drop (fifty refusals at a " +
+      "no-fix cold boot would otherwise evict the whole ride while the counters stayed correct), the rows are " +
+      "the served order REVERSED and never sorted by `at` — which is wall clock on a Pi that steps its own — and " +
+      "both truncations, the bike's cap and the view's six-row preview, are named in the sentence under the list " +
+      "rather than left to be noticed. Then the refresh: /status is fetched again when `waypoint_seq` CHANGES, " +
+      "folded on the value because src/ws.ts heartbeats a full snapshot every 5 s and store.js assigns a freshly " +
+      "parsed object each time, so an unfolded derive would walk the ride-log directory every five seconds " +
+      "forever; the memory advances with the sheet shut so opening it does not fetch twice; and the derive is " +
+      "read off its own source for the two facts a pure function cannot see — module scope, and `sheetOpen.rawVal` " +
+      "rather than `.val`. Plus a coordinate out of bounds SHOWN as a fault with its row intact rather than " +
+      'dropped or clamped (both axes), a refusal the Pi could not date saying "at an unknown time" instead of ' +
+      "printing one off a clock it disowns, and every WAYPOINT_REFUSAL code worded from announce.js's own map so " +
+      "a row and the banner that appeared when it happened cannot say different things",
+  },
+  {
+    script: "scripts/check-wifi-diag.ts",
+    covers:
+      "the wifi logging and the dump builder behind #290, where NetworkManager latched the hotspot profile out of " +
+      "autoconnect on 2026-09-19 and sat disconnected for twenty minutes while the Pi — reachable only over that " +
+      "very wifi — could not be asked why. The parsing traps first, both captured off the Pi rather than imagined: " +
+      "`nmcli -t` escapes the separator INSIDE a value, so a BSSID prints as `CC\\:BA\\:BD\\:34\\:31\\:92` and a naive " +
+      '`split(":")` reads six fields out of a three-field row — and an SSID may contain a colon too, which a ' +
+      "hotspot rename can produce at any time; and `GENERAL.STATE` is a NUMBER AND A WORD (`100 (connected)`), so " +
+      "`Number()` of the whole value is NaN. Then the fold itself, against libnm's own constants read out of " +
+      "nm-dbus-interface.h: FAILED (120) and DEACTIVATING (110) are DISCONNECTED and not UNAVAILABLE, because the " +
+      "radio worked throughout the 2026-09-19 silence and naming that 'unavailable' names the wrong fault. Then the " +
+      "reading the whole feature turns on — the hotspot IS in range and we are NOT on it — which neither half says " +
+      "alone. Then the dump: a fixture CARRYING a real-looking PSK must come out with that string absent while the " +
+      "setting it sat on is still visible (a redaction test whose input has nothing to redact passes with the " +
+      "redactor deleted), and a failed, timed-out or truncated command must say so rather than looking complete. " +
+      "Then the rail that a dump is safe to take at any moment: every collected command is a READ, no `connection " +
+      "up`, no forced rescan, and never `--show-secrets`. Finally two contracts that are invisible from either side " +
+      "on its own — each wifi_* key's bound resolved from its REGISTRY ENTRY rather than spelled, so moving the " +
+      "group back to `diag` (where a blank-unit code is silently gated to [0,1] and `wifi_link_state = 3` draws as " +
+      "a dead sensor) turns it red; and the poll interval read off src/http/status.ts's own FRESH_MS, because a " +
+      '`source: "poll"` signal slower than that window reads dark on a healthy Pi and `live === 0` is what a ' +
+      "reader of /status filters on to find a dead source",
+  },
+  {
+    script: "scripts/check-wifi-recover.ts",
+    covers:
+      "the automatic wifi recovery and the handlebar hold that overrides it (#290). The fault clock first, " +
+      "because it has three states and an earlier design had two: a CONNECTED poll clears it, the fault shape " +
+      "(disconnected AND the hotspot in the scan) runs it, and EVERYTHING ELSE suspends it — out of range, radio " +
+      "unavailable, or an activation of our own in flight. That third arm is the one that bites twice over: a bike " +
+      "parked out of range would otherwise bank fault time it never spent trying and fire a ladder on the first " +
+      "poll the hotspot reappeared, racing NetworkManager's own autoconnect; and our own `connection up` reads as " +
+      "CONNECTING, so without it an attempt would reset the very clock that paces attempts and the backoff could " +
+      "never advance. Then the backoff, which is a SAFETY property rather than politeness — every attempt that " +
+      "reaches an association failure spends one of `connection.auth-retries`, and exhausting that budget is " +
+      "precisely what raises NO_SECRETS and latches the profile, so an over-eager watchdog would create the fault " +
+      "it exists to escape — capped rather than growing, and forgiven only by a connection that HOLDS for two " +
+      "polls, because one poll of CONNECTED is a flap and forgiving on it would pin the backoff at its floor " +
+      "through exactly the flapping episode it should be pacing. Then that the rejoin cadence is NOT the dump " +
+      "cadence: at #291's one-dump-per-15-minutes a 20-minute outage would have got a single attempt. Then the " +
+      "guard rule — a hold ALWAYS dumps, but while the link is UP the first one leaves it alone and arms a 60 s " +
+      "window, so a curious hold cannot drop the link the rider is watching the dashboard on. Then ONE HOLD IS ONE " +
+      "ACTION, replayed through the shipped recogniser at the real 29 664 ms press from the ride log — the press " +
+      "that nearly disqualified this button — which must fire exactly once where a broken latch fires once per " +
+      "50 ms beat. Finally the binding and its evidence: 5000 ms clears the capture archive's 300 ms worst by " +
+      "16x and does NOT clear that 29 664 ms one, which is asserted rather than hidden; and the margin that " +
+      "governs is 0x400's own worst intra-press frame gap of 160.2 ms against SAMPLE_MAX_AGE_MS, not 0x102's 14 ms",
+  },
+  {
+    script: "scripts/check-write-audit.ts",
+    covers:
+      "the audit journal's reader \u2014 the only record of what has been done to this motorcycle, and untested " +
+      "until 2026-09-08. A power cut leaves the block allocated and the write lost, and U+0000 is not JS " +
+      "whitespace, so those bytes reached JSON.parse and threw a STACK TRACE ON EVERY GET AND POST to " +
+      "/vcu-write, which the dashboard polls. Three shapes follow and \u00a75 is the fence between them: NULs " +
+      "alone are a hole with nothing to recover; NULs then bytes that will not parse are a hole whose " +
+      "neighbour was torn too, skipped with one line; and NULs then bytes that DO parse are a hole that ended " +
+      "on a record boundary \u2014 the record is KEPT, because skipping it would lower the count of what was " +
+      "done to this bike, and the one on this Pi is an ECUReset of both micros. \u26a0 A NUL anywhere but a " +
+      "contiguous LEADING run stays an ordinary damaged line, which is what stops this widening into " +
+      "\u201cskip anything with a NUL in it\u201d, and salvaged bytes need an `at` and an `action` before " +
+      "they count as a record. Each injury is named ONCE PER PROCESS rather than once per request, with a " +
+      "second, different injury still getting its own line so the dedupe cannot degenerate into once ever. " +
+      "Plus blank lines, ordinary corruption, a torn last line logged rather than warned, the precedence when " +
+      "a holed line is also the last one, newest-first order, the limit, an absent journal reading as no " +
+      "records rather than an unreadable one, and a round trip through appendAuditRecord carrying the stamp " +
+      "read's rawHex. \u26a0 Every section gets its OWN temp directory: the reader's once-per-process key is " +
+      "per file and line, so sections sharing one would claim each other's and \u00a73's warning COUNT read " +
+      "zero instead of one",
+  },
+  {
+    script: "scripts/check-write-status-split.ts",
+    covers:
+      "the /vcu-write payload as a LIST plus ONE DETAIL (#107). summariseTarget ran for all 269 allowlist " +
+      "entries on every request and armWrite() fetches before every arm, so the arming gesture of the controls " +
+      "that change this motorcycle carried a 256 582-byte round trip — 249 878 of it targets — on garage wifi " +
+      "on a Pi Zero. Through the real runner and the real page: that a bare GET still answers the whole " +
+      "allowlist, that `detail=NAME` answers one target in full and an unknown name answers no detail rather " +
+      "than an error, that `list=0` omits the listing as NULL rather than as [] — the page keeps its own copy, " +
+      "and \u201cyou already have it\u201d must not be confusable with \u201cthis bike has nothing " +
+      "writable\u201d — and that a refresh holding the names does not empty the picker while a response naming " +
+      "a different parameter table discards them, since a sweep finishing under this very sheet re-selects it. " +
+      "\u26a0 The scary one: selectedTarget() is now ONE object the Pi hands over rather than a find over an " +
+      "array carrying its own names, and it decides `action=bit` vs `action=parameter` and the compare-and-swap " +
+      "`expected=` \u2014 so a detail whose name is not the selection's is refused, or a coherent-looking write " +
+      "lands against the wrong parameter. Plus that armWrite() still raises `busy` before its refresh, which is " +
+      "the double-tap guard itself",
+  },
+  {
     script: "scripts/decode-dtc-response.ts",
     covers:
       "ISO-TP reassembly and the OBD-II mode-03 decoder, against a real 80-byte transfer captured 2026-08-04, plus the gapped, oversized, refused and foreign replies they must reject",
+  },
+  {
+    script: "scripts/generate-grafana-dtc.ts",
+    args: ["--check"],
+    covers:
+      "the copy of the DTC table embedded in grafana/dashboards/trouble-codes.json as a SQL VALUES list, its NULL-MIL arm and the queryText that claims to mirror it, plus every prose sentence that states how many codes there are",
   },
   {
     script: "scripts/generate-signal-bounds.ts",
@@ -1429,12 +1440,6 @@ const CHECKS: SelfCheck[] = [
       "reaches a rule in bounds.js, declares its own bounds, or says which kind of unboundable it is, so a new " +
       "signal cannot be added ungated and render whatever arrives; a stale `unbounded` on a signal that has since " +
       "gained a rule fails too, which is the rot the old list could not see",
-  },
-  {
-    script: "scripts/generate-grafana-dtc.ts",
-    args: ["--check"],
-    covers:
-      "the copy of the DTC table embedded in grafana/dashboards/trouble-codes.json as a SQL VALUES list, its NULL-MIL arm and the queryText that claims to mirror it, plus every prose sentence that states how many codes there are",
   },
 ];
 

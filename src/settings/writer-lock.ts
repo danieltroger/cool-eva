@@ -133,7 +133,7 @@ async function finishHolder(child: ChildProcessWithoutNullStreams, ended: Promis
     // release has fenced writes, an exited holder has already released its lock.
     if (status.code !== 0) {
       console.warn(
-        `settings: writer-lock holder stopped during release (exit ${status.code}, signal ${status.signal}).`
+        `settings: writer-lock holder exited before or during release (exit ${status.code}, signal ${status.signal}).`
       );
     }
   } finally {

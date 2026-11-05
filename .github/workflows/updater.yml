@@ -13,6 +13,7 @@ on:
       - src/http/bundle-*.ts
       - src/http/settings.ts
       - src/settings/**
+      - src/shutdown.ts
       - src/vcu/bus-lease.ts
       - .github/workflows/updater.yml
 

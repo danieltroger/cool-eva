@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { monotonicNow, since } from "../src/monotonic.ts";
 import type { RunningVersion } from "../src/version.ts";
 
 export async function checkVersionStartup(): Promise<void> {
-  const directory = await mkdtemp(join(process.cwd(), ".preview-shots/version-startup-"));
+  const directory = await mkdtemp(join(tmpdir(), "cool-eva-version-startup-"));
   const savedEnvironment = { PATH: process.env.PATH, VERSION_STARTUP_FIXTURE: process.env.VERSION_STARTUP_FIXTURE };
   try {
     for (const outcome of [0, 1, 2, "priority-failure"] as const) {

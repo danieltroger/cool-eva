@@ -9,6 +9,7 @@ set -eu
 test -e /etc/cool-eva-qemu-fixture
 journalctl --follow --no-pager --output=short-monotonic --lines=100 \\
   --unit=ssh.service --unit=ssh.socket --unit=cool-eva.service \\
+  --unit=cool-eva-rollback.service --unit='cool-eva-update*.service' \\
   --unit=cool-eva-install-os.service --unit=apt-daily.service \\
   --unit=apt-daily-upgrade.service --unit=unattended-upgrades.service \\
   --unit=systemd-oomd.service --unit=NetworkManager.service &
@@ -23,6 +24,7 @@ while :; do
   if [ -r /proc/pressure/memory ]; then cat /proc/pressure/memory; fi
   ps -eo pid,ppid,stat,etimes,pcpu,rss,comm:40 | awk 'NR == 1 || /apt|dpkg|unattended|needrestart|node|sshd|systemd/'
   if ! timeout 5 systemctl --no-pager show ssh.service ssh.socket cool-eva.service cool-eva-install-os.service \\
+    cool-eva-rollback.service cool-eva-update.service cool-eva-update-repair.service \\
     apt-daily.service apt-daily-upgrade.service unattended-upgrades.service cool-eva-qemu-diagnostics.service cool-eva-qemu-console.service \\
     --property=Id --property=ActiveState --property=SubState --property=MainPID \\
     --property=NRestarts --property=Result --property=ExecMainStartTimestampMonotonic \\
