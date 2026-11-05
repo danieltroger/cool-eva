@@ -1,4 +1,5 @@
 import type { RawChannel } from "socketcan";
+import { transmitCanFrame } from "../can/transmit.ts";
 import { ageMs, latestValue } from "../can/signals.ts";
 import { monotonicNow, since } from "../monotonic.ts";
 import { buildChargeSocLimitRead, buildChargeSocLimitWrite } from "../can/charge-soc-command.ts";
@@ -31,10 +32,10 @@ const WRITE_SETTLE_MS = 40;
 /**
  * How long to wait for the VCU's reply before giving up.
  *
- * ⚠️ The bike answers in single-digit milliseconds — 1.586, 3.252 and 7.664 ms in the capture of
- * this Pi's own exchanges. The 500 is for the SEND path, not the reply: the probe's first
- * `channel.send` took 83 ms to reach the wire on this Zero 2 W. A "99 ms cold reply" measured
- * from the sender was that send, and docs/dash-command-0x2c-charge-limit.md says so.
+ * The bike answers in single-digit milliseconds, but the cold JS-stamp-to-wire path
+ * measured 83 ms. That includes work outside the native send; it is not evidence of
+ * a blocked syscall. The mark below precedes transmit, so this budget includes wire
+ * latency as well as the reply. See docs/can-transmit.md.
  */
 const READ_TIMEOUT_MS = 500;
 
@@ -188,7 +189,7 @@ function sendSocLimit(
   }
   const frame = frames[0];
   try {
-    channel.send({ id: frame.id, ext: false, rtr: false, data: Buffer.from(frame.data) });
+    transmitCanFrame(channel, { id: frame.id, ext: false, rtr: false, data: Buffer.from(frame.data) });
   } catch (err) {
     console.error(`vcu-write: could not transmit the SOC charge-limit frame on 0x${frame.id.toString(16)}`, err);
     return { status: "failed", reason: err instanceof Error ? err.message : String(err) };
@@ -214,7 +215,7 @@ async function readSocLimit(channel: RawChannel): Promise<number | null> {
   const frame = buildChargeSocLimitRead()[0];
   const markedAt = monotonicNow();
   try {
-    channel.send({ id: frame.id, ext: false, rtr: false, data: Buffer.from(frame.data) });
+    transmitCanFrame(channel, { id: frame.id, ext: false, rtr: false, data: Buffer.from(frame.data) });
   } catch (err) {
     console.error("vcu-write: could not transmit the SOC charge-limit read request", err);
     return null;

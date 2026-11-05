@@ -239,7 +239,10 @@ check(
     const transfer = startMultiFrameTransfer({
       target: "A8",
       requestPayload: encodeMultiFrameRequestPayload({ kind: "request-upload-freeze-frame-log" }),
-      send: () => transmittedAt.push(Math.round(since(startedAt))),
+      send: () => {
+        transmittedAt.push(Math.round(since(startedAt)));
+        return 16;
+      },
       maxPayloadBytes: 256,
       firstReplyTimeoutMs: 60,
       transferTimeoutMs: 60,
@@ -838,7 +841,10 @@ async function replayReply(
   const transfer = startMultiFrameTransfer({
     target: "A8",
     requestPayload: encodeMultiFrameRequestPayload(request),
-    send: frame => transmitted.push(toHex(frame)),
+    send: frame => {
+      transmitted.push(toHex(frame));
+      return 16;
+    },
     maxPayloadBytes: 256,
     firstReplyTimeoutMs: overrides.firstReplyTimeoutMs ?? 400,
     transferTimeoutMs: overrides.transferTimeoutMs ?? 400,

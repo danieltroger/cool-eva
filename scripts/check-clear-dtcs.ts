@@ -139,23 +139,24 @@ function fakeBus(options: FakeBusOptions): FakeBus {
         // A flow control for the multi-frame list. The transport addresses it to the
         // responder, not to 0x7DF, which is why the id test above is not an equality.
         replayConsecutiveFrames();
-        return;
+        return 16;
       }
       if (bytes[1] === 0x04) {
         options.onModeFour?.();
         answerModeFour();
-        return;
+        return 16;
       }
       if (bytes[1] === 0x03) {
         options.onListRequest?.();
         answerListFirstFrame();
-        return;
+        return 16;
       }
       if (bytes[1] === 0x01) {
         pidRequests += 1;
         options.onPidRequest?.(pidRequests);
         answerPid(bytes[2]);
       }
+      return 16;
     },
     stop: () => {},
     start: () => {},

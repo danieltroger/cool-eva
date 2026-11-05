@@ -1,4 +1,5 @@
 import type { RawChannel } from "socketcan";
+import { transmitCanFrame } from "./transmit.ts";
 import { record } from "./signals.ts";
 
 // One-shot read of "number of keys paired" from the E-LOCK / keyless ECU. Plain
@@ -88,7 +89,7 @@ function request(channel: RawChannel, payload: number[]): Promise<Buffer | null>
     pendingResponse = { resolve, timer };
 
     try {
-      channel.send({ id: ELOCK_REQ_ID, ext: false, rtr: false, data: frame });
+      transmitCanFrame(channel, { id: ELOCK_REQ_ID, ext: false, rtr: false, data: frame });
     } catch (err) {
       clearTimeout(timer);
       pendingResponse = null;

@@ -2,6 +2,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import canModule from "socketcan";
 import type { RawChannel } from "socketcan";
+import { createMainCanChannel } from "./channel-factory.ts";
 import { ensureCanAdapter } from "./adapter-rebind.ts";
 import { type BringUpDecision, canConfigureArgs, decideCanBringUp } from "./link-config.ts";
 
@@ -49,8 +50,7 @@ export async function bringUpCan(iface = "can0", active = true): Promise<void> {
 }
 
 export function openChannel(iface = "can0"): RawChannel {
-  // second arg = receive timestamps
-  return canModule.createRawChannel(iface, true);
+  return createMainCanChannel(canModule, iface);
 }
 
 /** non_block_send: a PSU repeat never waits for socket send-buffer space. */

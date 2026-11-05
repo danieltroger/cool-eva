@@ -1,4 +1,6 @@
 import type { RawChannel } from "socketcan";
+import { transmitCanFrame } from "./transmit.ts";
+import { createTransmitFailureLogger } from "./transmit-log.ts";
 import { IsoTpReassembler } from "./iso-tp.ts";
 import { monotonicNow, since } from "../monotonic.ts";
 import {
@@ -149,6 +151,7 @@ interface InFlightRequest {
 }
 
 let inFlight: InFlightRequest | null = null;
+const logTransmitFailure = createTransmitFailureLogger("obd-dtc");
 
 /**
  * Whether a trouble-code transfer is in flight right now.
@@ -231,7 +234,9 @@ export function handleTroubleCodeFrame(id: number, data: Buffer): boolean {
       // Sent before anything else happens, deliberately. See the timing note above:
       // the VCU's patience here is short enough that a 20 ms delay measurably cost
       // us transfers, so nothing may come between this frame and its answer.
-      sendFlowControl(request.channel, id);
+      if (!sendFlowControl(request, id)) {
+        return true;
+      }
       request.sawFirstFrame = true;
       armTimer(request, TRANSFER_TIMEOUT_MS);
       return true;
@@ -278,9 +283,9 @@ function attemptRead(channel: RawChannel, mode: number): Promise<DtcReadOutcome>
     frame[0] = 0x01;
     frame[1] = mode;
     try {
-      channel.send({ id: OBD_FUNCTIONAL_REQUEST_ID, ext: false, rtr: false, data: frame });
+      transmitCanFrame(channel, { id: OBD_FUNCTIONAL_REQUEST_ID, ext: false, rtr: false, data: frame });
     } catch (err) {
-      console.error(`obd-dtc: send of mode 0x${mode.toString(16)} failed`, err);
+      logTransmitFailure(`send of mode 0x${mode.toString(16)} failed`, err);
       // Ours, not the bike's — see the `not-sent` note on DtcReadOutcome.
       settle(request, { outcome: "not-sent", mode, reason: err instanceof Error ? err.message : String(err) });
     }
@@ -342,7 +347,7 @@ function addressesService(mode: number, data: Buffer): boolean {
   return false;
 }
 
-function sendFlowControl(channel: RawChannel, responseId: number): void {
+function sendFlowControl(request: InFlightRequest, responseId: number): boolean {
   const flowControlId = responseId + FLOW_CONTROL_ID_OFFSET;
   // The rest of this module is read-only by construction rather than by argument,
   // and this is the one place that derives a transmit ID from a received one. A
@@ -354,17 +359,26 @@ function sendFlowControl(channel: RawChannel, responseId: number): void {
     console.warn(
       `obd-dtc: refusing flow control to 0x${flowControlId.toString(16)} — outside the physical request range`
     );
-    return;
+    settle(request, {
+      outcome: "truncated",
+      mode: request.mode,
+      reason: "flow-control ID outside the physical request range",
+    });
+    return false;
   }
   const frame = Buffer.alloc(8);
   Buffer.from(FLOW_CONTROL_FRAME).copy(frame);
   try {
-    channel.send({ id: flowControlId, ext: false, rtr: false, data: frame });
+    transmitCanFrame(request.channel, { id: flowControlId, ext: false, rtr: false, data: frame });
+    return true;
   } catch (err) {
-    // Not fatal — the transfer then times out as `truncated`, which is exactly what
-    // it is. Loud, because a bus that will not take a 3-byte frame is a problem far
-    // bigger than this module.
-    console.error(`obd-dtc: flow control to 0x${flowControlId.toString(16)} failed`, err);
+    logTransmitFailure(`flow control to 0x${flowControlId.toString(16)} failed`, err);
+    settle(request, {
+      outcome: "truncated",
+      mode: request.mode,
+      reason: err instanceof Error ? err.message : String(err),
+    });
+    return false;
   }
 }
 

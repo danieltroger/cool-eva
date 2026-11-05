@@ -799,6 +799,7 @@ const crossings = crossed.length;
           if (frame.id === 0x121 && frame.data[0] === 0x18) {
             record("dc_charge_limit_selected_a", frame.data[2]);
           }
+          return 16;
         },
       }) as never,
   });

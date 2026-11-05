@@ -1,4 +1,5 @@
 import type { RawChannel } from "socketcan";
+import { transmitCanFrame } from "../can/transmit.ts";
 import type { ArrivalLatency, FrameArrival } from "../can/frame-arrival.ts";
 import { monotonicNow, since } from "../monotonic.ts";
 import {
@@ -573,7 +574,12 @@ async function runTransfer(
     target: micro,
     requestPayload,
     send: frame =>
-      context.channel.send({ id: canIdsFor(micro).request, ext: false, rtr: false, data: Buffer.from(frame) }),
+      transmitCanFrame(context.channel, {
+        id: canIdsFor(micro).request,
+        ext: false,
+        rtr: false,
+        data: Buffer.from(frame),
+      }),
     maxPayloadBytes: settings.maxPayloadBytes,
     firstReplyTimeoutMs: settings.firstReplyTimeoutMs,
     transferTimeoutMs: settings.transferTimeoutMs,
@@ -859,7 +865,7 @@ function exchange(context: ClientContext, micro: VcuTarget, request: VcuRequest)
     context.pendingResponseCanId = canIds.response;
 
     try {
-      context.channel.send({ id: canIds.request, ext: false, rtr: false, data: frame });
+      transmitCanFrame(context.channel, { id: canIds.request, ext: false, rtr: false, data: frame });
     } catch (err) {
       clearTimeout(timer);
       context.pending = null;

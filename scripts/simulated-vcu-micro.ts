@@ -168,7 +168,7 @@ export function simulateVcuMicros(micros: SimulatedMicro[]): SimulatedBus {
       if (micro) {
         receiveFrame({ micro, listeners, sessionOpenedAt, sentRequests, conversations }, message.data);
       }
-      return message.data.length;
+      return 16;
     },
     start(): RawChannel {
       return channel;
