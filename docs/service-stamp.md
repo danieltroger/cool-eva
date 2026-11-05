@@ -2,11 +2,11 @@
 
 What A8 holds as "when this motorcycle was last serviced", how it is read, and what it said the first time anything asked.
 
-Related: `docs/vcu-parameters.md` §16 (the write audit journal), §4 (why the table-type gate does not apply to this read), and — outside this repository — `obd-garage/SERVICE_RESET.md` §2 and §3, which is where the addresses and the encoding come from.
+Related: `docs/vcu-parameters.md` §16 (the write audit journal), §4 (why the table-type gate does not apply to this read); the addresses and encoding follow Energica's definitions.
 
 ## 1. What the block is
 
-Four bank-1 WORDs on the A8 (the Safety micro), decompiled from the manufacturer's service tool — `ControlMotorbikeOverview_AvailableActions.GetMotorbikeService()`:
+Four bank-1 WORDs on the A8 (the Safety micro), from Energica's own diagnostic definitions:
 
 | field          | index | identifier |
 | -------------- | ----- | ---------- |
@@ -15,7 +15,7 @@ Four bank-1 WORDs on the A8 (the Safety micro), decompiled from the manufacturer
 | `odometerLow`  | 1002  | `0x13EA`   |
 | `odometerHigh` | 1003  | `0x13EB`   |
 
-The halves are little-endian **across the pair** — `value = (high << 16) | low`, per the decompiled `num = (date2 << 16) | date1`. The date is a 32-bit count of **seconds since 2000-01-01 UTC**; the odometer is a plain 32-bit count whose unit is per market (km on a European bike, miles on a USA one).
+The halves are little-endian **across the pair** — `value = (high << 16) | low`, per Energica's `num = (date2 << 16) | date1` definition. The date is a 32-bit count of **seconds since 2000-01-01 UTC**; the odometer is a plain 32-bit count whose unit is per market (km on a European bike, miles on a USA one).
 
 ⚠️ These sit **outside** `params.ecf`'s 1…277, so nothing in `src/vcu/param-table.ts` describes them and nothing ever will — that file's contents _are_ the name table. They are named in `src/vcu/service-actions.ts` instead, with their provenance, rather than smuggled into a table that claims a different source.
 

@@ -90,7 +90,7 @@ check(
 );
 check(framesFor(freezeFrameRequest).length === 1, "a 0x17 request is 3 payload bytes and must be one frame");
 
-// Byte-for-byte against obd-garage/OTHER_TOOL_AUDIT.md §4.3's decompiled frame.
+// Byte-for-byte against Energica's request definition.
 // The operand is not decoration: that note records a bare status byte being
 // rejected with incorrectMessageLengthOrInvalidFormat.
 check(
@@ -345,7 +345,7 @@ if (dtcList.result.kind === "payload") {
       list.records.map(record => record.code).join(",") === STORED_DTC_LIST_EXPECTED.codes.join(","),
       `0x18 codes wrong: ${list.records.map(record => record.code).join(",")}`
     );
-    // Reported, not filtered. The service tool drops these; doing so here would make
+    // Reported, not filtered. The reference omits these; doing so here would make
     // "the micro padded its reply" indistinguishable from "component 0 has a fault".
     check(
       list.paddingRecords === STORED_DTC_LIST_EXPECTED.paddingRecords,

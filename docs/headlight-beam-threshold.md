@@ -6,7 +6,7 @@ This corrects the "the avenue is closed" verdict in [dash-command-channel.md](da
 
 ## The mechanism
 
-VCU-Safety (`0xA8`) decides the beam is healthy only while its sensed current sits inside a `[MIN..MAX]` window. Three stored calibration parameters (the service tool's PARAM table, group `LIGHTS`, bank 1, all uint16, mA):
+VCU-Safety (`0xA8`) decides the beam is healthy only while its sensed current sits inside a `[MIN..MAX]` window. Three stored calibration parameters (Energica's parameter table, group `LIGHTS`, bank 1, all uint16, mA):
 
 | idx | param                                | factory |
 | --- | ------------------------------------ | ------- |

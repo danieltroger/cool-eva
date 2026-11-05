@@ -1,8 +1,8 @@
 // Enables / disables the VCU's "LPR mode" — dash command 0x15 on the 0x120/0x121 command channel
-// (the service tool's dash-command name table: "LPR mode, 0 = off / 1 = on"). Confirmed on-bike 2026-08-27:
+// (Energica's dash-command definitions: "LPR mode, 0 = off / 1 = on"). Confirmed on-bike 2026-08-27:
 // writing 0x15 = 1 makes the dash read "LPR mode active", and the value persists as a stored setting
 // (it survives the script exiting), unlike the decaying 0x2F diagnostic force. What "LPR" stands for
-// is not spelled out anywhere in the vendor tool. It is NOT a light control — toggling it moved the
+// is not spelled out anywhere in those definitions. It is NOT a light control — toggling it moved the
 // dash but no beam, lamp, or DRL (the headlight hunt continues; see docs/dash-command-channel.md).
 //
 // A write is b0 = (0x15 | 0x80) = 0x95, b1 = 0xFF, b2 = value, on 0x120 alone — the same frame class

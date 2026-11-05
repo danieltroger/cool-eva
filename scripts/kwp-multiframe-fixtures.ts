@@ -11,7 +11,7 @@
 //       capture's sequence numbering. See `BANK2_IDENTIFIER_0001_FRAMES`.
 //   §B  CAPTURED VERBATIM — the whole `0x35` request, the `0x36` request, the `0x37`
 //       request, and the `75` grant.
-//   §C  CAPTURED VERBATIM, and it agrees byte for byte with the decompiled note that was
+//   §C  CAPTURED VERBATIM, and it agrees byte for byte with the definition that was
 //       all this had before — the `0x18` request.
 //   §D  CONSTRUCTED. The replies, including every `0x36` block body. These prove the
 //       transport is self-consistent and rejects what it should. They prove nothing about
@@ -90,8 +90,8 @@ export const LIST_STORED_DTCS_FRAME = "A8 04 18 02 FF FF 00 00";
 /**
  * §D — a constructed `0x18` reply: two components with codes, then padding.
  *
- * Layout per the service tool's decoder — `58 <count>` then 3-byte `<hi> <lo> <status>`
- * records. The `(0, 0)` third record is the padding that tool filters out and this
+ * Layout per Energica's definitions — `58 <count>` then 3-byte `<hi> <lo> <status>`
+ * records. The `(0, 0)` third record is the padding the reference omits and this
  * repo counts instead, so that "the micro padded" stays distinguishable from
  * "component 0 has a fault".
  */
@@ -101,8 +101,8 @@ export const STORED_DTC_LIST_FRAMES = ["F1 10 0B 58 03 00 2C 05", "F1 20 00 04 2
 export const STORED_DTC_LIST_EXPECTED = { declaredCount: 3, codes: [0x2c, 0x04, 0x00], paddingRecords: 1 };
 
 /**
- * §D — a constructed bulk-upload block, in the shape the service tool's
- * `KWP2000Moto.ReadFreezeFrame` implies: a 4-byte big-endian timestamp (seconds
+ * §D — a constructed bulk-upload block, per Energica's definitions:
+ * a 4-byte big-endian timestamp (seconds
  * since 2000-01-01), then `<compHi> <compLo> <status>`, then a field block.
  *
  * ⚠️ Constructed entirely. No `0x36` payload has ever been seen. This exists to

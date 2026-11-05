@@ -132,7 +132,7 @@ async function runList(): Promise<void> {
   const list = decodeStoredDtcList(reply.body);
   console.log(`  declared ${list.declaredCount} record(s), parsed ${list.records.length}`);
   for (const record of list.records) {
-    const padding = record.code === 0 && record.status === 0 ? "   ← padding, per the service tool" : "";
+    const padding = record.code === 0 && record.status === 0 ? "   ← padding, per definitions" : "";
     console.log(`    code ${record.code} (0x${record.code.toString(16)})  status 0x${hex(record.status)}${padding}`);
   }
   // The two tells that say whether the inferred 3-byte record layout is right.

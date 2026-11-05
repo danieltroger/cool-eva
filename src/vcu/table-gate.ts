@@ -255,7 +255,7 @@ function describeMismatchRemedy(indices: number[]): string {
     "trusting this software's name for that index, and on the table it named the name may belong to a different " +
     "parameter entirely. ✅ This is fixable by you and does not need a code change: run " +
     "`node --experimental-strip-types scripts/extract-vcu-tables.ts <the exe>` against your own Energica " +
-    "service-tool install — its main executable, the dealer application itself — commit the diff to " +
+    "parameter definitions — commit the diff to " +
     "src/vcu/table-catalog.data.ts and this gate opens. docs/vcu-parameters.md, " +
     `"Adding your bike's VCU parameter table", is the walkthrough. Carried today: ${KNOWN_TABLE_TYPES.join(", ")}.`
   );

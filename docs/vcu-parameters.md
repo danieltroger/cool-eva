@@ -4,7 +4,7 @@ The findings behind `src/vcu/` — which parameter values are proven, which were
 
 Safety warnings that a reader must see **at the point of use** deliberately stay in the code. This file is the reasoning, not the guardrail.
 
-Related, outside this repository: `obd-garage/DIAG_ADDRESSES.md` (the diagnostic channel), `obd-garage/PARAM_TABLES.md` (the 28-table measurement), `obd-garage/VCU_PARAM_CHANGES.md` (what has actually been written to this bike), `obd-garage/SERVICE_RESET.md` (routines and the service stamp), `obd-garage/CAN_MAP.md` (the frame map).
+Background: bus observations and Energica's own definitions cover the diagnostic channel, the 28-table measurement, writes to this bike, routines, the service stamp and the frame map.
 
 Sections:
 
@@ -30,7 +30,7 @@ Sections:
 As of 2026-08-16, updated 2026-08-28 when the write path was first driven on-bike:
 
 - ✅ **The seed→key algorithm.** Four real A8 seed/key pairs off this bike's bus (`DIAG_ADDRESSES.md` §9.3) all satisfy it, and `scripts/check-vcu-params.ts` §13 asserts all four. This is the one part of the write path with live ground truth.
-- ✅ **The `2E` write framing and its auth rule**, from a passive capture of Energica's own diagnostic software writing to this bike's A8 on 2026-08-08, and additionally exercised against this bike by `obd-garage/vcu_param.py` on 2026-08-09 — `VCU_PARAM_CHANGES.md` records five parameters written and persisting across a power cycle ("Write procedure — fully proven").
+- ✅ **The `2E` write framing and its auth rule**, from a passive bus capture of writes to this bike's A8 on 2026-08-08, and additionally exercised against this bike by an earlier probe on 2026-08-09 — bus observations record five parameters written and persisting across a power cycle ("Write procedure — fully proven").
 - 🟡 **The `31 FC` request bytes** are derived from Energica's own frame builder; the POSITIVE RESPONSE bytes `71 FC` are INFERRED, not logged (`SERVICE_RESET.md` §3). So `decodeRoutineReply` accepts the echo it expects and reports anything else as `unrecognised` rather than assuming success.
 - ✅ **The write path is now proven on-bike (2026-08-27/28), sequencing included.** `write-session.ts` and `write-codec.ts` have driven many `2E` writes to A8 — the light-threshold parameters (`BEAM_MAX_CURR_TH` and four siblings, generated allowlist targets), each through the full `10 81`→`22`→`27`→`2E`→`22` cycle with read-back, logged in the write audit journal. The single-session batch ([§8](#8-the-write-runner-five-locks)) additionally exercised MULTI-WRITE SEQUENCING — five writes on one `27` unlock — which is exactly the part §7 called out as having no live evidence.
 - 🟡 **But none of the five RESEARCHED parameters in [§5](#5-the-write-allowlist-parameter-by-parameter) (charge current, charge gain, torque, regen, VSM config) has been written at any value** — the lights above are a separate generated target set. The direction of effect of `FCHG_CURRENT_GAIN` remains genuinely unknown, not merely untested.
@@ -51,13 +51,13 @@ Three things used to live in one module: this text, the 28-table catalogue, and 
 
 ### ⚠️ Which table this text is: 16406
 
-`params.ecf` came off a bike running table **16406** (`0x4016`), which is one revision older than the bike this repo was built for — that one reports **16407**. The file says so itself: its own ids 276/277 (`TABLE_TYPE_uC`/`_uS`) both read 16406. Established offline 2026-08-16 by matching all 277 names against Energica's shipped bundles; `obd-garage/PARAM_TABLES.md` is the working.
+`params.ecf` came off a bike running table **16406** (`0x4016`), which is one revision older than the bike this repo was built for — that one reports **16407**. The file says so itself: its own ids 276/277 (`TABLE_TYPE_uC`/`_uS`) both read 16406. Established offline 2026-08-16 by matching all 277 names against Energica's shipped bundles.
 
 So this text is the CATALOGUE'S BASE, not anybody's answer. `table-catalog.ts` carries all 28 of Energica's tables as deltas against it and checks each reconstruction against a fingerprint taken from Energica's own bundle — including 16406's, which is therefore a load-time proof that this text really is 16406 rather than a claim in a comment.
 
 ### ⚠️⚠️ The values in it are not any particular bike's
 
-The file came off ONE Energica — `MODEL` 8452 where the Ribelle this repo runs on reads 358, `CELL_COUNT` 80 where that bike reads 81. Of the 233 parameters the A9 serves, **21 read differently on the Ribelle**, including `MAX_DC_CHG_CURRENT` (60 in the file, 75 there). That is why the field is called `otherBikeValue` and not `value`, `defaultValue` or anything else a caller could render as a reading. The only honest use for it is as a comparison column explicitly labelled as another bike's, which is how `obd-garage/DIAG_ADDRESSES.md` presents it. Use the table for names, widths and routing; get values from the bike.
+The file came off ONE Energica — `MODEL` 8452 where the Ribelle this repo runs on reads 358, `CELL_COUNT` 80 where that bike reads 81. Of the 233 parameters the A9 serves, **21 read differently on the Ribelle**, including `MAX_DC_CHG_CURRENT` (60 in the file, 75 there). That is why the field is called `otherBikeValue` and not `value`, `defaultValue` or anything else a caller could render as a reading. The only honest use for it is as a comparison column explicitly labelled as another bike's. Use the table for names, widths and routing; get values from the bike.
 
 And it is a comparison against a 16406 bike specifically. `table-catalog.ts` therefore drops `otherBikeValue` and `section` for any id whose NAME differs in the table being built — on a `RegenFade` table, id 70's "other bike says 80" is a fact about `CELL_COUNT`, and `RegenFade_0` is not `CELL_COUNT`. See `dropWhereRenamed()`.
 
@@ -65,7 +65,7 @@ And it is a comparison against a 16406 bike specifically. `table-catalog.ts` the
 
 `CommonIdentifier = (bank << 12) | id`, and bank 1 is EEPROM Calibration Parameters, so parameter _n_ is read with `22 [0x10|hi] [lo]`. Established in `DIAG_ADDRESSES.md` §4 and confirmed live on both micros 2026-08-08: 23 parameters read in `10 81` sessions, all 23 echoing the identifier back with a correctly-sized record.
 
-Re-checked in full on 2026-08-09 against the stored 2026-06-14 A9 dump (`obd-garage/kwp_scan_raw.txt`), which is what `scripts/check-vcu-params.ts` reproduces:
+Re-checked in full on 2026-08-09 against the stored 2026-06-14 A9 dump, which is what `scripts/check-vcu-params.ts` reproduces:
 
 - the file assigns exactly 233 indices to the A9, and the dump holds exactly 233 bank-1 records — the two index SETS are identical, with no id in one that is missing from the other;
 - the TYPE column predicted the record length for all 233 (BYTE/BOOL → 1, WORD → 2), zero mismatches;
@@ -96,10 +96,10 @@ A parameter must be requested from the micro that owns it or it simply does not 
 
 #### What is KNOWN about them, and what is not
 
-Six of the 25 are not a mystery at all, and none of the six was worked out here — the 2024 service-tool analysis in `obd-garage/` had already named them:
+Six of the 25 are not a mystery at all, and none of the six was worked out here — Energica's own definitions had already named them:
 
-- ✅ **278/279 are the running-odometer master.** The manufacturer's service tool writes them in its odometer-change action, as a 32-bit value, and then resets the ECU (`SERVICE_RESET.md` §2). ⚠️ **Which of the two is the low half is not established.** 🔴 This project reads them and never writes them — another owner's tool does write them, and `OTHER_TOOL_AUDIT.md` is blunt about it.
-- ✅ **1000-1003 are the last-service stamp** — date low/high, odometer low/high, `value = (high << 16) | low`, the date a count of seconds since 2000-01-01 UTC. Decompiled in `SERVICE_RESET.md` §2, carried in `src/vcu/service-actions.ts` as `SERVICE_STAMP_IDENTIFIERS` since the service-stamp work, and **live-confirmed on 2026-09-08**: all four answered two bytes, all zero (`docs/service-stamp.md`).
+- ✅ **278/279 are the running-odometer master.** Energica's odometer-change procedure writes them as a 32-bit value, then resets the ECU. ⚠️ **Which of the two is the low half is not established.** 🔴 This project reads them and never writes them — another owner's implementation does write them.
+- ✅ **1000-1003 are the last-service stamp** — date low/high, odometer low/high, `value = (high << 16) | low`, the date a count of seconds since 2000-01-01 UTC. From Energica's definitions, carried in `src/vcu/service-actions.ts` as `SERVICE_STAMP_IDENTIFIERS` since the service-stamp work, and **live-confirmed on 2026-09-08**: all four answered two bytes, all zero (`docs/service-stamp.md`).
 - ✅ **1006/1007 are the only two identifiers the factory tool was ever captured WRITING** (2026-08-08, `DIAG_ADDRESSES.md` §9.2/§9.5). It read 1006 back as `0x9380` and wrote the same value; it wrote `0x29C2` to 1007. Purpose unknown — §9.5 reads a read-then-write-back as a handshake rather than a tuning change. 🔴 Read-only from here.
 - 🟡 **622 is used as a scale factor** at A8 `0x10EB4`: `(sensor × PARAM_622) >> 12`, the product range-checked against parameters 223 and 224 (600…2500). ⚠️ That is from the firmware read on #219, **not** from `obd-garage/` — the notes say nothing about it. It is a use, not a meaning.
 - ❌ **Nothing at all is traced for the other 18.** They carry a width and a sentence saying so.
@@ -121,7 +121,7 @@ This is the same bargain `service-actions.ts` struck for 1000-1003 before any of
 
 `CAN_MAP.md` logs **45** records for A8 bank 1 against these 44 named, and the 45th is unidentified. Index 278 is a candidate. It is **not** the answer, and cannot be made one from here:
 
-- the 2026-07-26 scan's **index range is unrecoverable** — its script is gone (the corrected version lived in `/tmp`), and `obd-garage/kwp_scan_raw.txt` holds **A9 records only**: 233 bank-1 rows, highest identifier `0x0114` = 276;
+- the 2026-07-26 scan's **index range is unrecoverable** — its script is gone (the corrected version lived in `/tmp`), and the A9 dump holds **A9 records only**: 233 bank-1 rows, highest identifier `0x0114` = 276;
 - which of the 44 named indices answered in that run is not recorded either, so even "45 = 44 + 1" is not safe as arithmetic.
 
 ⚠️ **The way it closes is enumeration, not inference.** A sweep now asks all 69 A8 bank-1 identifiers this software describes and writes down which answered and with how many bytes. `evidence/probe-plan-a8-block.md` is the plan for that run. If the count is not 45, that is a fact about the old scan's range rather than about the bike.
@@ -142,7 +142,7 @@ Format, one parameter per line, whitespace-separated: `<index> <NAME> <BYTE|WORD
 
 ### ⚠️ Why a repo that runs on one motorcycle carries 28 name tables
 
-A VCU calibration parameter is addressed BY INDEX. What index 258 IS depends on which table the VCU runs, and Energica has shipped many: the 2024 service-tool build selects 28, and `id → name` differs at 151 of 278 ids somewhere among them. Routing (`id → micro`) and record width (`id → datatype`) are IDENTICAL in all 28 — measured, `PARAM_TABLES.md` §2 — which is precisely what makes the wrong table dangerous instead of obvious: a write under a wrong name goes to the right micro with the right number of bytes, gets a positive response, and reads back exactly as sent.
+A VCU calibration parameter is addressed BY INDEX. What index 258 IS depends on which table the VCU runs, and Energica has shipped many: the 2024 definitions cover 28, and `id → name` differs at 151 of 278 ids somewhere among them. Routing (`id → micro`) and record width (`id → datatype`) are IDENTICAL in all 28 — measured, `PARAM_TABLES.md` §2 — which is precisely what makes the wrong table dangerous instead of obvious: a write under a wrong name goes to the right micro with the right number of bytes, gets a positive response, and reads back exactly as sent.
 
 The worst instance is not hypothetical and is the reason the catalogue exists. On 20 of the 28 tables, ids 70–94 are `RegenFade_0` … `RegenFade_24`, a regen-shaping curve. On the other 8 the same ids are the BATTERY CELL BLOCK — `CELL_COUNT`, `CELL_OVERVOLTAGE`, `CELL_TARGET_AC`, `CELLV_KA`. Another owner's tool has a live bug of exactly that shape: it writes a regen curve into the cell configuration. Carrying one hardcoded table and hoping is how you ship that bug; carrying all of them and refusing when the bike names one we do not have is how you do not.
 
@@ -169,7 +169,7 @@ A delta is only as good as the base it was computed against, and the base is a t
 
 So each entry carries a fingerprint of the WHOLE table, computed by `scripts/extract-vcu-tables.ts` from the bundle's own records before any delta arithmetic, and `buildTable()` recomputes it from the reconstruction and throws if they disagree. That is the generalisation of the check this module replaced, which threw at module load when `params.ecf` stopped saying what a hardcoded one-id correction expected. 16406's own entry has an empty delta, so its fingerprint check is a load-time proof that the embedded text really is table 16406 — a claim that used to live only in a comment.
 
-⚠️ A fingerprint proves the delta rebuilds the bundle it was taken from. It cannot prove the bundle was labelled correctly in the first place; that comes from the resource NAME inside the service-tool executable, which is the one thing binding a table to a `TABLE_TYPE`. `scripts/extract-vcu-tables.ts` explains why a byte-scan loses it.
+⚠️ A fingerprint proves the delta rebuilds the bundle it was taken from. It cannot prove the bundle was labelled correctly in the first place; that comes from the resource NAME in the definition bundle, which is the one thing binding a table to a `TABLE_TYPE`. `scripts/extract-vcu-tables.ts` explains why a byte-scan loses it.
 
 ### ⚠️ What is not in Energica's bundles
 
@@ -223,7 +223,7 @@ A row's `name` being null is not an error, and it means one of three things: an 
 
 ### ⚠️ The question this gate asks changed, 2026-08-18
 
-It used to be "is this the bike this repo was written for?" — one hardcoded table, 16407, and every other value refused. That was safe and it was useless to anybody else. It is now **"do we have your table?"**: all 28 tables Energica's 2024 service tool can select are carried, so a recognised one PASSES whichever of the 28 it is, and an unrecognised one still refuses — with the instruction for adding it, because that is a thing an owner can actually do.
+It used to be "is this the bike this repo was written for?" — one hardcoded table, 16407, and every other value refused. That was safe and it was useless to anybody else. It is now **"do we have your table?"**: all 28 tables in Energica's 2024 definitions are carried, so a recognised one PASSES whichever of the 28 it is, and an unrecognised one still refuses — with the instruction for adding it, because that is a thing an owner can actually do.
 
 ### ⚠️ Why a write needs this and a read does not
 
@@ -239,7 +239,7 @@ Five ways to be shut, and they get five sentences because their remedies do not 
 
 | state | what happened, and what fixes it |
 | --- | --- |
-| `mismatched` | the bike named a table this software does not carry. No read helps. The fix is `scripts/extract-vcu-tables.ts` against your own service-tool install, and the remedy string says so in as many words. |
+| `mismatched` | the bike named a table this software does not carry. No read helps. The fix is `scripts/extract-vcu-tables.ts` against your own parameter definitions, and the remedy string says so in as many words. |
 | `split` | the two micros named DIFFERENT tables. Also no read; the bike really may be like that, and no single set of names is right for it. |
 | `unwritable` | the table is carried, and one of the allowlist's own parameters is not called that on it. The allowlist is what needs the work, not the bike. |
 | `unusable` | the micro answered with a record the width column forbids, so it named no table AND the framing of the whole sweep is in question. Re-reading is worth doing, but the fault is not "unasked". |
@@ -259,7 +259,7 @@ Collapsing those into a single "writes are blocked" would send someone hunting f
 
 The gate exists for ONE failure: a parameter is addressed by index, what an index means comes from the parameter table, and a write under the wrong table is accepted, reads back cleanly and has changed something else. That argument is about index-addressed writes and does not survive being generalised:
 
-- `31 FC` **Set Service Point** takes a routine LOCAL identifier, not a bank-1 parameter index. Routine ids are not in `params.ecf` at all — they come from the service tool's shared library (`SERVICE_RESET.md` §3) — and none of the 28 parameter tables says anything about them. `TABLE_TYPE` therefore carries no information about what `31 FC` does. (It IS ambiguous: `SERVICE_RESET.md` §7 records `0xFC` also meaning `VCUCheckSum` in the FLASHING enum. But that ambiguity is per ECU and session, which `write-codec.ts` pins with `ROUTINE_MICROS`; reading 277 would not resolve it by a single bit.)
+- `31 FC` **Set Service Point** takes a routine LOCAL identifier, not a bank-1 parameter index. Routine ids are not in `params.ecf` at all — they are separate protocol definitions — and none of the 28 parameter tables says anything about them. `TABLE_TYPE` therefore carries no information about what `31 FC` does. (It IS ambiguous: Energica's definitions also assign `0xFC` to a VCU checksum in the programming context. But that ambiguity is per ECU and session, which `write-codec.ts` pins with `ROUTINE_MICROS`; reading 277 would not resolve it by a single bit.)
 - **Mode 04 clear-DTCs** is standard OBD-II with no identifier of any kind. Trouble codes are reconciled against `src/diagnostics/dtc-table.ts`, not against `params.ecf`.
 - The **`0x120` clock broadcast** is a raw frame with a fixed layout and no identifier, addressed to nothing.
 - **read-service-stamp** is read-only, and reads ids 1000-1003 — outside the name table's 1…277 entirely, from `SERVICE_RESET.md` §2 rather than from any table. What they answered when it was finally run: `docs/service-stamp.md`.
@@ -276,7 +276,7 @@ The honest counter-argument, recorded rather than hidden: an unconfirmed table m
 
 ⚠️ **This subsection argues for a design that was removed on 2026-08-21.** It is kept because the reasoning is still the reasoning; only its conclusion moved. The argument below is that a caller must not be able to aim at an arbitrary index — and that is still true and still enforced: nothing here has ever taken an index, the HTTP layer takes a name, and a plan whose index does not match its name is refused by the codec. What the five-name list added on top of that was RESEARCH, not addressing safety, and the owner asked for the other 264 to be reachable with that distinction shown rather than enforced by absence. Read on for the original argument.
 
-Bank 1 is the VCU's calibration EEPROM. Two identifiers away from the five below sit `CELL_OVERVOLTAGE`, `THROTTLE_MAX_TH`, `ACTIVE_CURRENT_LIMIT` and `LIMP_MIN_CELL`; one mistyped index writes a cell limit or a throttle map instead of a charge current, and `obd-garage/VCU_PARAM_CHANGES.md` is a list of how interdependent those are (change `CELL_TARGET_AC` without `CHG_OVERSHOOT` and the charge stops with the same symptom you were trying to fix). A range check cannot see that. A closed list of parameters someone has actually reasoned about can.
+Bank 1 is the VCU's calibration EEPROM. Two identifiers away from the five below sit `CELL_OVERVOLTAGE`, `THROTTLE_MAX_TH`, `ACTIVE_CURRENT_LIMIT` and `LIMP_MIN_CELL`; one mistyped index writes a cell limit or a throttle map instead of a charge current, and bus observations show how interdependent those are (change `CELL_TARGET_AC` without `CHG_OVERSHOOT` and the charge stops with the same symptom you were trying to fix). A range check cannot see that. A closed list of parameters someone has actually reasoned about can.
 
 So: an identifier not on the list is not "out of range", it is UNEXPRESSIBLE. There is no `writeIdentifier(id, value)` anywhere in this repo, the HTTP layer takes a NAME rather than a number (`src/http/vcu-write.ts`), and `write-codec.ts` re-checks the plan against `write-targets.ts` immediately before the bytes are built.
 
@@ -321,9 +321,9 @@ The registered verifier re-runs the SAME entry point a legitimate caller would h
 
 BYTE S per `params.ecf`, and Energica's own option data gives `mask=0x7F` — bit 7 is reserved, so the value field is 0…127 whatever the sign column says. **A bound of 80 is inside that mask; anything that pushed a written value past 127 would set the reserved bit, and a dealer's write would come back as a dead sensor.** 80 is `0x50`, bit 7 clear, so the sign question does not arise at any value on this list.
 
-The unit is literal amperes: the service tool writes the integer 75 with no scaling anywhere (the 2024 service-tool analysis in `obd-garage/`), and 75 appears verbatim as `0x4B` in three independent broadcast fields — `0x620` b0, `0x625` b2 and `0x121` b4.
+The unit is literal amperes: Energica's definition writes the integer 75 with no scaling, and 75 appears verbatim as `0x4B` in three independent broadcast fields — `0x620` b0, `0x625` b2 and `0x121` b4.
 
-The ceiling is 80 because Energica shipped exactly that: OP0002/OP0003/OP0004 are "Fast Charge 60 / 75 / 80 Amps", all three writing THIS parameter and nothing else. That is the evidence the owner remembered, and it holds up in two separate service-tool builds. It is worth noting how unusual that is in the option data — `OP0100 Charge Limit 4300` moves four parameters together — so "only this byte" is a positive finding rather than an absence of evidence.
+The ceiling is 80 because Energica shipped exactly that: OP0002/OP0003/OP0004 are "Fast Charge 60 / 75 / 80 Amps", all three writing THIS parameter and nothing else. That is the evidence the owner remembered, and it holds up in two definition versions. It is worth noting how unusual that is in the option data — `OP0100 Charge Limit 4300` moves four parameters together — so "only this byte" is a positive finding rather than an absence of evidence.
 
 The floor is 0: turning DC charging DOWN is the safe direction, and is the obvious thing to want if a charger or the pack is unhappy. Nothing above 80, because past it there is no factory variant to point at and the next thing in the chain is the pack.
 
@@ -331,7 +331,7 @@ What the owner is told before pressing the button (the `warnings` array, which s
 
 - ⚠️ It will probably do nothing. Across eight logged DC sessions the ceiling is the STATION, not the bike: station identity explains 84 % of the variance, the highest ever delivered is 73.2 A, and no station has offered even the 75 A already permitted.
 - ⚠️ 80 A is 1.25C for this pack. The cell datasheet allows 1.10C = 70.4 A, and only between 25 and 35 °C — and the VCU is shown 35 °C while the pack is really at 44-54 °C, so 91 % of DC charging time above 30 A is already over the cell's fast-charge ceiling. This raises the ceiling on an exposure that is already there.
-- A dealer visit reverts it. The service tool reinstalls parameter values from Energica's server, keyed by VIN.
+- A dealer visit reverts it. Parameter values are restored from Energica's server, keyed by VIN.
 
 Free verification, no charger needed: `0x625` b2 is the configured max DC current and is broadcast on a merely-awake bike. It should read the value you wrote (`0x50` for 80 A, `0x4B` for 75). If it does not, the write did not take.
 
@@ -339,7 +339,7 @@ Free verification, no charger needed: `0x625` b2 is the configured max DC curren
 
 WORD S per `params.ecf`. Reads 225 on this bike (live, 2026-08-08) and 225 in the other bike's variant file too, despite that bike's ceiling being 60 A rather than 75 — which is itself an argument that it does not set the ceiling.
 
-⚠️ There is NO documented range for this parameter. It is not an Energica option, it does not appear in the 2021 or 2024 service-tool builds by name, this bike's firmware bundle ships no engineering range file, and 225 is the only value anyone has ever seen. So 0…512 is this repo's policy and nothing more: wide enough to hold both "unity" candidates and a doubling either side, narrow enough that a typo cannot write 30000. A tight range around a number whose semantics nobody has established would be false precision.
+⚠️ There is NO documented range for this parameter. It is not an Energica option, it does not appear in the 2021 or 2024 definitions by name, this bike's firmware bundle ships no engineering range file, and 225 is the only value anyone has ever seen. So 0…512 is this repo's policy and nothing more: wide enough to hold both "unity" candidates and a doubling either side, narrow enough that a typo cannot write 30000. A tight range around a number whose semantics nobody has established would be false precision.
 
 What is unknown, and why (the `warnings` array stays in the code):
 
@@ -378,7 +378,7 @@ WORD U. This bike reads `0x1113`, and every set bit is accounted for:
 | `0x0100` | PSU type TDK-600W (field mask `0x0760`) |
 | `0x1000` | Bluetooth STD (field mask `0x3000`)     |
 
-Bit map from Energica's own option data (the 2024 service-tool analysis in `obd-garage/`), decoded against the live value in `obd-garage/HEATED_GRIPS.md` §4.2.
+Bit map from Energica's own option data, decoded against the live value.
 
 ONE bit is offered, `0x0004` heated handlebars. Not the word. Energica's option OP0024 sets exactly this bit and nothing else — but activation is normally granted per-VIN on Energica's server, and the option carries a firmware floor (FW.Min.V \*.042). The bit may therefore write and read back correctly and the feature still not appear, because the grip logic lives in the DASHBOARD's firmware, not the VCU's. It changes a flag, not wiring: there is no heated-grip circuit on this bike unless one was fitted.
 
@@ -404,7 +404,7 @@ The writes live in `write-codec.ts` instead, behind a guarantee of the same SHAP
 
 `ROUTINE_IDS` is the only table in this repo that maps a name to a routine byte, and it has one row. `0xFC` is Set Service Point on A8: it takes no parameters and the firmware stamps the CURRENT RTC time and odometer into the last-service block itself (`SERVICE_RESET.md` §2/§3). That is why it is irreversible and why the clock has to be right before it runs.
 
-`ROUTINE_MICROS` pins the micro rather than leaving it to a caller. On the wire this is only an address byte, but getting it wrong is not harmless: `SERVICE_RESET.md` §7 records that `0xFC` also equals `RoutinesID.VCUCheckSum` in the FLASHING enum, which is a different ECU and session. "Don't send `31 FC` to A9 expecting a service reset" is a direct quote.
+`ROUTINE_MICROS` pins the micro rather than leaving it to a caller. On the wire this is only an address byte, but getting it wrong is not harmless: Energica's definitions also assign `0xFC` to a VCU checksum in the programming context, which is a different ECU and session. "Don't send `31 FC` to A9 expecting a service reset" is a direct quote.
 
 ### The framing, proven on the wire
 
@@ -418,7 +418,7 @@ write (WORD)   7C0: A8 05 2E 13 EE 93 80      → 7E0: F1 03 6E 13 EE   (no valu
 write refused                                 → 7E0: F1 03 7F 2E 33   (securityAccessDenied)
 ```
 
-A BYTE write is the same with `len = 04` and one value byte. The routine is from `SERVICE_RESET.md` §3, decompiled from the service tool's shared library rather than captured: `7C0: A8 02 31 FC` → `7E0: F1 02 71 FC`.
+A BYTE write is the same with `len = 04` and one value byte. The routine is from Energica's protocol definitions rather than a capture: `7C0: A8 02 31 FC` → `7E0: F1 02 71 FC`.
 
 The `27 02` capture shows a trailing `0x34` byte after the sub-function; it is echoed back rather than asserted, because one capture is not enough to call a byte mandatory.
 
@@ -455,7 +455,7 @@ Both assertions throw, because by the time anything reaches them the runner has 
 
 ⚠️ A positive `6E <hi> <lo>` means ACCEPTED, and that is the whole of what it means. The reply NEVER carries the written value (`DIAG_ADDRESSES.md` §9.2), so it is not evidence that the cell now holds what was sent. That is what the read-back in `write-session.ts` is for, and why there is no path that reports success without one.
 
-⚠️ The expected `31` reply shape is INFERRED. `SERVICE_RESET.md` §3 says so in as many words — the service tool only checks its own `Completed_ACK`, and the positive-response bytes were never logged. So an unexpected shape is reported as `unrecognised` and the caller must treat that as "we do not know whether it ran", never as success. The service point is irreversible; guessing in the optimistic direction is the one thing that cannot be undone afterwards.
+⚠️ The expected `31` reply shape is INFERRED. The reference sequence checks completion only, and the positive-response bytes were never logged. So an unexpected shape is reported as `unrecognised` and the caller must treat that as "we do not know whether it ran", never as success. The service point is irreversible; guessing in the optimistic direction is the one thing that cannot be undone afterwards.
 
 Seeds decode big-endian, per the four captured pairs, with `>>> 0` because a seed with the top bit set is negative under `<<` — the same trap `securityKeyForSeed` guards.
 
@@ -662,21 +662,21 @@ Three smaller changes on the same path, written down because they are the kind o
 
 ### ⚠️⚠️ The charge manager was a target here, and it was WRONG. Removed 2026-08-16.
 
-A third target `A4` was added earlier the same day, on request `0x7C3` / response `0x7E3`, described as the charge manager. Decompiling the service tool's shared library showed two things:
+A third target `A4` was added earlier the same day, on request `0x7C3` / response `0x7E3`, described as the charge manager. Energica's own protocol definitions showed two things:
 
 - **`0x7E3` is DashboardV2's REQUEST id.** So a probe on that pair, believing it was asking the charge manager, could have been talking to the DASHBOARD. That is not the harmless "silence from an id nothing listens on" the old comment claimed as the safe direction — it is a wrong ECU answering a question meant for another one, which is the exact failure the rest of that file is built to avoid.
-- `RequestFrameIDs.CHM = 0x7C3` exists in the manufacturer's code as a **dead enum referenced nowhere**. There is no charge-manager case in any session, read, write or SecurityAccess switch, and the tool's own charge-manager install action is a stub returning `Skipped`. The 11-bit path was designed and never built.
+- The manufacturer's `0x7C3` charge-manager request definition is **unreferenced**. There is no charge-manager case in any session, read, write or SecurityAccess switch, and the reference charge-manager installation procedure is a stub returning `Skipped`. The 11-bit path was designed and never built.
 
 Node `0xA4` really is the charge manager's 11-bit identity — that part was right. The ID PAIRING was not, and the pairing is what goes on the wire.
 
-**Where it actually lives, for whoever adds it properly.** 29-bit ISO-TP on the VDB bus: request `0x18DA09F1`, response `0x18DAF109`, device byte `0x09`, tester `0xF1`. Verified three ways in the decompile — the hard-coded ids 416942577/417001737, the `SendExt` addressing math (`reqID | (target << 8) | source`), and consistency with the BMS/PSU 29-bit family. It is on the VDB manager, so it is reachable from the existing OBD tap with no second bus.
+**Where it actually lives, for whoever adds it properly.** 29-bit ISO-TP on the VDB bus: request `0x18DA09F1`, response `0x18DAF109`, device byte `0x09`, tester `0xF1`. Verified three ways in Energica's definitions — the hard-coded ids 416942577/417001737, the extended-addressing math (`reqID | (target << 8) | source`), and consistency with the BMS/PSU 29-bit family. It is on the VDB manager, so it is reachable from the existing OBD tap with no second bus.
 
 That is a real feature and not a constant: 29-bit ids need `ext: true` on transmit, their own RX filter, and their own addressing math. It does not belong bolted onto the 11-bit table, which is why the target is REMOVED rather than re-pointed. Three things to carry into that work:
 
 - ⚠️ **The charge manager is off-bus when parked.** It answers only during a live charging session, so `no-session` from an unplugged bike is expected, not a fault.
 - Identification reads (`0x22` on F191/F181/F180/F18C) need no SecurityAccess.
 - ⚠️ Deeper access uses a **CRC-16/CCITT level-9 algorithm that is NOT the VCU's bit-swap**. Do not reuse `write-codec.ts`'s `securityKeyForSeed` for it.
-- 🟡 The code proves it answers at `0x18DA09F1` in bootloader/programming mode. Whether the RUNNING APPLICATION answers there without a reset now has its **first datapoint, and it is a no**. On 2026-08-19 18:43, during a live (fault-free, non-DC — inferred AC) charging session, the armed CM probe sent four identification reads to `18DAF109` (device `0x09`): `0x22` on `F191`/`F181`/`F180`/`F18C`, each well-formed. **All four got no reply.** ⚠️ This does NOT refute the address: the decompiled service-tool code only ever demonstrates these reads in bootloader mode, so a running-app no-reply is exactly what it would predict, not a contradiction of it. And it aligns with an independent second source — a community member reports the charge manager (`0xA4`) ignores diagnostics in its running application on their bike too (PR #77). So the running charge manager does not appear to answer identification reads live, on two bikes; whether it answers ANYTHING live, or only after an ECUReset into the bootloader, is still open — and an ECUReset must not be sent during a charge session, which is what the probe correctly declined to do. The BMS and PSU precedent (same node for app and boot) still makes the address itself likely.
+- 🟡 The code proves it answers at `0x18DA09F1` in bootloader/programming mode. Whether the RUNNING APPLICATION answers there without a reset now has its **first datapoint, and it is a no**. On 2026-08-19 18:43, during a live (fault-free, non-DC — inferred AC) charging session, the armed CM probe sent four identification reads to `18DAF109` (device `0x09`): `0x22` on `F191`/`F181`/`F180`/`F18C`, each well-formed. **All four got no reply.** ⚠️ This does NOT refute the address: the manufacturer definitions only ever demonstrate these reads in bootloader mode, so a running-app no-reply is exactly what it would predict, not a contradiction of it. And it aligns with an independent second source — a community member reports the charge manager (`0xA4`) ignores diagnostics in its running application on their bike too (PR #77). So the running charge manager does not appear to answer identification reads live, on two bikes; whether it answers ANYTHING live, or only after an ECUReset into the bootloader, is still open — and an ECUReset must not be sent during a charge session, which is what the probe correctly declined to do. The BMS and PSU precedent (same node for app and boot) still makes the address itself likely.
 
 A7 is deliberately absent from the target table: it answers no read on any bank.
 
@@ -759,7 +759,7 @@ It **does not configure `can0` and does not own the socket**. The channel is the
 **Never implement there: `0x31` StartRoutine, `0x2E` WriteDataByIdentifier, `0x3B` WriteDataByLocalIdentifier, `0x14` ClearDiagnosticInformation, `0x11` ECUReset, `0x27` SecurityAccess, `0x2F` InputOutputControl, `0x34` RequestDownload.** Two of those sit uncomfortably close to what is there and are worth naming individually:
 
 - `0x34` RequestDownload is `0x35`'s mirror image — one byte away in the switch, and it points the transfer the other way, tester → ECU. `0x35` RequestUpload is a read because upload means ECU → tester; `0x34` would make that same segmenter into a flasher. It must never appear.
-- `0x31 FE` (`RoutinesID.VCUErase`, operand `01 00 00 00 01 FF FF FF`, then `33 FE` polled) is the service tool's freeze-frame ERASE, and it is the thing that destroys exactly what `0x35`/`0x36`/`0x37` exist to read. It also needs SecurityAccess, where every read there needs none.
+- `0x31 FE` (freeze-frame erase, operand `01 00 00 00 01 FF FF FF`, then `33 FE` polled) is the freeze-frame ERASE, and it is the thing that destroys exactly what `0x35`/`0x36`/`0x37` exist to read. It also needs SecurityAccess, where every read there needs none.
 
 `src/diagnostics/freeze-frame.ts`'s header lists the same rule for `0x17`'s module, and `param-codec.ts`'s for the parameter reads. Three small closed unions, each arguing its own case, beat one wide one — which is why `0x17`/`0x18`/`0x35`/`0x36`/`0x37` are NOT added to `param-codec.ts`. That file's header states as an invariant that its union has three members and its allowlist three bytes, and that invariant is worth more than the handful of lines sharing it would save.
 
@@ -801,7 +801,7 @@ They had to be fixed together, and the check that says so is the segment→reass
 
 ### `0x17` — one component's freeze frame
 
-✅ The SERVICE and its ROUTING are proven: 29 `0x17` requests went to A8 in the 2026-08-08 capture and all 29 drew a positive `57` (`DIAG_ADDRESSES.md` §9.1), and Energica's own `KWP2000::ReadDiagnosticTroubleCodeInformation` emits `0x17 <hi> <lo>` against `MotorbikeECU.VCUSafety` with no SecurityAccess in the path.
+✅ The SERVICE and its ROUTING are proven: 29 `0x17` requests went to A8 in the 2026-08-08 capture and all 29 drew a positive `57` (`DIAG_ADDRESSES.md` §9.1), and Energica's own protocol definition emits `0x17 <hi> <lo>` against VCU-Safety with no SecurityAccess in the path.
 
 ✅ **The literal FRAME is a quotation now** (2026-08-20). It used to say "reconstruction, not a quotation, because the census discarded payloads" — but the census is not the capture, and the capture kept everything. All 29 requests are `A8 03 17 00 <component> 00 00 00`, zero-padded to DLC 8, for components `03 04 05 06 07 08 0A 0B 0C 14 16 22 23 24 25 27 28 29 2A 2C 2E 30 31 33 34 35 36 3C 3E`. The reconstruction was right.
 
@@ -809,7 +809,7 @@ They had to be fixed together, and the check that says so is the segment→reass
 
 ### ✅ `0x35` RequestUpload — captured whole, 2026-08-20
 
-`35 12 FF FF FF FF FF FF FF FF FF FF` opens the bulk freeze-frame log read-out. `0x12` is `RoutinesID.ReadFreezeFrame`. Upload means ECU → tester, so this is a read; `0x34` RequestDownload, which is not, must never be added beside it.
+`35 12 FF FF FF FF FF FF FF FF FF FF` opens the bulk freeze-frame log read-out. `0x12` identifies the freeze-frame upload. Upload means ECU → tester, so this is a read; `0x34` RequestDownload, which is not, must never be added beside it.
 
 The ten `0xFF` were this repo's least-supported byte sequence for two weeks. They are captured now, all of them, at 19:04:32 in `capture-20260808-182129-600daf87.log`:
 
@@ -857,7 +857,7 @@ Every one of the 1198 TransferData requests in the capture is the same Single Fr
 19:11:49.5      7C0  [8]  A8 02 36 12 00 00 00 00   → F1 10 41 76 …  (65 bytes, the last)
 ```
 
-`A8 02` declares TWO payload bytes. The operand is `0x12` — `RoutinesID.ReadFreezeFrame`, the same identifier `0x35` opened the upload with — and it is CONSTANT across all 1198, which is what rules out an ISO 14229 block counter. So both halves of the question are now settled from the wire, and they have different answers: no counter, but not empty either.
+`A8 02` declares TWO payload bytes. The operand is `0x12` — the freeze-frame upload id, the same identifier `0x35` opened the upload with — and it is CONSTANT across all 1198, which is what rules out an ISO 14229 block counter. So both halves of the question are now settled from the wire, and they have different answers: no counter, but not empty either.
 
 What the bare `36` would have done: it is one byte short of anything this micro has been seen to accept, so the first block draws NRC `0x13` incorrectMessageLengthOrInvalidFormat (or `0x24` requestSequenceError) and the read fails at block 1 of 1198. Loud rather than silent — the old note was right about that — but a failure standing next to the motorcycle, which is the thing this file exists to prevent.
 
@@ -923,11 +923,11 @@ So on a timeout the remaining frames go out anyway, loudly. Refusing instead wou
 
 `src/vcu/freeze-frame-log.ts` runs the bulk read: `0x35` RequestUpload, then N × `0x36` TransferData, then `0x37` RequestTransferExit.
 
-The factory tool did exactly this on 2026-08-08 and it took **~7 minutes for 1198 blocks** (`DIAG_ADDRESSES.md` §9.6). That single fact drives most of the design: everything there is about a read that runs for minutes on a bus shared with the brakes, rather than about the protocol, which is three services and a loop.
+Exactly this was observed on the bus on 2026-08-08 and it took **~7 minutes for 1198 blocks** (`DIAG_ADDRESSES.md` §9.6). That single fact drives most of the design: everything there is about a read that runs for minutes on a bus shared with the brakes, rather than about the protocol, which is three services and a loop.
 
 ### ⚠️ What this gives that `0x17` does not
 
-Timestamps and history. `0x17` answers "what was the bike doing when component N last latched" — one record per component, no date on it. This is the whole stored LOG: every freeze frame the micro has kept, each (per the service tool's `KWP2000Moto.ReadFreezeFrame`) a 4-byte big-endian timestamp in seconds since 2000-01-01, then `<compHi> <compLo> <status>`, then the same info-key field block `src/diagnostics/freeze-frame.ts` decodes.
+Timestamps and history. `0x17` answers "what was the bike doing when component N last latched" — one record per component, no date on it. This is the whole stored LOG: every freeze frame the micro has kept, each (per Energica's definitions) a 4-byte big-endian timestamp in seconds since 2000-01-01, then `<compHi> <compLo> <status>`, then the same info-key field block `src/diagnostics/freeze-frame.ts` decodes.
 
 ⚠️ The module does NOT decode those records, on purpose. It hands back the block bodies exactly as they arrived. A decoder written against a guessed layout is how you get 1198 plausible wrong answers instead of one. The bytes are kept whole so that the first real transfer can be read by a human, and the decoder written against it afterwards.
 
@@ -1117,7 +1117,7 @@ Do not "fix" this back. What keeps it safe is that the excuse is narrow and that
 
 ⚠️ Measured on `rides.db` 2026-08-16: `go` = 0 is NOT a reliable "cannot move". Two clean episodes have the bike rolling at **5.2-6.7 km/h with `go` = 0 AND `energized` = 0** (2026-08-08 14:59:53 for 8.1 s, and 15:00:30 for 1.1 s) — physically ordinary, since a bike can be pushed or coast with the drive down. That is exactly why speed and rpm are the load-bearing checks and these are corroboration. A gate resting on `go` alone would have opened on a bike rolling at jogging pace. The converse holds well — 98.5 % of live `go` = 1 time has the bike actually moving — so `go` = 1 is a trustworthy positive.
 
-🟡 CAN `0x102` b1 bit3. Caught toggling with the rider's actions on the same lap, so SOMETHING real lives at that bit and it moves when the bike is ridden — which is what a gate needs. The NAME is weaker than the observation: the manufacturer's own signal table for this frame (the same service-tool source `src/diagnostics/dtc-table.ts` is reconciled against, which names the two adjacent bits KickStand and Start Switch) does not list b1 `0x08` at all, so "go" is the third-party `.xdbc`'s label and not the manufacturer's. Gating on it is still right — a bit that moves with riding and reads 0 parked is exactly the evidence wanted — but do not read the name as authority.
+🟡 CAN `0x102` b1 bit3. Caught toggling with the rider's actions on the same lap, so SOMETHING real lives at that bit and it moves when the bike is ridden — which is what a gate needs. The NAME is weaker than the observation: the manufacturer's own signal table for this frame (the same manufacturer definitions `src/diagnostics/dtc-table.ts` is reconciled against, which names the two adjacent bits KickStand and Start Switch) does not list b1 `0x08` at all, so "go" is the third-party `.xdbc`'s label and not the manufacturer's. Gating on it is still right — a bit that moves with riding and reads 0 parked is exactly the evidence wanted — but do not read the name as authority.
 
 ### Signals considered for the gate and deliberately left out
 
@@ -1136,7 +1136,7 @@ Kept because the next person to look at this will have the same ideas, and most 
 - **`stand_up`** (`0x102` b1 bit5) — the bit itself is the best-attested one here: the manufacturer's own table calls it KickStand, so it is confirmed rather than reverse-engineered. It is left out on MEANING, not confidence. A bike on a paddock stand or a workshop lift reads `stand_up` 1 while being as parked as a motorcycle gets, and that is precisely the situation service mode is for. Requiring it would refuse the workshop. (Its polarity — 0 = stand down — also rests on one observation, "stand_up 0 (it is on the sidestand)".)
 - **`key_on`** (`0x102` b1 bit4) — has only ever been observed as 1; `decode.ts` says so explicitly ("a key-off capture is what would confirm it"). A check never seen to fail is not a check.
 - **`throttle_pct`** (`0x109` b0-1 ÷10) — would be a second, independent throttle reading, and the ÷10 scale is 🟡 with "0000 idle" seen at exactly one operating point. If this bike's throttle sensor rests a tenth of a percent off zero, a gate demanding zero refuses every sweep for ever, and nobody could find out for a week. `throttle_on` is the same fact as a confirmed BIT, so it is used instead.
-- **`0x101` b0/b1** (decoded since 2026-09-14 as `vehicle_substate_can` / `vehicle_state_can`; `docs/can-0x101.md`) — suggested as a vehicle-mode enum for the service gate. Decoding it has not changed that answer: `obd-garage/DC_CHARGE_LIMITS.md` §5 gives 43/40 for **"riding / idle" as a single row**, 62/60 transitional and 104/100 DC charging, from one session on 2026-08-04. It therefore does not separate a moving bike from a parked one — it is a not-DC-charging detector. It is also not decoded here at all, not in the kernel RX filter, and `CAN_MAP.md` (older) still lists `0x101` under "unmapped".
+- **`0x101` b0/b1** (decoded since 2026-09-14 as `vehicle_substate_can` / `vehicle_state_can`; `docs/can-0x101.md`) — suggested as a vehicle-mode enum for the service gate. Decoding it has not changed that answer: bus observations give 43/40 for **"riding / idle" as a single row**, 62/60 transitional and 104/100 DC charging, from one session on 2026-08-04. It therefore does not separate a moving bike from a parked one — it is a not-DC-charging detector. It is also not decoded here at all, not in the kernel RX filter, and `CAN_MAP.md` (older) still lists `0x101` under "unmapped".
 - **`bms_state_*`** (`0x201` b0) — suggested as vehicle state; it is the BMS's own charge state and it says nothing about motion. `bms_state_discharge` reads 1 on a parked bike drawing −0.2 A of housekeeping current, and during a DC fast charge the BMS sits in `bms_state_idle` and never reports Charge at all (`CAN_MAP.md`, 2026-08-04). Neither state distinguishes parked from moving.
 - **`high_beam_lamp`** (`0x102` b2 bit0) — **the high beam**, and shipped as `charging` until 2026-08-16. Not a gate, and not charge evidence either; the full argument and the numbers are above. Kept on this list under its new name because the old one is still in the ride log, in old Grafana panels and in anyone's memory, and it was the one signal here whose NAME invited you to use it.
 - **`bms_err_contactor`** (`0x201` error bits 21-25) — a FAULT flag, not contactor state. It is 0 on a healthy bike whether the contactors are open or closed, so it says nothing about whether the HV bus is live. There is no contactor-state, precharge-complete or HV-live signal broadcast on this bus at all; the BMS has them internally and the stock config does not transmit them.
@@ -1145,19 +1145,19 @@ Kept because the next person to look at this will have the same ideas, and most 
 
 ### Setting the bike's own clock
 
-✅ **The mechanism exists, and it is not a diagnostic service at all.** Energica's "Sync RTC" is `KWP2000Moto.UpdateRTC()` in the service tool's shared library, and all it does is put ONE raw broadcast on CAN `0x120`: a `94 FF` header followed by five bit-packed bytes of **UTC**, zero-padded to eight. No session, no SecurityAccess, no reply — the method takes a host-side bus mutex, sends, sleeps 100 ms and returns true unconditionally. The tool fires it automatically on every connect, after both diagnostic sessions have been stopped, so the VCU accepts it with nothing open.
+✅ **The mechanism exists, and it is not a diagnostic service at all.** Energica's clock-sync definition sends ONE raw broadcast on CAN `0x120`: a `94 FF` header followed by five bit-packed bytes of **UTC**, zero-padded to eight. No session, no SecurityAccess, no reply — the reference sequence takes a host-side bus mutex, sends, sleeps 100 ms and returns true unconditionally. It runs automatically on each connection, after both diagnostic sessions have been stopped, so the VCU accepts it with nothing open.
 
-There is NO diagnostic route to the clock. Searched exhaustively: `SendFrame(288,…)` occurs exactly once in the whole of that library, the `RoutinesID` enum has no clock routine, and no parameter named for a clock exists in `params.ecf`, in any of the 28 firmware bundles' parameter tables, or in the VCU telemetry dictionary.
+There is NO diagnostic route to the clock. Searched exhaustively: the definitions contain exactly one CAN 288 send, no clock routine, and no parameter named for a clock exists in `params.ecf`, in any of the 28 firmware bundles' parameter tables, or in the VCU telemetry dictionary.
 
 ⚠️ **And the bike's current time cannot be read back.** There is no parameter, no service and no broadcast frame carrying the VCU's current date and time. So this action is WRITE-ONLY and unverifiable: unlike a parameter write, there is nothing to read back. The nearest indirect readback is a freeze frame's timestamp (same 2000-01-01 epoch), which needs a DTC to exist first. That asymmetry is why the confirmation asks the owner to confirm the time rather than reporting success afterwards — the Pi is the only thing that can vouch for it.
 
-⚠️ **Corrections to `obd-garage/SERVICE_RESET.md` §5, 2026-08-16:**
+⚠️ **Corrections to earlier clock-sync notes, 2026-08-16:**
 
 - It says "`0x120` is a write/command frame — out of scope to send". That is now stale: the frame has been sent, twice, on 2026-08-16, by another owner's tool.
 - It does not say the time is UTC. It is `DateTime.UtcNow`, not local. Sending local time would set the bike's clock wrong by the timezone offset, and the service stamp with it.
-- The field-to-bit map is not in that file at all. It is below, from the decompiled method and cross-checked against two frames captured on the wire.
+- The field-to-bit map is not in that file at all. It is below, from Energica's definitions and cross-checked against two frames captured on the wire.
 
-**The `0x120` layout**, from the decompiled `UpdateRTC()` — every field little-endian WITHIN itself and split across byte boundaries, which is why `buildRtcSyncFrame` writes it out rather than expressing it as a loop:
+**The `0x120` layout**, from Energica's clock-sync definition — every field little-endian WITHIN itself and split across byte boundaries, which is why `buildRtcSyncFrame` writes it out rather than expressing it as a loop:
 
 ```
 byte 2  bits 0-4  hour            bits 5-7  minute, low 3 of 6
@@ -1284,7 +1284,7 @@ Ascending by index, which is that tool's `sorted(self._param_cur)`. The rows are
 
 ### Why it exists at all
 
-`obd-garage/VCU_PARAM_CHANGES.md` is the current record of what has been changed on this bike, and it is a hand-maintained markdown file in a folder that is not even in this repository. It has already proved its worth twice — it is what made "neither `MAX_DC_CHG_CURRENT` nor `FCHG_CURRENT_GAIN` was ever touched" a checkable claim, which is what killed a whole hypothesis about the charge ceiling. But a hand-maintained file records the changes someone remembered to write down.
+A local change journal is the current record of what has been changed on this bike, and it is a hand-maintained markdown file in a folder that is not even in this repository. It has already proved its worth twice — it is what made "neither `MAX_DC_CHG_CURRENT` nor `FCHG_CURRENT_GAIN` was ever touched" a checkable claim, which is what killed a whole hypothesis about the charge ceiling. But a hand-maintained file records the changes someone remembered to write down.
 
 A parameter sweep is the other half: `snapshot-store.ts` diffs every snapshot against the last and shouts when a value moved. That catches the FACT of a change and not its author — "something reconfigured the bike" is exactly as far as a diff can go. This journal is what turns that into "service mode wrote 80 into `MAX_DC_CHG_CURRENT` at 14:02 on 2026-08-23, over a 75 that it read first".
 
@@ -1342,7 +1342,7 @@ The VCU's calibration EEPROM — throttle maps, cell limits, current thresholds,
 
 **Which names are right depends on which of Energica's parameter tables your bike runs — and the bike will tell you.** `TABLE_TYPE = (family << 12) | revision`, and the VCU reports its own at parameter 276 `TABLE_TYPE_uC` (A9) and 277 `TABLE_TYPE_uS` (A8). This Ribelle reads `0x4017` = table **16407**; `params.ecf` is one revision older, **16406**.
 
-**All 28 tables Energica's 2024 service tool can select are shipped**, in `src/vcu/table-catalog.data.ts`, and the one matching what your bike reports is what the names come from. That is the difference between this working on one motorcycle and working on yours. How much it matters depends on which table you are on:
+**All 28 tables in Energica's 2024 definitions are shipped**, in `src/vcu/table-catalog.data.ts`, and the one matching what your bike reports is what the names come from. That is the difference between this working on one motorcycle and working on yours. How much it matters depends on which table you are on:
 
 | your table                           | ids this software would have got wrong under one hardcoded 16407     |
 | ------------------------------------ | -------------------------------------------------------------------- |
@@ -1361,14 +1361,11 @@ So every sweep reads its own table type back, says so in the journal and at the 
 If your VCU reports a `TABLE_TYPE` that is not in the 28 (Energica has shipped more since; another owner reports a build with about five more, one of them for a Corsa), the tool refuses to write anything and tells you this. Fixing it takes one command and no reverse engineering:
 
 ```bash
-# 1. find the main executable of your own Energica service-tool install — the dealer
-#    diagnostic application itself, not its installer. On Windows it lands under
-#    C:\Program Files (x86)\Energica\, in the tool's own subdirectory, where it is by
-#    far the largest file (~137 MB in the 2024 build). Copy it anywhere; the script
-#    only reads it.
+# 1. supply your Energica parameter-definition assembly (~137 MB in the 2024 copy).
+#    Copy it anywhere; the script only reads it.
 # 2. regenerate the catalogue from it (works on macOS/Linux/Windows — no .NET tooling,
 #    and nothing has to be installed on the machine you run it on, just the file)
-node --experimental-strip-types scripts/extract-vcu-tables.ts /path/to/service-tool.exe
+node --experimental-strip-types scripts/extract-vcu-tables.ts /path/to/definitions.bin
 
 # 3. tidy and check
 npx prettier --write src/vcu/table-catalog.data.ts
@@ -1380,7 +1377,7 @@ npm test
 
 **It merges, it does not overwrite.** Energica builds do not all carry the same tables — the 2021 build has 18 where the 2024 one has 28, and the ten it lacks include every table with the battery cell block — so running it against an older install adds what yours has and keeps what the repo already had. A `TABLE_TYPE` present in both with _different_ content stops the script rather than picking a side: every table shared between the two builds seen so far is byte-identical, export stamp included, so a conflict is a finding worth an issue.
 
-The tables are ZIP archives stored as .NET resources inside the exe, and the **resource name is the answer**: `_16407` is the table a VCU reporting 16407 runs. That name is the only thing in the binary binding a table to the number your bike reports, which is why the script walks the resource directory rather than scanning the file for ZIPs — a scan finds more archives (each is stored twice, and four have no `TABLE_TYPE` name at all, so the service tool itself can never select them) and throws the binding away.
+The tables are ZIP archives stored as .NET resources inside the exe, and the **resource name is the answer**: `_16407` is the table a VCU reporting 16407 runs. That name is the only thing in the binary binding a table to the number your bike reports, which is why the script walks the resource directory rather than scanning the file for ZIPs — a scan finds more archives (each is stored twice, and four have no `TABLE_TYPE` name at all, so they are not selectable by table type) and throws the binding away.
 
 Each table is stored as a **delta against `params.ecf`** — the ids whose name or signedness differ — because `id → micro` and `id → datatype` never vary. All 28 come to ~46 KB of source that way, against ~1.1 MB as standalone tables, which matters on a Pi Zero. Each carries a fingerprint taken from Energica's own bundle, and rebuilding a table checks against it, so a delta that has drifted from the `params.ecf` text underneath it is a loud failure rather than a subtly wrong name table.
 
@@ -1398,7 +1395,7 @@ Reading them is a thing you **do**, from the phone: **Menu → Service mode → 
 
 The sweep covers the 277 parameters the bike's own table describes, plus the 25 more A8's own firmware table serves that `params.ecf` does not name — 302 identifiers, bank 1, on the two VCU micros. Those 25 (the odometer master, the last-service stamp and 18 with nothing traced) are shown unnamed, with raw bytes and no typed value, because their width comes from a firmware image and their signedness from nowhere at all: [`docs/vcu-parameters.md`](vcu-parameters.md) §2. The **`/vcu-probe` endpoint** reaches anything else — name the micro, the bank and the index and it reads that one: `curl -X POST -H 'X-Cool-Eva: service-mode' '<pi>/vcu-probe?target=A9&bank=2&index=258'`. It had a panel on the service sheet until 2026-08; that was removed as clutter for something done a handful of times ever, and what it was for is recorded on issue #51. What lives out there and nothing here could reach before: **bank 2 is live data** rather than stored settings. Same header, same gate and same single-flight as a sweep.
 
-> ⚠️ This briefly offered a **charge manager** target, on CAN `0x7C3`/`0x7E3`. That pair is wrong and has been removed: **`0x7E3` is the dashboard's request id**, so the option could have questioned the dashboard while the page said otherwise, and `RequestFrameIDs.CHM = 0x7C3` turns out to be a dead enum the manufacturer's own code references nowhere. Node `0xA4` is the charge manager's real 11-bit identity, but the ECU actually answers on **29-bit ISO-TP** — request `0x18DA09F1`, response `0x18DAF109` — which needs `ext: true`, its own RX filter and its own addressing math. That is a feature rather than a constant, so the target is gone rather than re-pointed; the full note is in `docs/vcu-parameters.md`, "The charge manager was a target here, and it was WRONG". Whoever adds it should know it is **off-bus when parked** (it answers only during a live charging session), that identification reads need no SecurityAccess, and that its deeper access uses a CRC-16/CCITT algorithm that is **not** the VCU's bit-swap.
+> ⚠️ This briefly offered a **charge manager** target, on CAN `0x7C3`/`0x7E3`. That pair is wrong and has been removed: **`0x7E3` is the dashboard's request id**, so the option could have questioned the dashboard while the page said otherwise, and the manufacturer's `0x7C3` charge-manager request definition is unreferenced. Node `0xA4` is the charge manager's real 11-bit identity, but the ECU actually answers on **29-bit ISO-TP** — request `0x18DA09F1`, response `0x18DAF109` — which needs `ext: true`, its own RX filter and its own addressing math. That is a feature rather than a constant, so the target is gone rather than re-pointed; the full note is in `docs/vcu-parameters.md`, "The charge manager was a target here, and it was WRONG". Whoever adds it should know it is **off-bus when parked** (it answers only during a live charging session), that identification reads need no SecurityAccess, and that its deeper access uses a CRC-16/CCITT algorithm that is **not** the VCU's bit-swap.
 
 **It is on demand, never automatic.** These are configuration: they do not move while riding, so logging them as time series would spend SD-card writes re-recording constants, and 277 more keys in the WebSocket snapshot would cost every dashboard update. Nothing starts a sweep at boot, on a timer or per page load. What is worth knowing is that one _changed_ — so every run diffs against the previous snapshot and says so loudly in the journal. `GET /vcu-params` and `/params.html` serve that snapshot from disk and **never touch the bus**.
 
@@ -1414,7 +1411,7 @@ node --experimental-strip-types scripts/check-vcu-params.ts   # on a laptop, no 
 
 **Historical status:** The following warning is from 2026-08-16. The write path was subsequently exercised on the bike on 2026-08-27/28; [the established results](#1-what-is-proven-and-what-is-not) and [write sequencing](#7-securityaccess-and-the-write-sequence) record that evidence.
 
-> ⚠️ **Nothing in this section has ever been transmitted by this repo** (as of 2026-08-16 — the bike is away for about a week). The write _service_, its framing and its authentication rule are proven: `obd-garage/DIAG_ADDRESSES.md` §9 is a passive capture of **Energica's own diagnostic software** writing to this bike's A8, and `obd-garage/VCU_PARAM_CHANGES.md` records five parameters written to this bike with a scratch tool on 2026-08-09, surviving a power cycle. What has not been exercised is _this code_. Treat every claim below as reasoning until a real bike answers.
+> ⚠️ **Nothing in this section has ever been transmitted by this repo** (as of 2026-08-16 — the bike is away for about a week). The write _service_, its framing and its authentication rule are proven: a passive bus capture records writes to this bike's A8, and bus observations record five parameters written to this bike with a scratch tool on 2026-08-09, surviving a power cycle. What has not been exercised is _this code_. Treat every claim below as reasoning until a real bike answers.
 
 Writing is available after startup, subject to the gates and confirmations. There is no dashboard login: anyone on the same network or holding the Bluetooth key can reach it. **Allow automatic current reduction** defaults ON under Settings → Charging; the optional radiator fan remains OFF until selected under Settings → Bike setup. The earlier write-enable flag defaulting OFF is historical.
 
@@ -1451,7 +1448,7 @@ So `src/vcu/table-gate.ts` refuses a parameter write unless **both** micros have
 
 **Historical status:** Parameter 277 is no longer the last identifier a sweep asks for: sweeps also include the [25 additional A8 bank-1 identifiers](#2-paramsecf-the-text-and-its-provenance). A completed sweep is still required to persist the table evidence.
 
-The gate applies to the **two parameter actions and nothing else**. The service actions below are deliberately exempt: `31 FC` takes a routine local identifier that appears in none of the 28 parameter tables (it comes from the service tool's shared library), Mode 04 and the `0x120` clock broadcast carry no identifier at all, and the service stamp reads ids 1000-1003, outside `params.ecf` entirely. Gating them would be a refusal resting on evidence with no bearing on the action — and reads stay ungated for the reason that matters most: the way out of `unread` **is** a read.
+The gate applies to the **two parameter actions and nothing else**. The service actions below are deliberately exempt: `31 FC` takes a routine local identifier that appears in none of the 28 parameter tables (it is a separate protocol definition), Mode 04 and the `0x120` clock broadcast carry no identifier at all, and the service stamp reads ids 1000-1003, outside `params.ecf` entirely. Gating them would be a refusal resting on evidence with no bearing on the action — and reads stay ungated for the reason that matters most: the way out of `unread` **is** a read.
 
 A name that is not a parameter, or one of the four duplicated names, is rejected **in the pure codec**, not in the UI — `planWrite("NOT_A_PARAMETER_AT_ALL", …)` returns a refusal, and so does any plan whose index does not match its name, or whose index means something else on the bike's own table. `CELL_OVERVOLTAGE` now plans; what stops a careless write is the warning and the table check, not absence. And `src/vcu/write-codec.ts` re-derives the plan from the allowlist immediately before building the frame, so a plan assembled by hand or arriving over HTTP cannot become bytes. The table gate is enforced in the same place and on the same terms: `buildWriteFrame` re-judges the table-type report from the **raw words the bike sent**, never from the report's own `confirmed` flag, so forging one is useless — you would have to claim the bike answered `0x4017`, and if it did then the write was correct. `VSM_CONFIG_1` is offered as a **bit toggle and never as a word**: the same word carries the PSU type (`0x0760`) and the Bluetooth variant (`0x3000`), and a fat-fingered word write would reconfigure both. The new word is computed from the one the bike currently holds, and the pure layer asserts that only the one mask moved.
 

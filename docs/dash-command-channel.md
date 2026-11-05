@@ -6,7 +6,7 @@ This channel matters to the headlight hunt because it is **injectable without a 
 
 ## The sweep — this Eva Ribelle, 2026-08-27
 
-Read-only sweep of all 128 ids (`scripts/dash-command-sweep.ts`, bit 7 always clear — documented non-mutating), key on, headlight on, not charging, service stopped. **19 live, 109 unsupported, 0 silent** — the same live count the service-tool analysis found on an SS9.
+Read-only sweep of all 128 ids (`scripts/dash-command-sweep.ts`, bit 7 always clear — documented non-mutating), key on, headlight on, not charging, service stopped. **19 live, 109 unsupported, 0 silent** — the same live count observed earlier on an SS9.
 
 | id | reply bytes | meaning |
 | --- | --- | --- |
@@ -48,6 +48,6 @@ The write probe is done. `0x15` was the last candidate, and it drives LPR mode, 
 1. **io_set force** (`0x2F` control 17 → 0) — immediate but decays in <40 ms, so it needs a ~5 ms re-assert to hold ([headlight-diagnostic-control.md](headlight-diagnostic-control.md)).
 2. **Beam current-threshold write** (`0x2E` `BEAM_MAX_CURR_TH` below the real draw) — **persistent** across power cycles, takes effect at the next beam init with a `B1012`/`B1009` open-circuit DTC ([headlight-beam-threshold.md](headlight-beam-threshold.md)). This is what a rider means by "turned the headlight off and it complained about low circuit amps."
 
-What the probe _did_ establish, worth keeping: **dash-command writes work by injection and are the same class cool-eva already ships** (RTC `0x14`, charge `0x16`/`0x18`/`0x1A`) — b0 = `id | 0x80`, b1 = `0xFF`, b2 = value, on `0x120` alone, **no diagnostic session**, and the value is _stored_ (persists across the sender exiting). This does **not** cross the `0x2F`/`0x27` ban. The service-tool analysis had left these writes untested; `scripts/dash-command-write.ts` (guarded to the light-labelled ids unless `--force-id`) and `scripts/lpr-mode.ts` are the first live writes of a non-charge dash id.
+What the probe _did_ establish, worth keeping: **dash-command writes work by injection and are the same class cool-eva already ships** (RTC `0x14`, charge `0x16`/`0x18`/`0x1A`) — b0 = `id | 0x80`, b1 = `0xFF`, b2 = value, on `0x120` alone, **no diagnostic session**, and the value is _stored_ (persists across the sender exiting). This does **not** cross the `0x2F`/`0x27` ban. Earlier observations had left these writes untested; `scripts/dash-command-write.ts` (guarded to the light-labelled ids unless `--force-id`) and `scripts/lpr-mode.ts` are the first live writes of a non-charge dash id.
 
 So the only confirmed headlight-off is still the diagnostic `0x2F` route ([headlight-diagnostic-control.md](headlight-diagnostic-control.md)). A true no-diagnostic, works-while-riding "off" now points at hardware — a tap on the low-beam switch _input_ line (cleaner than cutting lamp power, which the VCU current-senses and would fault on).

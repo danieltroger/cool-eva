@@ -8,14 +8,14 @@ Everything below is measured over **the whole capture archive** in `~/Documents/
 
 ## 1. Where the name comes from, and what it is worth
 
-Energica's own free-frame IO table, decompiled out of the service tool and written up in `obd-garage/HEATED_GRIPS.md` §3.0, carries two rows nobody had decoded:
+Energica's own free-frame IO table carries two rows nobody had decoded:
 
 | title                      | code    | frame   | byte | bit   | mask     |
 | -------------------------- | ------- | ------- | ---- | ----- | -------- |
 | `DBS LIGHT SENS CALIB STS` | FF_D013 | `0x400` | 2    | 4     | 0x10     |
 | `DBS DAY/NIGHT MODE`       | FF_D014 | `0x400` | 5    | **7** | **0x80** |
 
-`HEATED_GRIPS.md` §3.5 independently proves `0x400` is the dashboard broadcasting its own digital inputs — every bit of byte 2 lands on a wired J8 pin on the dashboard connector, four bits and four pins with no leftovers, from a decompiled service-tool resource and an Altium schematic that had never been compared. "DBS" is the dashboard. So a day/night flag and a light-sensor calibration bit sharing that frame is exactly where they belong.
+Independent wiring evidence proves `0x400` is the dashboard broadcasting its own digital inputs — every bit of byte 2 lands on a wired J8 pin on the dashboard connector, four bits and four pins with no leftovers, from Energica's own IO definitions and an Altium schematic not previously compared. "DBS" is the dashboard. So a day/night flag and a light-sensor calibration bit sharing that frame is exactly where they belong.
 
 ⚠️ **A name off that table is not a measurement.** `charging` on `0x102` b2 bit 0 came off a third-party table the same way and is really the high beam. Everything from §2 on is what the captures show, independently of what the table calls it.
 
@@ -31,7 +31,7 @@ Over all 14 069 994 frames:
 | b3, b4, b6, b7 | `0x00`                                                                |
 | **b5**         | **`0x00` (10 381 041) · `0x80` (3 688 953 = 26.2 %)**                 |
 
-Two results beyond b5 itself. `b2` now takes four values rather than the three `can-decode-findings.md` recorded (`0x01` is the `btn_set_back` press of 2026-08-19). And **`DBS LIGHT SENS CALIB STS` — b2 bit 4 — has never been set once**, which is expected for a service-tool calibration state but is now a measured never rather than an unexamined one. **Only bit 7 of b5 has ever moved**; the other seven bits of that byte are dead.
+Two results beyond b5 itself. `b2` now takes four values rather than the three `can-decode-findings.md` recorded (`0x01` is the `btn_set_back` press of 2026-08-19). And **`DBS LIGHT SENS CALIB STS` — b2 bit 4 — has never been set once**, which is expected for a diagnostic calibration state but is now a measured never rather than an unexamined one. **Only bit 7 of b5 has ever moved**; the other seven bits of that byte are dead.
 
 ## 3. The clock, which has to come before any claim about time of day
 

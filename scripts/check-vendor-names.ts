@@ -3,8 +3,7 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { promisify } from "util";
 
-// Fails the build if the manufacturer's service-tool product name — or any of the file
-// and library names that only exist inside it — appears anywhere in a TRACKED file.
+// Fails the build if private product, file or library names appear in a TRACKED file.
 //     node --experimental-strip-types scripts/check-vendor-names.ts
 //
 // It exists because the names come back on their own: obd-garage/ is gitignored, uses
@@ -61,39 +60,35 @@ interface ForbiddenName {
 const FORBIDDEN_NAMES: readonly ForbiddenName[] = [
   {
     needle: "em" + "suite",
-    instead:
-      'the product itself is "the manufacturer\'s service tool" (or just "the service tool" once that is ' +
-      'established, and "the tool" inside the same paragraph); its binary is "the service-tool executable"; a ' +
-      'build of it is "the 2024 service-tool build". To cite the gitignored notes, write "the 2024 service-tool ' +
-      'analysis in obd-garage/" or "the service-tool file analysis in obd-garage/" and keep the § number.',
+    instead: "cite Energica's own definitions or bus observations; keep the technical claim.",
   },
   {
     needle: "common" + ".dll",
-    instead: "the shared library the tool's KWP code lives in — write \"the service tool's shared library\".",
+    instead: 'write "Energica\'s protocol definitions".',
   },
   {
     needle: "common" + ".canbusdb",
-    instead: "the tool's frame/signal database — write \"the manufacturer's CAN signal database\".",
+    instead: 'write "Energica\'s own frame definitions".',
   },
   {
     needle: "common" + ".network",
-    instead: "the tool's transport library — write \"the service tool's network library\".",
+    instead: 'write "Energica\'s protocol definitions".',
   },
   {
     needle: "em" + "_fault_codes",
-    instead: 'a table extracted from the tool — write "the manufacturer\'s fault-code table".',
+    instead: 'write "the manufacturer\'s fault-code table".',
   },
   {
     needle: "em" + "_telemetry_scaling",
-    instead: 'a table extracted from the tool — write "the manufacturer\'s telemetry-scaling table".',
+    instead: 'write "the manufacturer\'s telemetry-scaling table".',
   },
   {
     needle: "em" + "_parameter_dictionary",
-    instead: 'a table extracted from the tool — write "the manufacturer\'s parameter dictionary".',
+    instead: 'write "the manufacturer\'s parameter dictionary".',
   },
   {
     needle: "em" + "cvoc",
-    instead: "the tool's bundle resource — write \"the manufacturer's parameter bundles\".",
+    instead: 'write "the manufacturer\'s parameter bundles".',
   },
 ];
 

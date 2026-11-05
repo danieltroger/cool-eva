@@ -1,7 +1,7 @@
 import { canIdsFor, parseResponseFrame } from "../src/vcu/param-codec.ts";
 
 // Probes — and, with a force flag, exercises — the UDS InputOutputControl (0x2F) route that
-// the manufacturer's service tool uses to drive the VCU's body outputs (headlight, indicators, horn, …). See
+// Energica defines for driving the VCU's body outputs (headlight, indicators, horn, …). See
 // docs/headlight-diagnostic-control.md. This is the general io_set/io_get harness the on-bike RE
 // needs; --off/--on are just the headlight preset (control 17).
 //
@@ -31,7 +31,7 @@ const DEFAULT_NODE = "A8"; // VCU-Safety — the micro that drives the body outp
 const TARGET_ADDRESS = { A8: 0xa8, A9: 0xa9 } as const;
 
 const SERVICE_START_SESSION = 0x10;
-const STANDARD_SESSION = 0x81; // the VCU's session type, per the decompile
+const STANDARD_SESSION = 0x81; // VCU session, per Energica's definitions
 const SERVICE_STOP_SESSION = 0x20;
 const SERVICE_SECURITY = 0x27;
 const SERVICE_IO_CONTROL = 0x2f;
@@ -41,7 +41,7 @@ const NEGATIVE_RESPONSE = 0x7f;
 const SECURITY_REQUEST_SEED = 0x01;
 const SECURITY_SEND_KEY = 0x02;
 
-// IOControl sub-commands (UDS 0x2F), as the service tool uses them.
+// IOControl sub-commands (UDS 0x2F), per Energica's definitions.
 const IO_SET = 0x07; // shortTermAdjustment
 const IO_GET_OUTPUT = 0x00; // commanded output state
 const IO_GET_READING = 0x01; // live current sense
@@ -53,8 +53,8 @@ const IO_GET_READING = 0x01; // live current sense
 // proven-steady value (the strobe→steady threshold is somewhere between 5 and 40 ms).
 const DEFAULT_REASSERT_MS = 5;
 
-// Headlight preset: the service tool's LIGHTS table (from a model's controls definition, which is NOT in
-// the decompiled analysis — so these ids may not match this Eva Ribelle; that is what we're testing).
+// Headlight preset: Energica's LIGHTS definitions, absent from the earlier
+// analysis — these ids may not match this Eva Ribelle; that is what we're testing.
 const BEAM_OUTPUT_CONTROL = 17; // "Low + high beam"
 const BEAM_SENSE_CONTROL = 18; // its current sense
 
@@ -366,7 +366,7 @@ function controlBytes(control: number): number[] {
 }
 
 /**
- * The value from a 0x6F IOControl reply, decoded exactly as the service tool does:
+ * The value from a 0x6F IOControl reply, decoded per Energica's definitions:
  * the reply echoes the identifier first, so the value is the trailing byte(s). Our payload keeps
  * the leading service byte, so measure the post-service length: ≥5 → a signed 16-bit reading,
  * else the trailing single byte (an output command). This is why a get-output shows 0/255 and a

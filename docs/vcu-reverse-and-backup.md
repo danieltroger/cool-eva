@@ -15,7 +15,7 @@ All four are `WORD S` (signed 16-bit) served by the **A9** micro, addressed `CID
 | 69 | `0x1045` | `REVERSE_MAX_SPD` | 45 | speed ceiling in park assist | **4.5 km/h** (0.1 km/h/count) — see §2.3 |
 | 149 | `0x1095` | `BACKUP_MODE_TRQ` | 250 | torque ceiling in the degraded-throttle fallback | **25.0 Nm** |
 
-**Where "this bike" comes from, and its date.** `obd-garage/kwp_scan_raw.txt`, the A9 dump of 2026-06-14, reads `A9 B1 0043 2 0258`, `0044 2 00c8`, `0045 2 002d`, `0095 2 00fa` → 600, 200, 45, 250. That dump is three months old. What dates the values to the incident is the log itself: a 599-count ceiling at 16:07 on 2026-09-13 (§3) says index 67 still held 600 at that moment.
+**Where "this bike" comes from, and its date.** The A9 dump of 2026-06-14 reads `A9 B1 0043 2 0258`, `0044 2 00c8`, `0045 2 002d`, `0095 2 00fa` → 600, 200, 45, 250. That dump is three months old. What dates the values to the incident is the log itself: a 599-count ceiling at 16:07 on 2026-09-13 (§3) says index 67 still held 600 at that moment.
 
 ⚠️ **Index 67 no longer reads 600.** The owner raised it to 750 on 2026-09-13 (§8) and a live probe on **2026-09-14** read it back as `rawHex 02 EE` = **750**, so that is the value in the bike today. The table's 600 is the factory-matching value the incident happened on, kept because the whole of §3 is measured against it.
 
@@ -173,7 +173,7 @@ Across all 12 bins with at least 8 samples each side the median ratio is **1.233
 
 🟡 Also not established: that this block is what executes in the reverse path. It exists, it reads those parameters, and the behaviour it implements is the behaviour §2.2 and §3 measured on the wire — but no reachability proof was attempted.
 
-⚠️ **The images may not be the build running in this bike.** They are Energica's shipped files and nothing has confirmed they match what is flashed. `0x1A ReadEcuIdentification` is observed working on these micros (`obd-garage/DIAG_ADDRESSES.md` §9) and would settle it in one read.
+⚠️ **The images may not be the build running in this bike.** They are Energica's shipped files and nothing has confirmed they match what is flashed. `0x1A ReadEcuIdentification` is observed working on these micros and would settle it in one read.
 
 ### The inverter is not the enforcing copy
 
@@ -250,7 +250,7 @@ to         900   (90.0 Nm)      — see the reasoning below
 - ⚠️ **Park assist is the mode where a person is walking beside 280 kg of motorcycle, often on a slope, often with one hand on the bars.** This limit exists so the bike cannot climb out of your grip. 90 Nm is 1425 N at the contact patch — around 145 kgf, comfortably more than a person can hold against.
 - ⚠️ **The slew rate is unchanged at 200 Nm/s**, so a raised limit takes proportionally _longer_ to reach — 0.45 s to 90 Nm against 0.375 s to 75. The arrival is not more sudden; the destination is higher.
 - ⚠️ **Reverse is used blind, looking over a shoulder, usually with the front wheel pointed somewhere.** More thrust over a lip is also more thrust when the wheel finally frees.
-- A dealer visit reverts it: the service tool reinstalls parameter values from Energica's server, keyed by VIN.
+- A dealer visit reverts it: parameter values are restored from Energica's server, keyed by VIN.
 
 ## 7. Which allowlist it would have to join
 
@@ -310,7 +310,7 @@ Also open, and smaller: whether the fade in §2.3 is `REVERSE_MAX_SPD` acting; a
 
 ## 9. What was read
 
-Opened and used: `obd-garage/kwp_scan_raw.txt` · the 2024 service-tool analysis in `obd-garage/` (§3.3, §6.0, §6.4, Appendix A) · `obd-garage/VCU_PARAM_CHANGES.md` · `obd-garage/DIAG_ADDRESSES.md` §9 · `src/vcu/param-file.ts`, `write-targets.ts`, `write-runner.ts` · `src/can/decode.ts`, `registry.ts`, `drive.ts` · `docs/vcu-parameters.md` §5, §9 · `docs/can-decode-findings.md:150, :347, :755` · `evidence/probes-20260914.txt` (five live read-only probes, 2026-09-14) · `evidence/captures/frames-0x101-capture-20260913-150718-04632ecc.txt` (985 098 frames) · `evidence/service-writes.jsonl` line 89 · the manufacturer's telemetry-scaling table · `Energica_Manuals/VCU/firmware/FILE VCU/VCU_Control_CRP.mot` and `VCU_Safety_CRP (5).mot` and both `ULTIMI` builds, disassembled · the whole of `PRE-EMCE Configuration_Inverter_FW6701_rev3`, folder and `.zip` both, unzipped to scratch with the originals untouched — `Inverter Upgrade Instructions_REV3.pdf`, `3. Parameters_6701_Energica/*.txt`, and the file listing of the programming tool and the RMS firmware `.hex` (a different inverter; cited for the Nm×10 convention only, see §4).
+Opened and used: bus observations · Energica's own frame and parameter definitions · `src/vcu/param-file.ts`, `write-targets.ts`, `write-runner.ts` · `src/can/decode.ts`, `registry.ts`, `drive.ts` · `docs/vcu-parameters.md` §5, §9 · `docs/can-decode-findings.md:150, :347, :755` · `evidence/probes-20260914.txt` (five live read-only probes, 2026-09-14) · `evidence/captures/frames-0x101-capture-20260913-150718-04632ecc.txt` (985 098 frames) · `evidence/service-writes.jsonl` line 89 · the manufacturer's telemetry-scaling table · the manufacturer's control and safety definitions, including both versions · the manufacturer's inverter parameter reference (a different inverter; cited for the Nm×10 convention only, see §4).
 
 Opened and **empty on this question**, recorded so nobody repeats the search: the manufacturer's fault-code table (0 hits for "backup") · the manufacturer's parameter dictionary (only `156,Reverse_Switch,uint16_t,,,-1,` with an empty description column; no `BACKUP_*` row) · the three `.ecuparams.ems` files in `FILE VCU` (600-byte JSON arrays carrying only lighting-current parameters) · `EVA Ribelle Owner Manual (END006918 rev01).pdf` (describes PARK ASSISTANCE mode and its slow-forward/reverse toggle, states no speed or torque) · `Workshop Manual - Eva Ribelle EMCE.pdf` (one mention: "Green light flashing: the motorcycle is in Park Assistance mode") · a grep of all three firmware folders for `BACKUP_MODE|REVERSE_TORQUE|REVERSE_MAX`: zero hits.
 

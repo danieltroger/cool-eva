@@ -64,7 +64,7 @@ Every `0x102` and `0x400` frame in `~/Documents/cool-eva-archive` — **268 top-
 
 ### The `0x400` buttons, measured for #290
 
-⚠️ **The table above is `0x102`, the VCU's left-pod discretes. `0x400` is the DASHBOARD's frame** and carries four more buttons (`obd-garage/HEATED_GRIPS.md` §3.5 pins each to a `J8` pin). They were measured for the wifi gesture in `docs/wifi.md`, over the same 268 files — **14 854 432 frames of `0x400`, 98 files carrying it** — and against `rides.db` as a second corpus, because §"Long ENTER presses in the ride log" is the standing warning that one archive is not enough.
+⚠️ **The table above is `0x102`, the VCU's left-pod discretes. `0x400` is the DASHBOARD's frame** and carries four more buttons (each mapped to a `J8` pin). They were measured for the wifi gesture in `docs/wifi.md`, over the same 268 files — **14 854 432 frames of `0x400`, 98 files carrying it** — and against `rides.db` as a second corpus, because §"Long ENTER presses in the ride log" is the standing warning that one archive is not enough.
 
 | button | captures | ride log | ≥ 5 s |
 | --- | --- | --- | --- |
@@ -79,7 +79,7 @@ Every `0x102` and `0x400` frame in `~/Documents/cool-eva-archive` — **268 top-
 
 **What carries the button is the cost of a false fire, not its absence.** One dump, and a rejoin only when the link is already down — which is the action wanted then anyway; while the link is up a hold does not touch it. That is categorically unlike the fan gesture, where a false fire changes cooling. `scripts/check-wifi-recover.ts` replays that exact 29 664 ms press through the shipped recogniser and requires it to fire **once**.
 
-🚨 **A 5 s hold cannot go on `btn_cruise_set`**, which is the likeliest reading of the owner's word "speedo-set" (the 2024 service-tool analysis in `obd-garage/` §3.0 calls it `BUTTON [SET SPD|C.CTRL] (RightFront)`). It would have fired 26 times already. **And a stationary gate does not rescue it:** 16 of the 21 long ride-log presses were made at **≤ 2.5 km/h**, several at 0.0 — this button is held long while parked as well as while setting a cruise speed at 78 km/h. Lengthening the hold does not save it either: 7 clear 8 s and 3 clear 10 s. That check was run _before_ the gate was proposed, and it killed it.
+🚨 **A 5 s hold cannot go on `btn_cruise_set`**, which is the likeliest reading of the owner's word "speedo-set" (Energica's own definitions call it `BUTTON [SET SPD|C.CTRL] (RightFront)`). It would have fired 26 times already. **And a stationary gate does not rescue it:** 16 of the 21 long ride-log presses were made at **≤ 2.5 km/h**, several at 0.0 — this button is held long while parked as well as while setting a cruise speed at 78 km/h. Lengthening the hold does not save it either: 7 clear 8 s and 3 clear 10 s. That check was run _before_ the gate was proposed, and it killed it.
 
 ⚠️ **`SAMPLE_MAX_AGE_MS`'s 35× margin is `0x102`'s number, not this frame's.** `long-press.ts` argues 500 ms from `0x102`'s worst intra-press gap of 14 ms; the first gesture on a `0x400` bit needs `0x400`'s. Measured across all 129 archive presses: **worst intra-press gap 160.2 ms** (`btn_cruise_set`, 2026-08-09, `capture-20260809-181842-5f095c14.log`), **0 presses with any gap over 500 ms**, so the margin is **3.12×** rather than 35×. Per button it is `btn_set_back` **22.3 ms (22.4×)**, `btn_cruise_enable` 155.2 ms, `btn_cruise_set` 160.2 ms.
 

@@ -91,7 +91,7 @@ const ROUTINE_IDS: Record<ServiceRoutineName, number> = { "set-service-point": 0
  * Which micro owns each routine.
  *
  * On the wire this is only an address byte, but getting it wrong is not harmless:
- * SERVICE_RESET.md §7 records that `0xFC` also equals `RoutinesID.VCUCheckSum` in
+ * Energica's definitions also assign `0xFC` to the VCU checksum in
  * the FLASHING enum, which is a different ECU and session. "Don't send `31 FC` to
  * A9 expecting a service reset" is a direct quote, so the micro is pinned here
  * rather than left to a caller.
@@ -344,8 +344,8 @@ export type RoutineReply =
 /**
  * Decodes one reply to `31`, against the routine that was started. Pure.
  *
- * ⚠️ The expected shape is INFERRED. SERVICE_RESET.md §3 says so in as many words —
- * the service tool only checks its own `Completed_ACK`, and the positive-response bytes were
+ * ⚠️ The expected shape is INFERRED. Energica's definitions check completion only,
+ * and the positive-response bytes were
  * never logged. So an unexpected shape is reported as `unrecognised` and the caller
  * must treat that as "we do not know whether it ran", never as success. The service
  * point is irreversible; guessing in the optimistic direction is the one thing that

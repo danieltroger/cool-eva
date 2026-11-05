@@ -165,12 +165,12 @@ export const CURRENT_FRAME_GAP_MS = 5;
 
 // ── ECUReset (resetVcu) ─────────────────────────────────────────────────────
 const SERVICE_ECU_RESET = 0x11;
-const RESET_KEY_OFF_ON = 0x02; // keyOffOnReset — the only mode the service tool uses on the bike (a restart, not a factory reset)
+const RESET_KEY_OFF_ON = 0x02; // keyOffOnReset — the only mode in Energica's reset sequence (a restart, not a factory reset)
 const POSITIVE_RESET_RESPONSE = 0x51; // 0x11 + 0x40
 const NEGATIVE_RESPONSE_SERVICE = 0x7f;
 /**
- * Control (A9) first, then Safety (A8), matching scripts/reboot-vcu.ts and the service
- * tool's ResetVCU. Sessions are opened on both before either is reset — see runResetVcu.
+ * Control (A9) first, then Safety (A8), matching scripts/reboot-vcu.ts and Energica's
+ * reset definition. Sessions are opened on both before either is reset — see runResetVcu.
  */
 const RESET_MICRO_ORDER: ("A8" | "A9")[] = ["A9", "A8"];
 /** Extended-addressing target byte per micro. Mirrors param-codec's TARGET_ADDRESS, which is module-private. */
@@ -623,8 +623,7 @@ async function runReadServiceStamp(
   for (const [field, entry] of Object.entries(SERVICE_STAMP_IDENTIFIERS)) {
     const outcome = await readIdentifier(context, SERVICE_STAMP_MICRO, entry.identifier);
     if (outcome.kind !== "record") {
-      // Named rather than collapsed: SERVICE_RESET.md §2 records the service tool
-      // treating a refusal here as "this motorcycle does not have the feature", which is a
+      // Named rather than collapsed: Energica's definitions treat a refusal here as "this motorcycle does not have the feature", which is a
       // different thing from the bus having gone quiet.
       return {
         ok: false,
@@ -814,8 +813,8 @@ async function runClearDtcs(context: SessionContext): Promise<ClearDtcsOutcome> 
 
 /**
  * Restarts both VCU micros with UDS ECUReset (`11 02` = keyOffOnReset) — a key-cycle
- * restart, nothing erased. Ported from scripts/reboot-vcu.ts, itself a port of
- * the service-tool analysis's ResetVCU, and proven on-bike 2026-08-27.
+ * restart, nothing erased. Ported from scripts/reboot-vcu.ts, following
+ * Energica's reset definition, and proven on-bike 2026-08-27.
  *
  * ⚠️ BOTH micros are reset, back-to-back, with a session opened on BOTH before the
  * first reset. The two processors watch each other: restart one alone and its partner
@@ -839,7 +838,7 @@ export function resetVcu(channel: RawChannel): {
 }
 
 async function runResetVcu(context: SessionContext): Promise<ResetVcuOutcome> {
-  // Open a session on EVERY micro BEFORE the first reset, like the service tool's ResetVCU:
+  // Open a session on EVERY micro BEFORE the first reset, per Energica's reset definition:
   // opening the second node's session after the first is already down is one more
   // round trip during which the partner sees it gone and stores a fault.
   for (const micro of RESET_MICRO_ORDER) {
@@ -917,7 +916,7 @@ function describeResetNrc(code: number): string {
  * Broadcasts the Pi's UTC onto CAN 0x120, setting the bike's own clock.
  *
  * ⚠️ FIRE AND FORGET, and that is not a shortcut — it is what the mechanism is.
- * Energica's `UpdateRTC()` sends one frame, sleeps 100 ms and returns true
+ * Energica's RTC sync sends one frame, sleeps 100 ms and returns true
  * unconditionally; there is no reply to wait for, no session to open and no
  * SecurityAccess. So "sent" is the strongest claim this function can make, and it
  * makes exactly that one. There is also no way to read the bike's clock back — no

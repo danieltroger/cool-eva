@@ -2,9 +2,8 @@
 // warning lamp, front brake pressure — which is a quantity nothing else on this bus
 // carries, and the reason this frame was worth chasing — and six flags.
 //
-// Layout is Energica's own, out of the `FramesDB.ParseABS_INFO` handler in the service
-// tool (the 2024 service-tool analysis in obd-garage/, §`0x0A0` `ABS_INFO`), confirmed
-// against this bike's own captures rather than taken on trust:
+// Layout is from Energica's own frame definitions, confirmed against this bike's
+// own captures rather than taken on trust:
 //
 //   b0-1 LE  A_F_SPD_SENS   front wheel speed
 //   b2-3 LE  A_R_SPD_SENS   rear wheel speed

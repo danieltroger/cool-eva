@@ -110,7 +110,7 @@ const TARGET_ADDRESS: Record<VcuTarget, number> = { A8: 0xa8, A9: 0xa9 };
  * Which 11-bit CAN ids each target speaks on.
  *
  * Both micros share one pair and differ only by the address byte. Live since
- * 2026-08-08. Nothing else may be added here without a decompile or a capture behind
+ * 2026-08-08. Nothing else may be added here without a definition or capture behind
  * it — see the removal note above for what happens when a pair is written down from
  * a plausible guess.
  */

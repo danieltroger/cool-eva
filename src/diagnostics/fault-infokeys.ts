@@ -3,7 +3,7 @@ import { lookupInfokey, infokeyWidth, type InfokeyField } from "./infokey-table.
 // Energica's own answer to "what do you need to see to diagnose THIS fault" — one
 // ordered shortlist of ./infokey-table.ts ids per fault. Data only. 155 faults, 944
 // references, every one resolving into 1…120 with none dangling. Extracted from the
-// manufacturer's service-tool data; provenance, and why the two tool builds are ONE
+// manufacturer's diagnostic definitions; why the two definition versions are ONE
 // source rather than two: docs/diagnostics-and-checks.md §5.3.
 //
 // ── ⚠️ THE ORDER IS THE WIRE LAYOUT, NOT A DISPLAY PREFERENCE ───────────────
@@ -37,7 +37,7 @@ export interface FaultInfokeys {
   component: number;
   /** Which fault of that component, 0…15. */
   symptom: number;
-  /** What the service tool calls this pair. A cross-check only — see the header. */
+  /** The manufacturer's code for this pair. A cross-check only — see the header. */
   serviceToolObdCode: string;
   /**
    * The infokey ids, IN PAYLOAD ORDER. May be empty — see the note on (60,0).
@@ -46,13 +46,13 @@ export interface FaultInfokeys {
   infokeys: readonly number[];
 }
 
-/** The shortlist for a (component, symptom) pair, or null when the service tool lists none. */
+/** The shortlist for a (component, symptom) pair, or null when the dictionary lists none. */
 export function infokeysFor(component: number, symptom: number): FaultInfokeys | null {
   return BY_COMPONENT_SYMPTOM.get(key(component, symptom)) ?? null;
 }
 
 /**
- * Every shortlist the service tool files under an OBD code.
+ * Every shortlist the dictionary files under an OBD code.
  *
  * A LIST, because the OBD column is not unique: `U0182` is both (39,3) and
  * (40,3), two different components with the same generic code. Returning one of
@@ -195,7 +195,7 @@ export const FAULT_INFOKEYS: readonly FaultInfokeys[] = [
   shortlist(42, 0, "P0121", [1, 2, 64, 65, 66, 67, 68, 69, 60]),
   shortlist(43, 0, "B1015", [1, 53, 59, 3, 31]),
   shortlist(43, 1, "B1016", [1, 53, 59, 3, 31]),
-  // ⚠️ (44,0) and (44,2): the service tool says P0A05 / P0A07 where ./dtc-table.ts says
+  // ⚠️ (44,0) and (44,2): the dictionary says P0A05 / P0A07 where ./dtc-table.ts says
   // P0A07 / P0A05. The DTC table wins — see this file's header. The SHORTLIST is
   // the same for all three symptoms anyway, so the disagreement changes nothing
   // about what a pump freeze frame contains: pump current, pump module status and

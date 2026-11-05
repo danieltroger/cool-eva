@@ -9,8 +9,8 @@
 //
 // All three re-derived from this bike's own 2026-08-02 garage lap on 2026-08-16
 // (`~/Documents/cool-eva-archive/ride-2026-08-02.log`). Layouts for 0x02C come from
-// Energica's `FramesDB` (the 2024 service-tool analysis in obd-garage/); 0x125 and 0x127
-// are not in it at all and are settled by the capture alone.
+// Energica's frame definitions; 0x125 and 0x127 are absent from those definitions
+// and are settled by the capture alone.
 
 import { type DecodedValue, i16le, u16le } from "./frame.ts";
 
@@ -58,7 +58,7 @@ export function decodeRedundantSpeedFrame(data: Buffer): DecodedValue[] {
 // is dead is more useful than a key that only ever writes 0.
 
 // ---------------------------------------------------------------------------------------
-// 0x127 — the dual throttle position sensor. Not in Energica's FramesDB; settled by capture.
+// 0x127 — the dual throttle position sensor. Absent from definitions; settled by capture.
 //
 // ✅ Both channels correlate with 0x109's throttle at r = +0.998 and with each other at
 // +0.99946; `b0-1 − b2-3` stays inside [−143, 0] for the entire lap. Two channels tracking
@@ -73,7 +73,7 @@ export function decodeRedundantSpeedFrame(data: Buffer): DecodedValue[] {
 // 0x102's `throttle_on` in only 24 of 1523 frames. One operating point is not a decode.
 
 // ---------------------------------------------------------------------------------------
-// 0x125 — two redundant road-speed channels. Not in FramesDB either.
+// 0x125 — two redundant road-speed channels. Absent from definitions too.
 //
 // ✅ Both correlate with 0x104's `speed_can_kmh` at r = +0.997 over 22 480 frames — almost
 // certainly the safety micro's own view of road speed.

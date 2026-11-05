@@ -110,7 +110,7 @@ export const CURATED_WRITE_TARGETS: WriteTarget[] = [
     warnings: [
       "⚠️ It will probably do nothing. Across eight logged DC sessions the ceiling is the STATION, not the bike: station identity explains 84 % of the variance, the highest ever delivered is 73.2 A, and no station has offered even the 75 A already permitted.",
       "⚠️ 80 A is 1.25C for this pack. The cell datasheet allows 1.10C = 70.4 A, and only between 25 and 35 °C — and the VCU is shown 35 °C while the pack is really at 44-54 °C, so 91 % of DC charging time above 30 A is already over the cell's fast-charge ceiling. This raises the ceiling on an exposure that is already there.",
-      "A dealer visit reverts it. The service tool reinstalls parameter values from Energica's server, keyed by VIN.",
+      "A dealer visit reverts it. Parameter values are restored from Energica's server, keyed by VIN.",
     ],
     verify:
       "Free check, no charger needed: 0x625 b2 is the configured max DC current and is broadcast on a merely-awake bike. It should now read the value you wrote (0x50 for 80 A, 0x4B for 75). If it does not, the write did not take.",
@@ -123,7 +123,7 @@ export const CURATED_WRITE_TARGETS: WriteTarget[] = [
     // than 75 — which is itself an argument that it does not set the ceiling.
     //
     // ⚠️ There is NO documented range for this parameter. It is not an Energica
-    // option, it does not appear in the 2021 or 2024 service-tool builds by name, this
+    // option, it does not appear in the 2021 or 2024 definitions by name, this
     // bike's firmware bundle ships no engineering range file, and 225 is the only value
     // anyone has ever seen. So 0…512 is this repo's policy and nothing more: wide enough to hold
     // both "unity" candidates and a doubling either side, narrow enough that a typo
@@ -168,7 +168,7 @@ export const CURATED_WRITE_TARGETS: WriteTarget[] = [
     name: "REGEN_TORQUE_LIMIT",
     index: 49,
     // WORD S, 0.1 Nm per count. Factory 500; this bike was set to 600 = 60.0 Nm on
-    // 2026-08-09 (obd-garage/VCU_PARAM_CHANGES.md).
+    // 2026-08-09 (bus observations).
     //
     // 900 = 90.0 Nm, i.e. +50 % on today's value. Wider than TORQUE_LIMIT's bound
     // because regen is the gentler direction and because VCU_PARAM_CHANGES.md already
@@ -193,8 +193,7 @@ export const CURATED_WRITE_TARGETS: WriteTarget[] = [
     // WORD U. This bike reads 0x1113, and every set bit is accounted for:
     //   0x0001 Fast Charge · 0x0002 VCU IO Extension · 0x0010 VCU IO Ext. PRW+
     //   0x0100 PSU type TDK-600W (field mask 0x0760) · 0x1000 Bluetooth STD (field mask 0x3000)
-    // Bit map from Energica's own option data (the 2024 service-tool analysis in
-    // obd-garage/), decode against the live value in obd-garage/HEATED_GRIPS.md §4.2.
+    // Bit map from Energica's own option data, decoded against the live value.
     //
     // ONE bit is offered. Not the word.
     control: {
@@ -364,7 +363,7 @@ function generatedTarget(parameter: VcuParameter): WriteTarget {
       "⚠️ NOT researched. This is reachable because every parameter is, not because anyone established it is safe to change.",
       `⚠️ The range ${bounds.min}…${bounds.max} is the datatype's full range, not a safe range. A value inside it can still be one the bike cannot run on.`,
       "⚠️ Read the current value first and write it down. There is no factory default in this repo to put back.",
-      "A dealer visit reverts it. The service tool reinstalls parameter values from Energica's server, keyed by VIN.",
+      "A dealer visit reverts it. Parameter values are restored from Energica's server, keyed by VIN.",
     ],
     verify: null,
   };

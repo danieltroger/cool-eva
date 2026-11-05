@@ -2,11 +2,11 @@ import type { ParameterTableDelta } from "./table-catalog.ts";
 
 // GENERATED FILE — do not edit by hand. Regenerate with:
 //
-//     node --experimental-strip-types scripts/extract-vcu-tables.ts /path/to/service-tool.exe
+//     node --experimental-strip-types scripts/extract-vcu-tables.ts /path/to/definitions.bin
 //     npx prettier --write src/vcu/table-catalog.data.ts
 //
-// Energica's VCU parameter tables, one entry per `TABLE_TYPE` the manufacturer's
-// service tool can select, each stored as a DELTA against `params.ecf` (which is table
+// Energica's VCU parameter tables, one entry per `TABLE_TYPE` in the manufacturer's
+// definitions, each stored as a DELTA against `params.ecf` (which is table
 // 16406 — see ./param-file.ts). ./table-catalog.ts rebuilds the full table from a delta
 // and checks the result against the fingerprint recorded here, which was taken from
 // Energica's own bundle rather than from the delta.
@@ -510,7 +510,7 @@ export const PARAMETER_TABLE_DELTAS: ParameterTableDelta[] = [
   },
   {
     tableType: 4115,
-    exportStamp: "service-tool-analysis",
+    exportStamp: "definitions-import",
     fingerprint: "f591017d",
     delta: `
 1 TH_HIGH_B_H_TEMP

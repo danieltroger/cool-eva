@@ -191,7 +191,7 @@ A stored code says _what_ went wrong. A freeze frame says what the bike was **do
 
 What makes a freeze frame readable rather than a hex dump is Energica's own data, and both halves are now in this repo:
 
-- **`src/diagnostics/infokey-table.ts`** — the 120 telemetry fields the manufacturer's service tool calls _info keys_, each with a name, a unit, a C datatype and a scaling equation. Transcribed from two independent copies of Energica's own table, which agree on all 120 rows.
+- **`src/diagnostics/infokey-table.ts`** — the 120 telemetry fields Energica's definitions call _info keys_, each with a name, a unit, a C datatype and a scaling equation. Transcribed from two independent copies of Energica's own table, which agree on all 120 rows.
 - **`src/diagnostics/fault-infokeys.ts`** — **944 curated references** across 155 faults saying which of those fields to show for each code, _in order_. That order is the payload's byte layout, not a display preference.
 
 Tap any stored code on the Faults tab and it opens to show that shortlist: Energica's own answer to "what should I go and measure for this fault". That part needs no bus at all — it is served from `/fault-infokeys`, static and cached.

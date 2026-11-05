@@ -79,7 +79,7 @@ const TARGETS = [
       "⚠️ It will probably do nothing. Across eight logged DC sessions the ceiling is the STATION, not the bike: station identity explains 84 % of the variance, the highest ever delivered is 73.2 A, and no station has offered even the 75 A already permitted.",
       "⚠️ 80 A is 1.25C for this pack. The cell datasheet allows 1.10C = 70.4 A, and only between 25 and 35 °C — and the VCU is shown 35 °C while the pack is really at 44-54 °C, so 91 % of DC charging time above 30 A is already over the cell's fast-charge ceiling.",
       "Free check afterwards, no charger needed: 0x625 b2 is the configured max DC current and is broadcast on a merely-awake bike. It should change from 0x4B to 0x50.",
-      "A dealer visit reverts it. The service tool reinstalls parameter values from Energica's server, keyed by VIN.",
+      "A dealer visit reverts it. Parameter values are restored from Energica's server, keyed by VIN.",
     ],
     control: { kind: "number", min: 0, max: 80, minLabel: "0 A", maxLabel: "80 A" },
     verify:
