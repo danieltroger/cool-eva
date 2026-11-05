@@ -50,7 +50,7 @@ Only type **BENCH** with stable mains power and the bike parked. Enter both netw
 
 Setup repairs/catches up OS packages, checks swap, downloads and verifies its prebuilt bundle, installs/starts/enables the service, and checks it for a continuous healthy minute. It saves both networks and the hotspot name without disconnecting the current setup link. It does not clone Git, rebuild native modules or ask you to edit a unit, set up swap, or run a separate start/check command. [Every absorbed manual step](bundle-installation.md#what-the-installer-absorbs).
 
-To change saved network credentials, rerun the line and enter the new network name and password, or press Enter at a network-name prompt to keep its saved profile.
+On a bundle install, to change saved network credentials, rerun the line and enter the new network name and password, or press Enter at a network-name prompt to keep its saved profile.
 
 **Do not unplug during OS catch-up.** That job keeps running if SSH closes; keep power on and paste the same line again to resume. After an ordinary download/package error, fix the network/power problem and rerun the line. If migration says **stop and ask for help**, do that instead; do not repeatedly retry, start an old writer or erase the card.
 

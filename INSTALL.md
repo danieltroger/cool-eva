@@ -28,6 +28,8 @@ Setup prints the dashboard address, bundle version, service/recording result and
 
 Keep your existing checkout and its Update button until the migration route is announced. [Daniel's first bundle migration](docs/bundle-installation.md#daniels-first-real-migration--go-at-the-bike) requires off-card backups and his GO at the bike. Never re-image to migrate: that erases the card's settings and ride data.
 
+Existing checkout: change networks with [checkout-install §8](docs/checkout-install.md#8-reach-the-dashboard); do not run the setup line.
+
 Bundle installs use the dashboard Update button for the same CI-built runtime/dependencies, with atomic selection and automatic rollback. Updates cannot be blocked by a checkout lockfile. OS/kernel/firmware updates are separate and require qualifying charging power; bundle rollback cannot repair the OS or SD card. [Update behavior and limits](docs/bundle-updater.md).
 
 ## Developer checkout recipes
