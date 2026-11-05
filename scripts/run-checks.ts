@@ -955,6 +955,11 @@ const CHECKS: SelfCheck[] = [
       "unskippable. Plus the production defaults nothing else exercises: the same gate on the real performance.now()",
   },
   {
+    script: "scripts/check-installer-service.ts",
+    covers:
+      "manager operations longer than 30 seconds, nonblocking activation, safe command failure evidence, verified service restoration and explicit stopped-app recovery advice",
+  },
+  {
     script: "scripts/check-irreversible-actions.ts",
     covers:
       "what is behind the menu sheet's red fold — that the collapsed row's count and its three names are read off " +

@@ -1,5 +1,7 @@
 # Installer rerun diagnostics
 
+The later [integrated #353 run](https://github.com/danieltroger/cool-eva/actions/runs/42001149738) passed fresh/resume, rerun and reboot, then failed service activation and restoration after the synthetic legacy move. [Installer service control](installer-service-control.md) records the separate command-deadline risk and recovery behavior. This later failure does not classify earlier SSH failures as emulator-only.
+
 The rerun failures in CI runs [41913122763](https://github.com/danieltroger/cool-eva/actions/runs/41913122763) (SSH banner timeout after setup) and [41951170785](https://github.com/danieltroger/cool-eva/actions/runs/41951170785) (dashboard health failure during setup) remain unclassified. A successful local reproduction attempt cannot establish that either failure happens only in an emulator.
 
 ## What was measured locally

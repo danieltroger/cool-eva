@@ -9,6 +9,7 @@ on:
       - scripts/check-bundle-*.ts
       - scripts/check-updater-systemd.ts
       - src/release/**
+      - src/install/**
       - src/http/bundle-*.ts
       - src/http/settings.ts
       - src/settings/**

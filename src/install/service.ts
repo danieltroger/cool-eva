@@ -13,8 +13,12 @@ import { parseSettingsDocument } from "../settings/schema.ts";
 import { settingsPaths } from "../settings/paths.ts";
 import { MigrationNeedsHelpError } from "./errors.ts";
 import { verifyReleaseStorage } from "../http/release-health.ts";
+import { submitServiceStart, waitForRunningService } from "./service-control.ts";
 
-export async function prepareExistingService(directory: string): Promise<ServiceBackup | null> {
+export async function prepareExistingService(
+  directory: string,
+  rememberBackup?: (backup: ServiceBackup) => void
+): Promise<ServiceBackup | null> {
   const source = await findInstalledService();
   if (!source) {
     await selectInitialRelease(directory);
@@ -26,6 +30,7 @@ export async function prepareExistingService(directory: string): Promise<Service
     await writeRootFile("/var/cache/cool-eva-install/cool-eva.service.previous", original);
   }
   const backup: ServiceBackup = { service: source, original, unit };
+  rememberBackup?.(backup);
   if (await exists(settingsPaths().settingsFile)) {
     const document = parseSettingsDocument(JSON.parse(await readFile(settingsPaths().settingsFile, "utf8"))).document;
     if (document.migration.complete) {
@@ -102,7 +107,7 @@ export async function installBundleUnits(directory: string, channel: string): Pr
   if ((await command("systemctl", ["show", "cool-eva.service", "--property=ActiveState", "--value"])) === "failed") {
     await command("systemctl", ["reset-failed", "cool-eva.service"]);
   }
-  await command("systemctl", ["enable", "--now", "cool-eva.service"]);
+  await submitServiceStart("cool-eva.service");
 }
 
 export async function preserveCaptureChoice(): Promise<boolean> {
@@ -141,8 +146,14 @@ export async function installCaptureChoice(directory: string, enabled: boolean):
   console.log("Preserved the existing owner's explicit raw-capture opt-in.");
 }
 
-export async function restoreService(backup: ServiceBackup | null): Promise<void> {
-  if (!backup) return;
+export async function restoreService(backup: ServiceBackup | null, failure: unknown): Promise<void> {
+  if (!backup) {
+    if ((await unitLoadState("cool-eva.service")) === "not-found") {
+      throw failure;
+    }
+    await waitForRunningService("cool-eva.service");
+    return;
+  }
   // Completed migration leaves compatibility paths for the old code. An unfinished
   // move must stay quiescent, so this function is called only after verification.
   await verifyReleaseStorage(settingsPaths());
@@ -158,9 +169,10 @@ export async function restoreService(backup: ServiceBackup | null): Promise<void
   }
   await command("systemctl", ["daemon-reload"]);
   await command("systemctl", ["reset-failed", backup.service]);
-  await command("systemctl", ["enable", "--now", backup.service]);
+  await submitServiceStart(backup.service);
+  await waitForRunningService(backup.service);
   console.warn(
-    "The new service failed its checks; the previous service unit was restored. Ride data stays in its service-managed location."
+    "The new service failed its checks; the previous service is running again. Ride data stays in its service-managed location."
   );
 }
 

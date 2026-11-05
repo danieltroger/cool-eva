@@ -23,6 +23,7 @@ export async function checkMigrationFailures(directory: string, repository: stri
     for (const dependency of [
       "node:fs/promises",
       "./commands.ts",
+      "./service-control.ts",
       "../settings/schema.ts",
       "../settings/paths.ts",
       "../http/release-health.ts",
@@ -86,5 +87,7 @@ export async function command(name,args){
 export async function installFile(){}
 export async function writeRootFile(){}
 export async function removeOwnFile(){}
+export async function submitServiceStart(){}
+export async function waitForRunningService(){}
 `;
 }
