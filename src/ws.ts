@@ -1,6 +1,7 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { snapshot, onChange, type LiveValue } from "./can/signals.ts";
+import type { PsuHoldStatus } from "./psu/hold.ts";
 
 // Event-driven push to the phone dashboard:
 //   • full snapshot on connect
@@ -39,6 +40,7 @@ export interface DashboardMessage {
 export interface DashboardSystemStatus {
   settingsFault: string | null;
   can: { state: "up" | "down" | "unknown"; message: string };
+  psuHold?: PsuHoldStatus;
 }
 
 /**

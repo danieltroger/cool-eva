@@ -103,6 +103,9 @@ window.fetch = function previewFetch(input, init) {
   const url = new URL(request, "http://eva.local/");
   const method = ((init && init.method) || "GET").toUpperCase();
   const path = url.pathname;
+  if (path === "/psu-hold") {
+    return psuPreviewReply(url, init ?? {});
+  }
 
   if (path === "/settings") {
     if (method === "GET" && new URL(window.location.href).searchParams.get("settings") === "unconfirmed") {

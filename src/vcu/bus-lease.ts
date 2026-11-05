@@ -28,6 +28,7 @@
  * names would let the first one's late release free the second one's lease.
  */
 let holder: { name: string } | null = null;
+const acquisitionListeners = new Set<() => void>();
 
 /** A held lease. Releasing twice is safe, which is what a `finally` on a retried path does. */
 export interface BusLease {
@@ -46,6 +47,15 @@ export function acquireBus(name: string): { ok: true; lease: BusLease } | { ok: 
   }
   const mine = { name };
   holder = mine;
+  try {
+    // A background transmitter must stop before the lease owner can send its first frame.
+    for (const listener of acquisitionListeners) {
+      listener();
+    }
+  } catch (error) {
+    holder = null;
+    throw error;
+  }
   return {
     ok: true,
     lease: {
@@ -65,4 +75,11 @@ export function acquireBus(name: string): { ok: true; lease: BusLease } | { ok: 
 /** Who has the bus right now, or null. For showing a reason, not for deciding. */
 export function busHeldBy(): string | null {
   return holder?.name ?? null;
+}
+
+export function onBusAcquired(listener: () => void): () => void {
+  acquisitionListeners.add(listener);
+  return () => {
+    acquisitionListeners.delete(listener);
+  };
 }

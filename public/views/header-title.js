@@ -7,6 +7,7 @@ import { pageReloadRequired } from "../lib/page-reload.js";
 import { setupNoticePending } from "../lib/setup-notice.js";
 import { destination, openDestination } from "../lib/destination.js";
 import { destinationTitle } from "./destination-page.js";
+import { psuHoldState } from "../lib/psu-hold.js";
 
 const { button, div, span } = van.tags;
 const svgTags = van.tags("http://www.w3.org/2000/svg");
@@ -19,7 +20,7 @@ export function HeaderTitle() {
     { viewBox: "0 0 24 24", width: 14, height: 14, "aria-hidden": "true" },
     svgTags.path({ fill: "none", stroke: "currentColor", "stroke-width": 2 })
   );
-  const notice = button({ class: "header-notice", onclick: () => openDestination("settings") }, icon, label, count);
+  const notice = button({ class: "header-notice", onclick: openNotice }, icon, label, count);
   const brand = span({ class: "brand" }, "Cool Eva");
   const slot = div({ class: "brand-slot" }, brand, notice, measure);
   const context = { slot, brand, notice, label, count, measure, icon };
@@ -30,33 +31,55 @@ export function HeaderTitle() {
     const fault = systemStatus.val?.settingsFault ?? settings.val?.fault;
     const reload = pageReloadRequired.val;
     const setup = setupNoticePending();
-    const total = Number(!!fault) + Number(reload) + Number(setup);
-    const type = fault ? "Fault" : reload ? "Reload" : "Setup";
-    const description = fault ? "Settings fault" : reload ? "Page reload required" : "First-open setup information";
+    const psu = !!psuHoldState.val?.on;
+    const total = Number(psu) + Number(!!fault) + Number(reload) + Number(setup);
+    const type = psu ? "PSU on" : fault ? "Fault" : reload ? "Reload" : "Setup";
+    const description = [
+      psu ? "PSU on" : "",
+      fault ? "Settings fault" : "",
+      reload ? "Page reload required" : "",
+      setup ? "First-open setup information" : "",
+    ]
+      .filter(Boolean)
+      .join("; ");
     const parked = !!destination.val;
-    notice.hidden = parked || total === 0;
-    brand.hidden = !parked && total > 0;
+    notice.hidden = (!psu && parked) || total === 0;
+    brand.hidden = !notice.hidden;
     brand.textContent = parked ? destinationTitle() : "Cool Eva";
     label.textContent = type;
     measure.textContent = type;
-    count.textContent = total > 1 ? String(total) : "";
-    count.hidden = total <= 1;
-    notice.style.color = fault ? "var(--bad)" : reload ? "var(--warn)" : "var(--label)";
-    notice.setAttribute("aria-label", `${description}; ${total} notice${total === 1 ? "" : "s"}. Open Settings.`);
+    count.textContent = psu || total > 1 ? String(total) : "";
+    count.hidden = !psu && total <= 1;
+    notice.style.color = psu ? "var(--warn)" : fault ? "var(--bad)" : reload ? "var(--warn)" : "var(--label)";
+    notice.setAttribute(
+      "aria-label",
+      `${description}; ${total} notice${total === 1 ? "" : "s"}. Open ${psu ? "Advanced service to turn the hold off" : "Settings"}.`
+    );
     icon
       .querySelector("path")
       ?.setAttribute(
         "d",
-        fault
-          ? "M12 3 2 21h20L12 3Zm0 6v5m0 3v1"
-          : reload
-            ? "M20 7v6h-6M20 13a8 8 0 1 0-2 5"
-            : "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 4v1m0 3v6"
+        psu
+          ? "M12 2v10m-5-8a9 9 0 1 0 10 0"
+          : fault
+            ? "M12 3 2 21h20L12 3Zm0 6v5m0 3v1"
+            : reload
+              ? "M20 7v6h-6M20 13a8 8 0 1 0-2 5"
+              : "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 4v1m0 3v6"
       );
     notice.dataset.compact = "true";
     requestAnimationFrame(() => fitTitle(context));
   });
   return slot;
+}
+
+function openNotice() {
+  if (psuHoldState.rawVal?.on) {
+    openDestination("advanced-service", "psu-hold");
+    requestAnimationFrame(() => document.getElementById("psu-hold")?.scrollIntoView({ block: "center" }));
+  } else {
+    openDestination("settings");
+  }
 }
 
 /** @typedef {{slot:HTMLDivElement,brand:HTMLSpanElement,notice:HTMLButtonElement,label:HTMLSpanElement,count:HTMLSpanElement,measure:HTMLSpanElement,icon:Element}} TitleContext */

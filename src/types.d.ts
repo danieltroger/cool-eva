@@ -9,6 +9,7 @@ declare module "socketcan" {
     data: Buffer;
     ext?: boolean;
     rtr?: boolean;
+    err?: boolean;
     ts_sec?: number;
     ts_usec?: number;
   }

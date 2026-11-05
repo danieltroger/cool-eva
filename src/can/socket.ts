@@ -53,6 +53,11 @@ export function openChannel(iface = "can0"): RawChannel {
   return canModule.createRawChannel(iface, true);
 }
 
+/** Isolated from existing command channels so PSU repeats cannot block the event loop. */
+export function openPsuChannel(iface = "can0"): RawChannel {
+  return canModule.createRawChannelWithOptions(iface, { timestamps: true, non_block_send: true });
+}
+
 /**
  * Read the link and decide, falling back to the bounce whenever the answer is anything other
  * than a confident yes. Logs nothing itself — the caller announces the verdict once, at the
