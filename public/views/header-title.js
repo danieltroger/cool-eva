@@ -75,7 +75,9 @@ export function HeaderTitle() {
 
 function openNotice() {
   if (psuHoldState.rawVal?.on) {
-    openDestination("advanced-service", "psu-hold");
+    if (destination.rawVal !== "advanced-service") {
+      openDestination("advanced-service", "psu-hold");
+    }
     requestAnimationFrame(() => document.getElementById("psu-hold")?.scrollIntoView({ block: "center" }));
   } else {
     openDestination("settings");

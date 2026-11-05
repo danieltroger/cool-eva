@@ -192,10 +192,47 @@ async function checkHeader(page: HeadlessPage, file: string, theme: string, shot
         "ridingPreview('lib/destination.js').destination.val==='advanced-service'&&document.querySelector('[data-psu-action=stop]')",
         "notice target is Advanced service with the Off control"
       );
+      await evaluateOnPage(page, FRAME);
       assert.equal(
         await evaluateOnPage(page, "document.querySelector('.header-notice').hidden"),
         false,
         "Active hold stays visible on a menu page"
+      );
+      const before = (await evaluateOnPage(
+        page,
+        `(() => {
+        window.scrollTo(0, 0);
+        return {length:history.length,back:ridingPreview('lib/destination.js').backDestinationName.rawVal};
+      })()`
+      )) as { length: number; back: string };
+      await evaluateOnPage(page, FRAME);
+      const outside = (await evaluateOnPage(
+        page,
+        "(()=>{const card=document.getElementById('psu-hold').getBoundingClientRect();return {top:card.top,bottom:card.bottom,height:innerHeight,scrollY};})()"
+      )) as { top: number; bottom: number; height: number; scrollY: number };
+      assert(
+        outside.bottom > outside.height,
+        `The card must start outside the viewport before the scroll check: ${JSON.stringify(outside)}`
+      );
+      for (let tap = 0; tap < 2; tap++) {
+        await evaluateOnPage(page, "document.querySelector('.header-notice').click()");
+        await evaluateOnPage(page, FRAME);
+        const after = (await evaluateOnPage(
+          page,
+          `(() => {
+          const card=document.getElementById('psu-hold').getBoundingClientRect();
+          return {length:history.length,back:ridingPreview('lib/destination.js').backDestinationName.rawVal,visible:card.top>=document.querySelector('.header').getBoundingClientRect().bottom-1&&card.bottom<=innerHeight};
+        })()`
+        )) as { length: number; back: string; visible: boolean };
+        assert.equal(after.length, before.length, "The notice must not add history while already on Advanced service");
+        assert.equal(after.back, before.back, "The notice preserves the actual Back destination");
+        assert.equal(after.visible, true, "The same-page notice brings the complete PSU card into view");
+      }
+      await evaluateOnPage(page, "ridingPreview('lib/destination.js').closeDestination()");
+      await waitOnPage(
+        page,
+        "ridingPreview('lib/destination.js').destination.val===''&&ridingPreview('lib/router.js').currentView()==='cooling'",
+        "one Back returns to the real Cooling origin after repeated notice taps"
       );
     }
   }

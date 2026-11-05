@@ -89,8 +89,8 @@ export async function checkPsuHoldHttp(): Promise<void> {
     const stop = new URLSearchParams({
       action: "stop",
       confirm: "psu-hold-stop",
-      revision: String(renewed.revision),
-      instance: renewed.instance,
+      revision: String(on.revision),
+      instance: "previous-boot",
     });
     fixture.state.permitted = false;
     const stopped = await fetch(`${origin}/psu-hold?${stop}`, { method: "POST", headers });
@@ -99,6 +99,10 @@ export async function checkPsuHoldHttp(): Promise<void> {
     assert.equal(off.state.on, false);
     assert.equal(off.state.lastStopReason, "owner");
     assert.equal(fixture.channels[0].stops, 1);
+    const simpleStop = new URLSearchParams({ action: "stop", confirm: "psu-hold-stop" });
+    const repeated = await fetch(`${origin}/psu-hold?${simpleStop}`, { method: "POST", headers });
+    assert.equal(repeated.status, 200, "Confirmed Off needs neither revision nor boot identity");
+    assert.equal(((await repeated.json()) as PsuHoldReply).state.on, false);
     const wrongMethod = await fetch(`${origin}/psu-hold`, { method: "DELETE", headers });
     assert.equal(wrongMethod.status, 405);
     assert.equal(((await wrongMethod.json()) as PsuHoldReply).state.on, false);

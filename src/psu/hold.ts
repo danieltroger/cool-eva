@@ -101,12 +101,12 @@ interface HoldContext {
 
 function perform(context: HoldContext, action: PsuHoldAction, revision: number): PsuHoldResult {
   status(context);
-  if (revision !== context.revision) {
-    return result(context, 409, "State changed. Read the current hold and confirm again.");
-  }
   if (action === "stop") {
     stopHold(context, "owner");
     return result(context, 200, "PSU hold off; no new requests will be sent.");
+  }
+  if (revision !== context.revision) {
+    return result(context, 409, "State changed. Read the current hold and confirm again.");
   }
   const refusal = startRefusal(context);
   if (refusal) {

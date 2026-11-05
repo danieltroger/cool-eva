@@ -8,13 +8,11 @@ The request is standard CAN ID **0x500**, non-RTR, DLC **8**, data **`01 00 00 0
 
 The hold has a **60 minute** monotonic limit, with remaining time shown on the card. **Extend** needs its own new arm-and-confirm and sets another 60 minutes from that confirmation. Refreshing the page, reconnecting or repeating an already completed request does not extend it. The hold is never persisted: every service boot starts **off**.
 
-**Off** also arms before it confirms, because dropping the rail can stop the Pi. The hold stops on its deadline, a requested service shutdown, CAN down/channel stop or bus-off, three consecutive failed transmissions, loss of write permission, or another operation acquiring the bus lease. Lease users include parameter/service operations, CAN restart and automatic DC charge-current commands. Releasing a lease or recovering CAN does not restart the hold. Each start, explicit extension and stop is logged with its reason.
+**Off** also arms before it confirms, because dropping the rail can stop the Pi. A confirmed Off ignores revision and boot changes, so another viewer's extension cannot prevent stopping. The hold stops on its deadline, a requested service shutdown, CAN down/channel stop or bus-off, three consecutive failed transmissions, loss of write permission, or another operation acquiring the bus lease. Lease users include parameter/service operations, CAN restart and automatic DC charge-current commands. Releasing a lease or recovering CAN does not restart the hold. Each start, explicit extension and stop is logged with its reason.
 
 After stop there are **no new frames** from the repeater. Frames already accepted into the kernel/device queue may still leave it. Stop does not send a guessed OFF payload: the PSU's timeout determines when MAIN drops, and that timeout/key-off behavior still needs the on-bike test.
 
 There is **no 12 V battery**. The Pi runs from the PSU's main rail and loses power when that rail drops. That is expected; an HTTP reply or later shutdown cleanup may not complete. Do not rely on this hold to power the Pi through a service stop, restart or an out-of-process operation that stops Cool Eva.
-
-The existing main-channel OBD/E-LOCK sends can block if nothing ACKs after key-off; that pre-existing limitation can stall the event loop, including the hold, so this is not a qualified independent power supply.
 
 ## Permission and telemetry
 
@@ -26,10 +24,10 @@ The existing observed **0x501** monitor supplies `psu_12v_mv` (bytes 0–1, litt
 
 ## Capturing the test
 
-Use **`candump -x`** for Saturday's test, so the local TX/RX direction distinguishes the Pi's own 0x500 requests (150 ms) from the VCU's requests (observed around 20 ms). For example, on the Pi's local interface:
+Use **`candump -x`** for the on-bike test, so the local TX/RX direction distinguishes the Pi's own 0x500 requests (150 ms) from the VCU's requests (observed around 20 ms). For example, on the Pi's local interface:
 
 ```sh
 candump -x -tA can0
 ```
 
-The usual capture helper omits `-x`; identical 0x500 payloads there cannot reliably identify the sender by their bytes alone. Keep captures private and synthetic examples free of identifiers. Test retention after key-off and the PSU timeout with Daniel present; the software checks exercise fake CAN channels and do not establish either hardware behavior.
+The usual capture helper omits `-x`; identical 0x500 payloads there cannot reliably identify the sender by their bytes alone. Keep captures private and synthetic examples free of identifiers. Test retention after key-off and the PSU timeout with someone at the bike; the software checks exercise fake CAN channels and do not establish either hardware behavior.

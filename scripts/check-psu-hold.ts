@@ -12,6 +12,7 @@ export async function checkPsuHold(): Promise<void> {
   expiryAndRenewal();
   negativeGates();
   stopCauses();
+  offAlwaysStops();
   productionClock();
   const entry = await readFile(new URL("../src/index.ts", import.meta.url), "utf8");
   assert(entry.indexOf('name: "stop PSU hold"') < entry.indexOf('name: "stop the CAN channel"'));
@@ -212,6 +213,27 @@ function stopCauses() {
     assert(fixture.hold.status().on, "Old channel callbacks cannot stop a new run");
     fixture.state.permitted = false;
     assert(fixture.act("stop").ok, "Off remains available if permission falls away");
+  } finally {
+    fixture.hold.close();
+  }
+}
+
+function offAlwaysStops() {
+  const fixture = psuFixture();
+  try {
+    fixture.act("start");
+    const revision = fixture.hold.status().revision;
+    fixture.act("extend");
+    assert(fixture.hold.status().revision > revision);
+    fixture.state.permitted = false;
+    fixture.state.unavailable = "CAN unavailable";
+    const frames = fixture.channels[0].frames.length;
+    assert(fixture.hold.perform("stop", revision).ok, "Another viewer's extension cannot refuse Off");
+    assert.equal(fixture.hold.status().on, false);
+    assert.equal(fixture.hold.status().lastStopReason, "owner");
+    assert(fixture.hold.perform("stop", revision).ok, "Repeated Off stays successful despite a stale revision");
+    assert.equal(fixture.channels[0].frames.length, frames, "Off sends no CAN frame");
+    assert.equal(fixture.channels[0].stops, 1);
   } finally {
     fixture.hold.close();
   }

@@ -53,7 +53,7 @@ export function openChannel(iface = "can0"): RawChannel {
   return canModule.createRawChannel(iface, true);
 }
 
-/** Isolated from existing command channels so PSU repeats cannot block the event loop. */
+/** non_block_send: a PSU repeat never waits for socket send-buffer space. */
 export function openPsuChannel(iface = "can0"): RawChannel {
   return canModule.createRawChannelWithOptions(iface, { timestamps: true, non_block_send: true });
 }

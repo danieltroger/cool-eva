@@ -31,7 +31,7 @@ export function handlePsuHoldEndpoint(
     return;
   }
   const action = url.searchParams.get("action");
-  if (url.searchParams.get("instance") !== hold.status().instance) {
+  if (action !== "stop" && url.searchParams.get("instance") !== hold.status().instance) {
     respond(response, 409, {
       state: hold.status(),
       ok: false,
@@ -43,18 +43,16 @@ export function handlePsuHoldEndpoint(
   if (
     (action !== "start" && action !== "stop" && action !== "extend") ||
     url.searchParams.get("confirm") !== `psu-hold-${action}` ||
-    revision === null ||
-    !/^\d+$/.test(revision) ||
-    !Number.isSafeInteger(Number(revision))
+    (action !== "stop" && (revision === null || !/^\d+$/.test(revision) || !Number.isSafeInteger(Number(revision))))
   ) {
     respond(response, 400, {
       state: hold.status(),
       ok: false,
-      message: "Confirm a start, stop or extend action and its current revision.",
+      message: "Confirm a start, stop or extend action; starting or extending also needs the current revision.",
     });
     return;
   }
-  const result = hold.perform(action as PsuHoldAction, Number(revision));
+  const result = hold.perform(action as PsuHoldAction, action === "stop" ? 0 : Number(revision));
   respond(response, result.statusCode, result);
 }
 
