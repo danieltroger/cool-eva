@@ -5,6 +5,7 @@ const geometry = van.state("");
 /** @type {HTMLDivElement | null} */
 let probe = null;
 const standalone = matchMedia("(display-mode: standalone)");
+/** @typedef {Navigator & {standalone?: boolean}} StandaloneNavigator */
 
 export function ScreenGeometry() {
   if (!probe) {
@@ -18,6 +19,7 @@ export function ScreenGeometry() {
     window.addEventListener("resize", scheduleMeasurement);
     window.addEventListener("orientationchange", scheduleMeasurement);
     standalone.addEventListener("change", scheduleMeasurement);
+    window.visualViewport?.addEventListener("resize", scheduleMeasurement);
   }
   measureGeometry();
   return van.tags.div({ class: "settings-note screen-geometry" }, () => geometry.val);
@@ -31,5 +33,10 @@ function measureGeometry() {
   if (!probe) return;
   const style = getComputedStyle(probe);
   const insets = [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft].map(parseFloat);
-  geometry.val = `${innerWidth}×${innerHeight} · DPR ${devicePixelRatio} · insets T/R/B/L ${insets.join("/")} px · standalone: ${standalone.matches ? "yes" : "no"}`;
+  const iosStandalone = /** @type {StandaloneNavigator} */ (navigator).standalone;
+  const viewport = window.visualViewport;
+  const visualSize = viewport
+    ? `${Math.round(viewport.width * 10) / 10}×${Math.round(viewport.height * 10) / 10}`
+    : "unavailable";
+  geometry.val = `${innerWidth}×${innerHeight} · DPR ${devicePixelRatio} · insets T/R/B/L ${insets.join("/")} px · display-mode standalone: ${standalone.matches ? "yes" : "no"} · iOS standalone: ${iosStandalone === undefined ? "unavailable" : iosStandalone ? "yes" : "no"} · screen ${screen.width}×${screen.height} · visualViewport ${visualSize}`;
 }
