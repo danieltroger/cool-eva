@@ -146,8 +146,11 @@ export async function installCaptureChoice(directory: string, enabled: boolean):
   console.log("Preserved the existing owner's explicit raw-capture opt-in.");
 }
 
-export async function restoreService(backup: ServiceBackup | null): Promise<void> {
+export async function restoreService(backup: ServiceBackup | null, failure: unknown): Promise<void> {
   if (!backup) {
+    if ((await unitLoadState("cool-eva.service")) === "not-found") {
+      throw failure;
+    }
     await waitForRunningService("cool-eva.service");
     return;
   }

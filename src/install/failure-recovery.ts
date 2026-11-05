@@ -3,8 +3,11 @@ import { MigrationNeedsHelpError, ServiceRecoveryError, ServiceRestoredError } f
 
 export async function failAfterServiceRecovery(backup: ServiceBackup | null, failure: unknown): Promise<never> {
   try {
-    await restoreService(backup);
+    await restoreService(backup, failure);
   } catch (restoreError) {
+    if (backup === null && restoreError === failure) {
+      throw failure;
+    }
     console.error(
       "Restoring a running service failed:",
       restoreError instanceof SyntaxError
@@ -27,6 +30,9 @@ export async function prepareServiceWithRecovery(directory: string): Promise<Ser
   } catch (error) {
     // An unfinished service-owned data move must stay quiescent for repair.
     if (error instanceof MigrationNeedsHelpError) {
+      throw error;
+    }
+    if (backup === null) {
       throw error;
     }
     return failAfterServiceRecovery(backup, error);

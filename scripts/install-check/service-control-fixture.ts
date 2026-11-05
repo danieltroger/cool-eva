@@ -2,10 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-export async function createServiceControlFixture(directory: string): Promise<{
-  service: typeof import("../../src/install/service.ts");
-  recovery: typeof import("../../src/install/failure-recovery.ts");
-}> {
+export async function createServiceControlFixture(directory: string): Promise<ServiceControlFixture> {
   await mkdir(join(directory, "bin"));
   await writeFile(join(directory, "bin/systemctl"), systemctlFixture(), { mode: 0o755 });
   await writeFile(join(directory, "state"), "inactive");
@@ -21,14 +18,30 @@ async function marked(name){try{await access(directory+'/'+name);return true;}ca
 export async function readFile(path){return path.endsWith('settings.json')?'{}':'legacy fixture';}
 export function settingsPaths(){return {dataRoot:directory,settingsFile:directory+'/settings.json'};}
 export function parseSettingsDocument(){return {document:{migration:{complete:true}}};}
-export async function exists(path){return (path.endsWith('settings.json')||path==='/etc/systemd/system/cool-eva.service')?await marked('fail-select'):path.endsWith('src/index.ts')&&await marked('migration-fault');}
-export async function selectInitialRelease(){if(await marked('fail-select')){throw new Error('Release selection failed after stop');}}
+export async function exists(path){return (path.endsWith('settings.json')||path==='/etc/systemd/system/cool-eva.service')?await marked('fail-select'):path.endsWith('src/index.ts')&&await marked('migration-fault')||path==='/etc/systemd/system/thermometer.service'&&await marked('before-backup');}
+export async function selectInitialRelease(){if(await marked('fresh-select')){throw new Error('Fresh selection failed');}if(await marked('fail-select')){throw new Error('Release selection failed after stop');}}
 export async function verifyReleaseStorage(){}
 export async function installFile(source,destination){if(destination==='/etc/systemd/system/cool-eva.service'){await writeFile(directory+'/unit','new');}}
-export async function writeRootFile(path,contents){if(path==='/etc/systemd/system/cool-eva.service'){await writeFile(directory+'/unit',contents==='legacy fixture'?'old':'new');}}
+export async function writeRootFile(path,contents){if(path.endsWith('.previous')&&await marked('before-backup')){throw new Error('Backup write failed');}if(path==='/etc/systemd/system/cool-eva.service'){await writeFile(directory+'/unit',contents==='legacy fixture'?'old':'new');}}
 export async function removeOwnFile(){}
 `
   );
+  const clockPath = join(directory, "clock.ts");
+  await writeFile(
+    clockPath,
+    `let elapsed=0,expireAt=Infinity;
+export function monotonicNow(){return elapsed;}
+export function since(started){const duration=elapsed-started;if(elapsed>=expireAt){elapsed+=180000;expireAt=Infinity;}return duration;}
+export async function setTimeout(duration){elapsed+=duration;}
+export function expireDuringPoll(){expireAt=elapsed+1000;}
+`
+  );
+  const controlPath = join(directory, "service-control.ts");
+  const controlSource = (await readFile(new URL("../../src/install/service-control.ts", import.meta.url), "utf8"))
+    .replaceAll('"node:timers/promises"', JSON.stringify(pathToFileURL(clockPath).href))
+    .replaceAll('"../monotonic.ts"', JSON.stringify(pathToFileURL(clockPath).href))
+    .replaceAll('"./commands.ts"', JSON.stringify(commands));
+  await writeFile(controlPath, controlSource);
   let serviceSource = await readFile(new URL("../../src/install/service.ts", import.meta.url), "utf8");
   for (const dependency of [
     "node:fs/promises",
@@ -39,7 +52,8 @@ export async function removeOwnFile(){}
   ]) {
     serviceSource = serviceSource.replaceAll(JSON.stringify(dependency), JSON.stringify(pathToFileURL(adapter).href));
   }
-  for (const dependency of ["./errors.ts", "./service-control.ts"]) {
+  serviceSource = serviceSource.replaceAll('"./service-control.ts"', JSON.stringify(pathToFileURL(controlPath).href));
+  for (const dependency of ["./errors.ts"]) {
     serviceSource = serviceSource.replaceAll(
       JSON.stringify(dependency),
       JSON.stringify(new URL("../../src/install/" + dependency.slice(2), import.meta.url).href)
@@ -55,7 +69,23 @@ export async function removeOwnFile(){}
   return {
     service: await import(pathToFileURL(servicePath).href),
     recovery: await import(pathToFileURL(recoveryPath).href),
+    control: await import(pathToFileURL(controlPath).href),
+    now: ((await import(pathToFileURL(clockPath).href)) as ObservationClock).monotonicNow,
+    expireDuringPoll: ((await import(pathToFileURL(clockPath).href)) as ObservationClock).expireDuringPoll,
   };
+}
+
+export interface ServiceControlFixture {
+  service: typeof import("../../src/install/service.ts");
+  recovery: typeof import("../../src/install/failure-recovery.ts");
+  control: typeof import("../../src/install/service-control.ts");
+  now: () => number;
+  expireDuringPoll: () => void;
+}
+
+interface ObservationClock {
+  monotonicNow: () => number;
+  expireDuringPoll: () => void;
 }
 
 function systemctlFixture(): string {
@@ -82,8 +112,26 @@ case "$1" in
   case "$*" in
    *--property=ExecStart*) printf /usr/local/libexec/cool-eva-launch;;
    *--property=WorkingDirectory*) printf /synthetic/checkout;;
+   *--property=LoadState*)
+    if [ -e "$fixture/no-unit" ] || { [ -e "$fixture/before-backup" ] && [ "$2" = cool-eva.service ]; }; then printf not-found; else printf loaded; fi;;
    *--value*) cat "$fixture/state";;
-   *) printf 'ActiveState=%s\\nMainPID=%s\\nJob=0\\n' "$(cat "$fixture/state")" "$(test "$(cat "$fixture/state")" = active && echo 123 || echo 0)";;
+   *)
+    state=$(cat "$fixture/state"); process_id=0; restarts=0; job=
+    if [ "$state" = active ]; then process_id=123; fi
+    if [ -e "$fixture/zero-job" ]; then job=0; fi
+    if [ -e "$fixture/queued-start" ] && [ ! -e "$fixture/queue-sampled" ]; then
+      state=inactive; process_id=0; job=42; touch "$fixture/queue-sampled"
+    fi
+    if [ -e "$fixture/crash-loop" ] || [ -e "$fixture/pid-change" ] || [ -e "$fixture/restart-count" ]; then
+      sample=0; if [ -e "$fixture/sample" ]; then sample=$(cat "$fixture/sample"); fi
+      printf '%s' "$((sample+1))" > "$fixture/sample"
+      if [ "$sample" -ge 1 ]; then
+        if [ -e "$fixture/crash-loop" ] && [ "$sample" = 1 ]; then state=activating; process_id=0; job=43
+        elif [ ! -e "$fixture/restart-count" ]; then process_id=456; fi
+        if [ ! -e "$fixture/pid-change" ]; then restarts=1; fi
+      fi
+    fi
+    printf 'ActiveState=%s\\nMainPID=%s\\nNRestarts=%s\\nJob=%s\\n' "$state" "$process_id" "$restarts" "$job";;
   esac
   ;;
  fail) exit 23;;

@@ -1,5 +1,3 @@
-import { InstallerSystemctlError } from "./commands.ts";
-
 export function printInstallationFailure(error: unknown, log: (...values: unknown[]) => void = console.error): void {
   log(
     "Setup incomplete:",
@@ -51,8 +49,8 @@ export function installationFailureAdvice(error: unknown): string {
   if (error instanceof ServiceRestoredError) {
     return "No ride data was removed. A service is running again. Setup did not finish; keep bench power on and paste the same setup line to resume.";
   }
-  if (error instanceof ServiceRecoveryError || error instanceof InstallerSystemctlError) {
-    const service = error instanceof ServiceRecoveryError ? error.service : "cool-eva.service";
+  if (error instanceof ServiceRecoveryError) {
+    const service = error.service;
     return `No ride data was removed. Treat the app as STOPPED: its running state could not be confirmed. Keep bench power on. In SSH run sudo systemctl daemon-reload, then sudo systemctl start ${service}. If it does not stay running, stop and ask for help with journalctl -u ${service}.`;
   }
   return error instanceof MigrationNeedsHelpError

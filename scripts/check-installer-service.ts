@@ -12,6 +12,7 @@ import {
 import { waitForRunningService } from "../src/install/service-control.ts";
 import { createServiceControlFixture } from "./install-check/service-control-fixture.ts";
 import { monotonicNow, since } from "../src/monotonic.ts";
+import { checkServiceRecoveryEdges } from "./install-check/service-recovery-cases.ts";
 
 export async function checkInstallerService(): Promise<void> {
   const directory = await mkdtemp(join(tmpdir(), "cool-eva-service-control-"));
@@ -26,6 +27,10 @@ export async function checkInstallerService(): Promise<void> {
     const fixture = await createServiceControlFixture(directory);
     process.env.PATH = `${join(directory, "bin")}:/usr/bin:/bin`;
     process.env.INSTALL_SERVICE_FIXTURE = directory;
+    if (process.argv.includes("--edges-only")) {
+      await checkServiceRecoveryEdges(directory, fixture);
+      return;
+    }
     if (!process.argv.includes("--failures-only")) {
       await writeFile(join(directory, "slow-reload"), "");
       await writeFile(join(directory, "slow-enable"), "");
@@ -141,6 +146,7 @@ export async function checkInstallerService(): Promise<void> {
     }
     assert.match(main, /catch \(error\) \{\s*return failAfterServiceRecovery\(backup, error\);/);
     assert.match(main, /view = await checkInstalledApp\(metadata.release\)/);
+    await checkServiceRecoveryEdges(directory, fixture);
     console.log(
       "installer service: slow manager operations, nonblocking start, lifecycle evidence, restored running service or explicit STOPPED advice passed"
     );
