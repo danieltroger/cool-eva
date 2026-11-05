@@ -25,10 +25,11 @@ System ABI dependencies are the kernel, glibc (`libc6`), `libstdc++6`, `libgcc-s
 On macOS or Linux with Node 24 and a working Docker engine:
 
 ```sh
+node --experimental-strip-types scripts/release/cache.ts fetch dist/release-inputs
 node --experimental-strip-types scripts/release/build.ts dist/release
 ```
 
-Commit first and choose an empty output directory. ARM64 hosts build natively; other hosts need Docker's ARM64 emulation. Builds may download pinned dependencies. The container uses the invoking user's UID/GID, so staging and output stay owned by that user. No credentials are forwarded into the container.
+Commit first and choose an empty output directory. Bootstrap the [verified input cache](release-input-cache.md) once; the builder then installs its packages offline. Actions fills and saves the same cache before the VM gate, and a main push changing the input recipe warms the default-branch cache. ARM64 hosts build natively; other hosts need Docker's ARM64 emulation. Builds may still download other pinned dependencies. The container uses the invoking user's UID/GID, so staging and output stay owned by that user. No credentials are forwarded into the container.
 
 In Actions, choose **ARM64 release bundle → Run workflow**, choose a branch, and set `channel` to `main` or a name such as `branch-can-fix`. The workflow runs on `ubuntu-24.04-arm`; it also validates PRs changing the bundle tooling. There is no schedule or build triggered by an ordinary application push. The metadata names the actual checked-out SHA, including formatter commits; it does not depend on a formatter push triggering another workflow.
 

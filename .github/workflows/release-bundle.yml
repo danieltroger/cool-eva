@@ -1,6 +1,12 @@
 name: ARM64 release bundle
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/release-bundle.yml
+      - scripts/release/**
+      - scripts/install-check/setup-tools.sh
   pull_request:
     branches: [main]
     paths:
@@ -28,7 +34,98 @@ permissions:
   contents: read
 
 jobs:
+  inputs:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    outputs:
+      builder-key: ${{ steps.keys.outputs.key }}
+      sources-key: ${{ steps.keys.outputs.sources-key }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.22.2
+      - name: Derive exact pinned input keys
+        id: keys
+        run: node --experimental-strip-types scripts/release/cache.ts key
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: sources
+        with:
+          path: |
+            dist/qemu-tools/*.tar.xz
+            dist/qemu-tools/*.tar.gz
+          key: ${{ steps.keys.outputs.sources-key }}
+      - name: Fetch missing QEMU sources and verify pinned hashes
+        run: sh scripts/install-check/setup-tools.sh dist/qemu-tools fetch-only
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.sources.outputs.cache-hit != 'true'
+        with:
+          path: |
+            dist/qemu-tools/*.tar.xz
+            dist/qemu-tools/*.tar.gz
+          key: ${{ steps.keys.outputs.sources-key }}
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: builder
+        with:
+          path: dist/release-inputs
+          key: ${{ steps.keys.outputs.key }}
+      - name: Fetch only on a miss; verify hits without network
+        env:
+          CACHE_HIT: ${{ steps.builder.outputs.cache-hit }}
+        run: |
+          if [ "$CACHE_HIT" = true ]; then
+            node --experimental-strip-types scripts/release/cache.ts verify dist/release-inputs
+          else
+            node --experimental-strip-types scripts/release/cache.ts fetch dist/release-inputs
+          fi
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.builder.outputs.cache-hit != 'true'
+        with:
+          path: dist/release-inputs
+          key: ${{ steps.keys.outputs.key }}
+
+  cache-proof:
+    if: github.event_name != 'push'
+    needs: inputs
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.22.2
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: builder
+        with:
+          path: dist/release-inputs
+          key: ${{ needs.inputs.outputs.builder-key }}
+          fail-on-cache-miss: true
+      - name: Require exact builder cache hit
+        env:
+          CACHE_HIT: ${{ steps.builder.outputs.cache-hit }}
+        run: |
+          test "$CACHE_HIT" = true
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: sources
+        with:
+          path: |
+            dist/qemu-tools/*.tar.xz
+            dist/qemu-tools/*.tar.gz
+          key: ${{ needs.inputs.outputs.sources-key }}
+          fail-on-cache-miss: true
+      - name: Prove offline builder, cache tamper rejection and source hashes
+        env:
+          CACHE_HIT: ${{ steps.sources.outputs.cache-hit }}
+        run: |
+          test "$CACHE_HIT" = true
+          node --experimental-strip-types scripts/release/cache-proof.ts dist/release-inputs dist/qemu-tools
+
   windows-line:
+    if: github.event_name != 'push'
     runs-on: windows-2025
     timeout-minutes: 5
     steps:
@@ -43,6 +140,8 @@ jobs:
         run: ./scripts/check-install-line.ps1
 
   bundle:
+    if: github.event_name != 'push'
+    needs: inputs
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 100
     steps:
@@ -54,6 +153,16 @@ jobs:
           node-version: 24.22.2
       - name: Check bundle boundaries and pinned inputs
         run: node --experimental-strip-types scripts/check-release-bundle.ts
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: builder
+        with:
+          path: dist/release-inputs
+          key: ${{ needs.inputs.outputs.builder-key }}
+          fail-on-cache-miss: true
+      - name: Require the exact verified builder cache
+        env:
+          CACHE_HIT: ${{ steps.builder.outputs.cache-hit }}
+        run: test "$CACHE_HIT" = true
       - name: Reject a main-channel dispatch from another branch
         env:
           BUNDLE_CHANNEL: ${{ inputs.channel || 'main' }}
@@ -74,8 +183,19 @@ jobs:
           path: dist/release/*
           if-no-files-found: error
           retention-days: 14
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: sources
+        with:
+          path: |
+            dist/qemu-tools/*.tar.xz
+            dist/qemu-tools/*.tar.gz
+          key: ${{ needs.inputs.outputs.sources-key }}
+          fail-on-cache-miss: true
       - name: Build pinned QEMU (test host only)
+        env:
+          CACHE_HIT: ${{ steps.sources.outputs.cache-hit }}
         run: |
+          test "$CACHE_HIT" = true
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential pkg-config libglib2.0-dev libpixman-1-dev python3-venv xz-utils
           sh scripts/install-check/setup-tools.sh dist/qemu-tools
@@ -114,7 +234,7 @@ jobs:
 
   publish:
     if: github.event_name == 'workflow_dispatch' && github.repository == 'danieltroger/cool-eva'
-    needs: [bundle, windows-line]
+    needs: [bundle, windows-line, cache-proof]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     concurrency:
