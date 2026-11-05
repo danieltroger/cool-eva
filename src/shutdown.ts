@@ -26,16 +26,13 @@ export interface ShutdownStep {
 }
 
 async function finishShutdown(steps: readonly ShutdownStep[]): Promise<void> {
-  try {
-    for (const step of steps) {
-      const completion = attemptShutdownStep(step);
-      if (!step.background) {
-        await completion;
-      }
+  for (const step of steps) {
+    const completion = attemptShutdownStep(step);
+    if (!step.background) {
+      await completion;
     }
-  } finally {
-    process.exit(0);
   }
+  process.exit(0);
 }
 
 async function attemptShutdownStep(step: ShutdownStep): Promise<void> {

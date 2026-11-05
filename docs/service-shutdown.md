@@ -4,6 +4,8 @@ A requested SIGTERM or SIGINT exits successfully even if cleanup fails. A bundle
 
 `installRequestedShutdown` records intent before running cleanup. Each step logs its name and error and allows the remaining steps to run; normal completion exits 0. An exit listener also converts a nonzero exit to 0 once a stop was requested. This covers an explicit `process.exit(1)` or an unrelated callback throwing while shutdown awaits I/O. Node's fatal diagnostic is retained. Fatal termination can interrupt the remaining cleanup; the exit guard preserves the operator's stop intent, not a guarantee that every resource was flushed.
 
+V8/native aborts, SIGSEGV or a kernel OOM-kill during a requested stop can bypass JavaScript's exit guard and still reach failure handling, potentially restarting or rolling back the selected bundle.
+
 Before a stop request, exit codes and fatal exceptions are unchanged. Real crash loops must still invoke automatic restarts and the existing late rollback. The handler does not depend on `Result=start-limit-hit`: a terminal crash loop can retain `Result=exit-code`. A hung cleanup can still reach systemd's stop timeout/SIGKILL; its existing timeout guard leaves the selected release alone. No `SuccessExitStatus=1` broadens successful exits, and no manual stop is classified from a missing job.
 
 ## Why cleanup has this order
@@ -22,6 +24,6 @@ SIGKILL cannot run cleanup. On an actual crash, the five-second restart policy a
 
 ## Regression checks
 
-The portable check runs actual Node child processes: clean and failed cleanup, background rejection/hang, repeated signals, explicit exit 1 and a fatal callback during stop must all exit 0. A crash before any stop request must still exit 1. It also checks that the application installs this shutdown path.
+The portable check runs actual Node child processes: clean and failed cleanup, background rejection/hang, repeated signals, explicit exit 1, a fatal callback and an unhandled rejection during stop must all exit 0. A crash or unhandled rejection before any stop request must still exit 1. It also checks that the application installs this shutdown path.
 
 The real-systemd gate uses the production shutdown module in its synthetic app. After one automatic restart (`NRestarts=1`) with a live previous release, the app attempts exit 1 on SIGTERM. A manual stop must stay inactive beyond `RestartSec`, with successful exit, unchanged current/previous releases and no rejected release. The existing timeout and first-CAN-frame crash-loop cases still run afterwards, including rollback and a subsequent successful update.
