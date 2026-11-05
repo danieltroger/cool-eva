@@ -175,13 +175,14 @@ function makeChannel(script: BikeScript): { channel: RawChannel; sent: Uint8Arra
         if (script.writeEcho !== null) {
           answer(script.writeEcho);
         }
-        return;
+        return 16;
       }
       const reply = script.readAnswers[readsSeen] ?? null;
       readsSeen += 1;
       if (reply !== null) {
         answer(reply);
       }
+      return 16;
     },
   } as unknown as RawChannel;
   return { channel, sent };

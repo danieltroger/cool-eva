@@ -18,15 +18,19 @@ async function checkChargeAttempt() {
   let attempts = 0;
   let sent = 0;
   let failOnAttempt = 2;
+  let rejectWithReturn = false;
   let throwBeforeSend = false;
   const channel = {
     send() {
       attempts++;
       if (attempts === failOnAttempt) {
+        if (rejectWithReturn) {
+          return -1;
+        }
         throw new Error("Synthetic charge-frame transmission failure");
       }
       sent++;
-      return 8;
+      return 16;
     },
   } as unknown as RawChannel;
   const runner = createVcuWriteRunner({
@@ -84,6 +88,22 @@ async function checkChargeAttempt() {
       "A failed sender stays conservative even without a completed frame."
     );
     assert.equal(sent, 0);
+    rejectWithReturn = true;
+    for (const rejectedAttempt of [1, 2]) {
+      attempts = 0;
+      sent = 0;
+      failOnAttempt = rejectedAttempt;
+      const rejected = await post(url);
+      assert.equal(rejected.result, null);
+      assert.equal(
+        rejected.chargeCurrentAttempt,
+        "unknown",
+        "Native rejection keeps the existing conservative sender-failure result."
+      );
+      assert.equal(sent, rejectedAttempt - 1);
+      assert.equal(attempts, rejectedAttempt, "A refused command frame must never be retried.");
+    }
+    rejectWithReturn = false;
     attempts = 0;
     throwBeforeSend = true;
     const actionFailure = await post(url);

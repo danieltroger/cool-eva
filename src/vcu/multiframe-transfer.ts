@@ -1,4 +1,5 @@
 import { arrivalLatencyMs, type ArrivalLatency, type FrameArrival } from "../can/frame-arrival.ts";
+import { checkCanTransmitResult } from "../can/transmit.ts";
 import { ExtendedIsoTpReassembler, maxFramesFor } from "../diagnostics/extended-iso-tp.ts";
 import {
   TESTER_ADDRESS,
@@ -56,8 +57,8 @@ type MultiFrameOutcome =
    */
   | { kind: "timeout"; stage: TransferStage }
   /**
-   * The reply was unusable and has been discarded — a sequence gap, a Consecutive
-   * Frame that under-filled, a declared length over the cap, too many frames.
+   * The reply was unusable, or a transmit failed after the request began. Examples:
+   * sequence gaps, short Consecutive Frames, size caps, or failed flow control.
    *
    * ⚠️ Kept strictly apart from `payload`. Completing a transfer at its declared
    * length from a short Consecutive Frame is exactly the bug a review caught in
@@ -94,8 +95,8 @@ export interface MultiFrameTransferOptions {
    * caller.
    */
   requestPayload: Uint8Array;
-  /** Puts one 8-byte frame on the bus. Throws on a dead socket, which becomes `not-sent`. */
-  send: (frame: Uint8Array) => void;
+  /** Returns the native byte count; failure abandons an exchange that already sent a frame. */
+  send: (frame: Uint8Array) => number;
   /**
    * Largest reply payload to assemble. Bounds what a stuck or hostile responder
    * can make us hold, and is passed through to the reassembler so its frame cap
@@ -178,6 +179,7 @@ export function startMultiFrameTransfer(options: MultiFrameTransferOptions): Run
     sawStrayFlowControl: false,
     flowControlLatency: null,
     framesHandled: 0,
+    framesSent: 0,
     settled: false,
     settle: () => {},
     timer: null,
@@ -235,6 +237,7 @@ interface TransferContext {
    */
   flowControlLatency: ArrivalLatency | null;
   framesHandled: number;
+  framesSent: number;
   settled: boolean;
   settle: (result: MultiFrameResult) => void;
   timer: ReturnType<typeof setTimeout> | null;
@@ -452,13 +455,17 @@ function sendNextRequestFrame(context: TransferContext): void {
 /** Puts one frame on the bus. False when it did not go, in which case the transfer has settled. */
 function transmit(context: TransferContext, frame: Uint8Array): boolean {
   try {
-    context.options.send(frame);
+    checkCanTransmitResult(context.options.send(frame));
+    context.framesSent += 1;
     return true;
   } catch (err) {
     // Loud: a bus that will not take an 8-byte frame is a much bigger problem than
     // this transfer, and on this Pi it usually means can0 went down under us.
     console.error(`vcu: sending ${toHex(frame)} to ${context.options.target} failed`, err);
-    settle(context, { kind: "not-sent", reason: err instanceof Error ? err.message : String(err) });
+    settle(context, {
+      kind: context.framesSent === 0 ? "not-sent" : "abandoned",
+      reason: err instanceof Error ? err.message : String(err),
+    });
     return false;
   }
 }

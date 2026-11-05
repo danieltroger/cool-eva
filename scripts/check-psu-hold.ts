@@ -19,7 +19,11 @@ export async function checkPsuHold(): Promise<void> {
   assert.match(entry, /name: "stop PSU hold", run: \(\) => psuHold\.close\(\)/);
   const socket = await readFile(new URL("../src/can/socket.ts", import.meta.url), "utf8");
   assert.match(socket, /createRawChannelWithOptions\(iface, \{ timestamps: true, non_block_send: true \}\)/);
-  assert.match(socket, /createRawChannel\(iface, true\)/, "Existing command channel stays unchanged");
+  assert.match(
+    socket,
+    /return createMainCanChannel\(canModule, iface\)/,
+    "Main command channel uses the nonblocking factory"
+  );
   console.log(
     "psu-hold: exact frame, cadence/no burst, 60 minute boundary, renewal, every stop, filters, gates, lease and production monotonic clock pass"
   );

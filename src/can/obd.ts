@@ -1,4 +1,6 @@
 import type { RawChannel } from "socketcan";
+import { CanTransmitError, transmitCanFrame } from "./transmit.ts";
+import { createTransmitFailureLogger } from "./transmit-log.ts";
 import type { DecodedValue } from "./frame.ts";
 import { record } from "./signals.ts";
 import { monotonicNow, since } from "../monotonic.ts";
@@ -110,6 +112,7 @@ const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
 
 let channel: RawChannel | undefined;
 const pending = new Map<number, { resolve: (d: Buffer | null) => void; timer: ReturnType<typeof setTimeout> }>();
+const logTransmitFailure = createTransmitFailureLogger("obd");
 
 export function initObd(ch: RawChannel): void {
   channel = ch;
@@ -177,7 +180,13 @@ export async function pollPidNow(target: RawChannel, pid: number): Promise<Decod
   if (obdPollerHeldBy() === null) {
     console.warn(`obd: pollPidNow(0x${pid.toString(16)}) with the poller UNPARKED — replies may be crossed`);
   }
-  const response = await requestPid(target, pid);
+  let response: Buffer | null;
+  try {
+    response = await requestPid(target, pid);
+  } catch (error) {
+    logTransmitFailure(`PID 0x${pid.toString(16)} send failed`, error);
+    return null;
+  }
   if (!response) {
     return null;
   }
@@ -202,7 +211,7 @@ function fileResponse(def: PidDef, response: Buffer): DecodedValue[] {
 
 function requestPid(target: RawChannel | undefined, pid: number, timeoutMs = PID_TIMEOUT_MS): Promise<Buffer | null> {
   if (!target) return Promise.resolve(null);
-  return new Promise(resolve => {
+  return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       pending.delete(pid);
       resolve(null);
@@ -210,12 +219,11 @@ function requestPid(target: RawChannel | undefined, pid: number, timeoutMs = PID
     pending.set(pid, { resolve, timer });
     const frame = Buffer.from([0x02, 0x01, pid, 0x55, 0x55, 0x55, 0x55, 0x55]);
     try {
-      target.send({ id: OBD_REQ_ID, ext: false, rtr: false, data: frame });
+      transmitCanFrame(target, { id: OBD_REQ_ID, ext: false, rtr: false, data: frame });
     } catch (err) {
       clearTimeout(timer);
       pending.delete(pid);
-      console.error("obd: send failed", err);
-      resolve(null);
+      reject(err);
     }
   });
 }
@@ -299,7 +307,11 @@ export function startObdPoller(intervalMs = 1000): () => void {
       try {
         await pollOnce();
       } catch (err) {
-        console.error("obd: poll error", err);
+        if (err instanceof CanTransmitError) {
+          logTransmitFailure("poll round failed — skipping the remaining requests", err);
+        } else {
+          console.error("obd: poll error", err);
+        }
       }
       await sleep(Math.max(0, intervalMs - since(roundStartedAt)));
     }

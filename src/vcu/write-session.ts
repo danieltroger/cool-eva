@@ -1,4 +1,5 @@
 import type { RawChannel } from "socketcan";
+import { transmitCanFrame } from "../can/transmit.ts";
 import { monotonicNow, since } from "../monotonic.ts";
 import {
   buildRequestFrame,
@@ -934,7 +935,7 @@ export function syncBikeClock(
 ): { status: "sent"; hex: string } | { status: "failed"; reason: string } {
   const frame = buildRtcSyncFrame(when);
   try {
-    channel.send({ id: RTC_SYNC_CAN_ID, ext: false, rtr: false, data: Buffer.from(frame) });
+    transmitCanFrame(channel, { id: RTC_SYNC_CAN_ID, ext: false, rtr: false, data: Buffer.from(frame) });
   } catch (err) {
     console.error("vcu-write: could not broadcast the clock sync", err);
     return { status: "failed", reason: err instanceof Error ? err.message : String(err) };
@@ -980,7 +981,7 @@ export async function sendChargeCommand(
   const sentHex: string[] = [];
   for (const frame of frames) {
     try {
-      channel.send({ id: frame.id, ext: false, rtr: false, data: Buffer.from(frame.data) });
+      transmitCanFrame(channel, { id: frame.id, ext: false, rtr: false, data: Buffer.from(frame.data) });
     } catch (err) {
       console.error(`vcu-write: could not transmit the charge-current frame on 0x${frame.id.toString(16)}`, err);
       return { status: "failed", reason: err instanceof Error ? err.message : String(err) };
@@ -1011,7 +1012,7 @@ export async function sendChargeStopCommand(
   const sentHex: string[] = [];
   for (const frame of frames) {
     try {
-      channel.send({ id: frame.id, ext: false, rtr: false, data: Buffer.from(frame.data) });
+      transmitCanFrame(channel, { id: frame.id, ext: false, rtr: false, data: Buffer.from(frame.data) });
     } catch (err) {
       console.error(`vcu-write: could not transmit the charge-stop frame on 0x${frame.id.toString(16)}`, err);
       return { status: "failed", reason: err instanceof Error ? err.message : String(err) };
@@ -1309,7 +1310,7 @@ function exchangeRaw(
     context.pendingIsObd = options.isObd;
 
     try {
-      context.channel.send({ id: options.requestCanId, ext: false, rtr: false, data });
+      transmitCanFrame(context.channel, { id: options.requestCanId, ext: false, rtr: false, data });
     } catch (err) {
       clearTimeout(timer);
       context.pending = null;

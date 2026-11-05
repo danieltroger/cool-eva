@@ -16,7 +16,7 @@ There is **no 12 V battery**. The Pi runs from the PSU's main rail and loses pow
 
 ## Permission and telemetry
 
-Starting or extending needs the existing service-write permission, the `X-Cool-Eva: service-write` header, the JSON mutation guard and an available bus. A separate nonblocking SocketCAN channel is opened on start and stopped/released on stop; its narrow RX filter must succeed before any listener is installed or request sent. The existing command channels and their behavior are unchanged. A rejected start explains why and sends nothing.
+Starting or extending needs the existing service-write permission, the `X-Cool-Eva: service-write` header, the JSON mutation guard and an available bus. A separate nonblocking SocketCAN channel is opened on start and stopped/released on stop; its narrow RX filter must succeed before any listener is installed or request sent. A rejected start explains why and sends nothing.
 
 An active hold replaces the header brand with **PSU on** and the total notice count. Tap it to open Advanced service at the Off control. Other notices retain their full text and repair/reload access in Settings. The header gains no row or height. The existing five-second system snapshot and each action's reply carry authoritative state; the countdown between them uses the phone's monotonic clock. An unavailable connection means last-known state, never proof that power stayed on or turned off.
 
