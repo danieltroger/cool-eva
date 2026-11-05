@@ -9,17 +9,11 @@ import { command, exists, setReleaseGroup } from "./commands.ts";
 import { readInstallChoices } from "./questions.ts";
 import { installNetworks } from "./networks.ts";
 import { ensureSwap } from "./swap.ts";
-import {
-  installBundleUnits,
-  installCaptureChoice,
-  prepareExistingService,
-  preserveCaptureChoice,
-  restoreService,
-  findInstalledService,
-} from "./service.ts";
+import { installBundleUnits, installCaptureChoice, preserveCaptureChoice, findInstalledService } from "./service.ts";
 import { checkInstalledApp, printInstallResults } from "./health.ts";
 import { installSecurityUpdates } from "./security.ts";
 import { printInstallationFailure } from "./errors.ts";
+import { failAfterServiceRecovery, prepareServiceWithRecovery } from "./failure-recovery.ts";
 import { configureAccessories } from "./accessories.ts";
 import { readFile } from "node:fs/promises";
 import { parseSettingsDocument } from "../settings/schema.ts";
@@ -47,7 +41,7 @@ export async function installBundle(directory: string): Promise<void> {
   await installNetworks(choices);
   await ensureSwap();
   const captureEnabled = await preserveCaptureChoice();
-  const backup = await prepareExistingService(directory);
+  const backup = await prepareServiceWithRecovery(directory);
   const changes: Record<string, unknown> = {
     ...choices.accessories,
     ...(choices.hotspot ? { phoneHotspotSsid: choices.hotspot.ssid } : {}),
@@ -64,15 +58,7 @@ export async function installBundle(directory: string): Promise<void> {
     console.log("Checking the running service for 60 seconds. No bike connection is required to finish setup.");
     view = await checkInstalledApp(metadata.release);
   } catch (error) {
-    try {
-      await restoreService(backup);
-    } catch (restoreError) {
-      console.error(
-        "Restoring the previous service also failed:",
-        restoreError instanceof Error ? restoreError.message : "unknown error"
-      );
-    }
-    throw error;
+    return failAfterServiceRecovery(backup, error);
   }
   if (!(await exists(settingsPaths().updaterDirectory + "/state.json"))) {
     await command("sh", [directory + "/scripts/update/run.sh", "initialise"]);
