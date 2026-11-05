@@ -50,7 +50,9 @@ export async function assertAllContent(page: HeadlessPage, includeRaw = true) {
       await evaluateOnPage(page, "[...ridingPreview('lib/store.js').knownKeys.rawVal].sort()"),
       "Every populated raw signal must render, including all 81 cells and installed sensors."
     );
+    await assertRawPower(page, "-48.30 kW");
   }
+  await assertRawPowerInk(page);
 }
 
 export async function assertFaultsContent(page: HeadlessPage) {
@@ -189,6 +191,27 @@ export async function checkFaultsAllCases(page: HeadlessPage, file: string, them
     await evaluateOnPage(page, "document.querySelector('[data-snapshot=pack_kw] .value').textContent"),
     "+12.3 kW"
   );
+  await assertRawPower(page, "+12.30 kW");
+  await assertRawPowerInk(page);
+  await capture?.(`all-positive-${theme}`);
+  await evaluateOnPage(
+    page,
+    "ridingPreview('lib/store.js').signalState('motor_temp_c').val=null;ridingPreview('lib/store.js').signalState('fan_target_pct').val=null;pushPatch({motor_temp_c:[999,'°C','motor'],fan_target_pct:[150,'%','fan'],horn:[193,'','controls']})"
+  );
+  await evaluateOnPage(page, FRAME);
+  for (const [key, rejected] of [
+    ["motor_temp_c", "⚠ 999"],
+    ["fan_target_pct", "⚠ 150"],
+    ["horn", "⚠ 193"],
+  ]) {
+    assert.equal(await rawStale(page, key), false, `Fault-only ${key} must not be styled as stale.`);
+    assert.equal(
+      await evaluateOnPage(page, `ridingPreview('lib/store.js').signalState(${JSON.stringify(key)}).rawVal`),
+      null,
+      "The fault-only fixture has no accepted sample."
+    );
+    assert.equal(await evaluateOnPage(page, `${rawTile(key)}.querySelector('.raw-value').textContent`), rejected);
+  }
   await evaluateOnPage(page, "pushPatch({batt_temp_hi:[200,'°C','battery']})");
   await evaluateOnPage(page, FRAME);
   assert.equal(
@@ -287,8 +310,32 @@ async function setTheme(page: HeadlessPage, theme: string) {
 }
 
 async function rawStale(page: HeadlessPage, key: string) {
-  return evaluateOnPage(
-    page,
-    `[...document.querySelectorAll('.all-raw .raw')].find(tile=>tile.querySelector('.raw-key')?.textContent===${JSON.stringify(key)}).classList.contains('stale')`
+  return evaluateOnPage(page, `${rawTile(key)}.classList.contains('stale')`);
+}
+
+async function assertRawPower(page: HeadlessPage, expected: string) {
+  await assertRendered(page, [".all-raw .raw-value"]);
+  assert.deepEqual(
+    await evaluateOnPage(
+      page,
+      `(()=>{const tile=${rawTile("pack_kw (raw)")};return {value:tile.querySelector('.raw-value').textContent,convention:tile.querySelector('.raw-sub').textContent}})()`
+    ),
+    { value: expected, convention: "− out · + in" },
+    "The raw grid preserves the signed pack_kw value and its sign convention."
   );
+}
+
+async function assertRawPowerInk(page: HeadlessPage) {
+  assert.equal(
+    await evaluateOnPage(
+      page,
+      "getComputedStyle(document.querySelector('[data-snapshot=pack_kw] .value')).color===getComputedStyle(document.body).color"
+    ),
+    true,
+    "Raw snapshot power uses normal foreground ink for either sign."
+  );
+}
+
+function rawTile(key: string) {
+  return `[...document.querySelectorAll('.all-raw .raw')].find(tile=>tile.querySelector('.raw-key')?.textContent===${JSON.stringify(key)})`;
 }

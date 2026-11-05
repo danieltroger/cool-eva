@@ -76,7 +76,6 @@ function snapshotUnit(key) {
 function snapshotColor(key) {
   const value = freshValue(key);
   if (value === null) return readingStatus(key) === "fault" ? colors.BAD : colors.MUTED;
-  if (key === "pack_kw") return value > 0 ? colors.GOOD : value < 0 ? colors.FLOW : colors.CALM;
   if (key === "soc") return colors.stateOfCharge(value);
   if (key === "batt_temp_hi") return colors.temperature(value);
   return colors.CALM;

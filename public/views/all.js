@@ -158,7 +158,7 @@ function RawTile(key) {
   const state = signalState(key);
   const fault = faultState(key);
   return div(
-    { class: () => `raw${readingIsStale(key) ? " stale" : ""}` },
+    { class: () => `raw${state.val && readingIsStale(key) ? " stale" : ""}` },
     div({ class: "raw-key" }, key === "pack_kw" ? "pack_kw (raw)" : key),
     div({ class: "raw-value" }, () => {
       const reading = state.val;
@@ -237,7 +237,7 @@ function ButtonTile(key) {
   // seconds. Same tile, same classes, same layout — only the nouns change.
   const flasher = isFlasher(key);
   return div(
-    { class: () => `raw${tracker.lit.val ? " pressed" : ""}${readingIsStale(key) ? " stale" : ""}` },
+    { class: () => `raw${tracker.lit.val ? " pressed" : ""}${state.val && readingIsStale(key) ? " stale" : ""}` },
     div({ class: "raw-key" }, key),
     div({ class: "raw-value" }, () => {
       if (!state.val) {

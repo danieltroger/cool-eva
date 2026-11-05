@@ -52,6 +52,8 @@ The six-reading snapshot is independent of filtering. Raw groups stay below the 
 
 The original All view was a debugging view grouped by signal registry because the flat grid of roughly 230 signals, including 81 cell voltages, had become unusable. It remains the place to inspect a raw number when another view looks wrong; the live snapshot now precedes that grid.
 
+Both the snapshot and raw grid preserve signed pack power in normal foreground ink. Fault-only raw and button tiles retain their rejection warning without stale dimming: only an accepted reading can become stale. Accepted onDemand readings still use presence and link liveness, while measured readings retain their age check.
+
 ## Stored lifetime statistics: original placement rationale
 
 The snapshot now precedes raw groups and stored lifetime data. The stored block still stays separate from live-signal groups, and its filter behavior is preserved.
