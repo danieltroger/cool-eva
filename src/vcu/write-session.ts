@@ -916,8 +916,7 @@ function describeResetNrc(code: number): string {
  * Broadcasts the Pi's UTC onto CAN 0x120, setting the bike's own clock.
  *
  * ⚠️ FIRE AND FORGET, and that is not a shortcut — it is what the mechanism is.
- * Energica's RTC sync sends one frame, sleeps 100 ms and returns true
- * unconditionally; there is no reply to wait for, no session to open and no
+ * Energica's RTC sync sends one frame without a reply, a session or
  * SecurityAccess. So "sent" is the strongest claim this function can make, and it
  * makes exactly that one. There is also no way to read the bike's clock back — no
  * parameter, no service, no broadcast carries it — so nothing here can confirm the

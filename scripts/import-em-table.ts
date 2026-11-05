@@ -19,8 +19,8 @@ import {
 //     node --experimental-strip-types scripts/import-em-table.ts <param JSON dir> <TABLE_TYPE>...
 //
 // ⚠️ SECOND-HAND PROVENANCE, AND THAT IS THE ONE DIFFERENCE FROM extract-vcu-tables.ts.
-// That script fingerprints Energica's original bundle bytes. This JSON is a
-// intermediate copy one step removed — its fingerprint covers the imported records,
+// That script fingerprints Energica's original bundle bytes. This JSON is
+// an intermediate extraction, one step removed — its fingerprint covers the imported records,
 // not an Energica ZIP. `exportStamp` is "definitions-import" rather than the
 // `yyyyMMddHHmm` the original bundle contains. Both are visible in the committed catalogue on
 // purpose: a reader can tell which tables came first-party and which did not. Everything

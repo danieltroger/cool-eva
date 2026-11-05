@@ -168,7 +168,7 @@ export const CURATED_WRITE_TARGETS: WriteTarget[] = [
     name: "REGEN_TORQUE_LIMIT",
     index: 49,
     // WORD S, 0.1 Nm per count. Factory 500; this bike was set to 600 = 60.0 Nm on
-    // 2026-08-09 (bus observations).
+    // 2026-08-09 (this bike's parameter change log).
     //
     // 900 = 90.0 Nm, i.e. +50 % on today's value. Wider than TORQUE_LIMIT's bound
     // because regen is the gentler direction and because VCU_PARAM_CHANGES.md already

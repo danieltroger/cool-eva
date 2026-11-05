@@ -129,7 +129,7 @@ Consequence for everything below: a flag that has never been seen set cannot be 
 
 ### Why the flags read through `bit()` and not the vendor's masks
 
-The six flags read through `bit()` rather than the vendor's masks written literally (`data[4] & 0x10`), which would yield 16 rather than 1. That is not a hypothetical slip: it is the exact mistake `public/lib/bounds.js` gates the boolean groups against after `high_beam` once logged 193, and a flag arriving as 16 would be rejected as a dead sensor rather than shown. The vendor mask is named in the comment beside each so the bit index can still be checked against `ParseABS_INFO` at a glance.
+The six flags read through `bit()` rather than the vendor's masks written literally (`data[4] & 0x10`), which would yield 16 rather than 1. That is not a hypothetical slip: it is the exact mistake `public/lib/bounds.js` gates the boolean groups against after `high_beam` once logged 193, and a flag arriving as 16 would be rejected as a dead sensor rather than shown. The vendor mask is named in the comment beside each so the bit index can still be checked against Energica's ABS definition at a glance.
 
 **b6 keeps its own length guard** so that the four signals logged since 2026-08-16 cannot be silenced by a short frame on account of these three — the same arrangement 0x109's throttle and 0x660's offset pair already use. Every one of the 565 376 frames on disk is DLC 8, so this branch has never yet been the false one; it is there because a truncated frame decoding b6 out of CAN padding would report "pressure invalid, no channel active", which reads as a healthy answer rather than as a missing byte.
 
@@ -230,7 +230,7 @@ Two consequences are handled elsewhere and are worth knowing about here: `public
 
 ### The six flags, and exactly how much each one is worth
 
-Added 2026-08-19, completing the ten signals `ParseABS_INFO` names. Three of them have been watched firing; three never have. That split is the whole content of this section, and it is kept explicit because "reads 0" means something completely different in the two cases.
+Added 2026-08-19, completing the ten signals Energica's ABS definition names. Three of them have been watched firing; three never have. That split is the whole content of this section, and it is kept explicit because "reads 0" means something completely different in the two cases.
 
 ⚠️ **Rewritten 2026-08-20 against a corpus 12× larger, and it overturned three claims that stood here.** The five captures above were the five that had been LOOKED at, not the five that exist. Re-scanning every `*.log` and `*.txt` in the archive — 245 files, **565 376 frames of 0x0A0** — finds interventions in **15 distinct captures**, not two. What changed:
 
@@ -702,7 +702,7 @@ attitude_pitch_deg   3 782 692 rows    −86.0 …  +85.4       0 rows beyond ±
 
 A pitch taken as the angle of one axis against the magnitude of the other two is bounded by ±90 **by construction**; a roll taken as an `atan2` of two is not. That asymmetry is the aerospace convention showing through 4.9 M samples, with no experiment at all. The fall then demonstrates the same thing directly: the axis that reaches 90° when the bike goes over is b4-5, and pitch never leaves ±52° across the whole event. Of the 22 roll rows beyond ±90 in the corpus, **seven are this fall** — and it is the only event in 1 120 961 rows where the angle crosses 45° and stays there. Every other one is a 40-60 ms wrap spike.
 
-✅ **A fifth witness, from the manufacturer's own FRAME database rather than its parameter list.** Everything above was reached through KWP parameter reads (A9 bank 2 ids 138/139). Energica's own `0x102` `VCU_DIGITALS` frame definitions — 34 signals — include:
+✅ **A fifth witness, from Energica's own frame definitions rather than its parameter list.** Everything above was reached through KWP parameter reads (A9 bank 2 ids 138/139). Energica's own `0x102` `VCU_DIGITALS` frame definitions — 34 signals — include verbatim:
 
 ```
 | V_PHI   | short | bytes 4..5 LE |
@@ -792,7 +792,7 @@ The decoded ride log put that sustained run at 5.158 s; the raw frames put it at
 
 ### ✅ The field boundaries, re-cut 2026-09-14 — and no logged value moved
 
-The layout was `odometer u32 · speed u13 at bit 32 · rpm u15 at bit 45 ×1 · a "u3 at bits 60-62" · bit 63`. Three of those are wrong, and the manufacturer's own frame database says so — it gives `0x104 VCU_SPEEDODO` exactly four signals: `V_ODOMETER` (bytes 0-3), `V_REAL_SPEED` (bytes 4-5), `V_TACHO_OUT` (byte 7 mask 0x40) and `V_SPD_DIR` (byte 7 mask 0x80). The corrected cut:
+The layout was `odometer u32 · speed u13 at bit 32 · rpm u15 at bit 45 ×1 · a "u3 at bits 60-62" · bit 63`. Three of those are wrong, and Energica's own frame definitions say so — they give `0x104 VCU_SPEEDODO` exactly four signals: `V_ODOMETER` (bytes 0-3), `V_REAL_SPEED` (bytes 4-5), `V_TACHO_OUT` (byte 7 mask 0x40) and `V_SPD_DIR` (byte 7 mask 0x80). The corrected cut:
 
 | bits  | field                                 | key                 |
 | ----- | ------------------------------------- | ------------------- |
@@ -858,9 +858,9 @@ A 1 Hz sampler would have seen that longest one set on seventeen consecutive sam
 
 ✅ **And it now has a name and a mechanism.** Energica's own `0x104` `VCU_SPEEDODO` frame definition gives the field verbatim as `V_SPD_DIR | byte | byte 7 mask 0x80 >>7` — which is bit 63 exactly, the bit `src/can/decode.ts` emits as `reverse_gear`. **Energica calls it speed direction.** The key name is therefore wrong: it is not a gear. It is left alone here rather than renamed, because a rename is a history migration (the `accel_*_raw` and `charging` precedents) and belongs in its own change.
 
-✅ **Reported by #216 and since verified against the A8 image and a second reviewer (2026-09-14):** a firmware read of the A8, over 681 458 raw `0x104` frames, gives the bit as `(signed D_MOTOR_SPD from 0x025 < 0)` gated by a **±500-count (~0.5 km/h) deadband with no hysteresis**. That is attributed rather than reproduced — this document has not read that firmware, and CLAUDE.md's rule is to cite source you have read.
+✅ **Reported by #216 and since checked against Energica's own definitions and a second reviewer (2026-09-14):** those definitions for A8, considered alongside 681 458 raw `0x104` frames, give the bit as `(signed D_MOTOR_SPD from 0x025 < 0)` gated by a **±500-count (~0.5 km/h) deadband with no hysteresis**. That is attributed rather than reproduced — this document has not checked those definitions, and CLAUDE.md's rule is to cite source you have read.
 
-✅ **What this corpus does independently corroborate** is the consequence, which is a sharper test than it sounds. A hysteresis-free comparator on a bike creeping across ±0.5 km/h at 100 Hz predicts short runs in _both_ directions; #216 predicts median 30 ms high and 50 ms low from the firmware; the table above, measured from the ride log with no knowledge of that, gives **30 ms and 40 ms**. It also explains the two numbers this document could not: the rising edges cluster at walking pace because the threshold is at walking pace — median `speed_can_kmh` **0.3 km/h**, p95 0.9, max **1.2**, and **0 of 240 above 4.5** — which reproduces §12's median 0.4 / p95 0.7 / never-above-4.1 on a seventh day and a corpus neither earlier analysis used. It strengthens to a form neither had: **never above 4.9 km/h at any moment while set**, not merely at the rise.
+✅ **What this corpus does independently corroborate** is the consequence, which is a sharper test than it sounds. A hysteresis-free comparator on a bike creeping across ±0.5 km/h at 100 Hz predicts short runs in _both_ directions; #216 predicts median 30 ms high and 50 ms low from those definitions; the table above, measured from the ride log with no knowledge of that, gives **30 ms and 40 ms**. It also explains the two numbers this document could not: the rising edges cluster at walking pace because the threshold is at walking pace — median `speed_can_kmh` **0.3 km/h**, p95 0.9, max **1.2**, and **0 of 240 above 4.5** — which reproduces §12's median 0.4 / p95 0.7 / never-above-4.1 on a seventh day and a corpus neither earlier analysis used. It strengthens to a form neither had: **never above 4.9 km/h at any moment while set**, not merely at the rise.
 
 ⚠️ **The polarity is still not established from anything in this repo.** The vendor table names the field and gives no sense; `speed_can_kmh` and `motor_rpm_can` are both unsigned, so no witness in the ride log can tell "travelling backwards" from "travelling forwards" directly. #216's firmware condition implies 1 = reverse, and the observed confinement to ≤ 4.9 km/h is consistent with it, but consistency is not a measurement of direction.
 

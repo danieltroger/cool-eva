@@ -260,7 +260,7 @@ export function checkPiClock(evidence: PiClockEvidence): PiClockVerdict {
 // afterwards. Provenance, and the three corrections this makes to
 // docs/vcu-parameters.md §13.
 
-/** The 11-bit id the clock sync goes out on. `VCU_COMMAND_REQ` in Energica's own frame database. */
+/** The 11-bit id the clock sync goes out on. `VCU_COMMAND_REQ` in Energica's own frame definitions. */
 export const RTC_SYNC_CAN_ID = 0x120;
 
 /** Header bytes 0-1 of every `0x120` clock frame. One opcode among several on a shared command id. */
@@ -276,8 +276,7 @@ const RTC_SYNC_HEADER = [0x94, 0xff];
  *   byte 6            year − 2000
  *   byte 7            zero padding to DLC 8
  *
- * ⚠️ The weekday is .NET's `DayOfWeek`: Sunday = 0, which is what `getUTCDay()` returns
- * too — no conversion, and worth stating rather than relying on silently. ✅ Checked
+ * ⚠️ Weekday numbering is Sunday = 0, matching `getUTCDay()` — no conversion. ✅ Checked
  * against two frames that really went out; docs/vcu-parameters.md §13.
  */
 export function buildRtcSyncFrame(when: Date): Uint8Array {

@@ -132,8 +132,7 @@ export const CAPTURED_SECURITY_PAIRS: [seed: string, key: string][] = [
  * From another Energica owner's tool, whose own log recorded the bytes and the local
  * time; the ISO instants here are those times converted to UTC (that machine runs at
  * UTC+9:30). 2026-08-16 was a Sunday, which is what makes the weekday nibble check
- * meaningful — .NET's `DayOfWeek` puts Sunday at 0, and so does JavaScript's
- * `getUTCDay()`.
+ * meaningful — Sunday is 0, matching JavaScript's `getUTCDay()`.
  *
  * They are the end-to-end evidence for the bit packing in src/vcu/service-actions.ts,
  * which is otherwise only a reading of a protocol definition.

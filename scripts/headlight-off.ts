@@ -59,7 +59,7 @@ const BEAM_OUTPUT_CONTROL = 17; // "Low + high beam"
 const BEAM_SENSE_CONTROL = 18; // its current sense
 
 // The VCU family's SecurityAccess key: swap adjacent bits of the 32-bit seed, then subtract
-// 0x3E5F4542 (KWP2000MotoSA.CalculateSecurityKey; fixed per module). Confirmed on this bike.
+// 0x3E5F4542 (Energica's definition; fixed per module). Confirmed on this bike.
 const KEY_SUBTRAHEND = 0x3e5f4542;
 
 const NRC_NAMES: Record<number, string> = {

@@ -363,7 +363,7 @@ export type FreezeFrameResponse =
  * `payload` starts with the response service byte — `57` for a positive reply,
  * `7F` for a refusal — with every ISO-TP PCI byte already stripped. That is this
  * repo's convention everywhere (./obd-dtc.ts, src/vcu/param-codec.ts) and it is
- * ONE MORE than the index the second owner's tool counts from, which counts a
+ * ONE MORE than the index another owner's implementation counts from, which counts a
  * payload with the service byte removed. Both readings put the fields in the same
  * place; only the numbers in the two files' comments differ.
  *

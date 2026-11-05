@@ -4,8 +4,8 @@
 // non-mutating — a read cannot change a setting (Energica's definitions, and
 // energica-rnd's dashboard-settings.md "proven not to change anything").
 //
-// The point is to map which command ids THIS bike honours. Earlier bus observations were on an SS9,
-// where ~19 of the 128 ids answered and only a handful are labelled — and we are hunting a
+// The point is to map which command ids THIS bike honours. Energica's own command definitions
+// (for an SS9) cover ~19 of the 128 ids and label only a handful — and we are hunting a
 // non-diagnostic light control. 0x2A ("Light in charge") and 0x15 ("LPR mode") are the labelled
 // light-related ids, but an UNLABELLED live id could be a general beam control, so the sweep lists
 // every live id and flags the ones nobody has named. See docs/headlight-charge-interlock.md.

@@ -11,8 +11,8 @@
 // confirm the change by a follow-up READ, not by a reply.
 //
 // This crosses no diagnostic ban: 0x120 writes are the same class the app already ships, NOT the
-// 0x2F/0x27 safety-node route. But dash-command writes were UNTESTED in earlier
-// observations, so this is genuinely new. It refuses any id outside the two light-labelled candidates
+// 0x2F/0x27 safety-node route. Analysis of Energica's own command definitions (for an SS9)
+// left writes UNTESTED. It refuses any id outside the two light-labelled candidates
 // unless --force-id is given, and restores the read-back value afterwards unless --no-restore.
 //
 //   sudo systemctl stop cool-eva     # the service owns can0; one raw socket at a time

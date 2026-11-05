@@ -815,8 +815,8 @@ export const SIGNALS: SignalDef[] = [
   // 441/h. Nothing to smooth, and a deadband of 1 here would swallow every single-bar step,
   // which on a 0-17 signal is most of it.
   { key: "front_brake_pressure_bar", unit: "bar", group: "controls", source: "stream", bounds: [0, 250] },
-  // 0x0A0's six flags, added 2026-08-19 to complete the ten signals Energica's `ParseABS_INFO`
-  // names. All six are true 1/0 bits, so none may carry a deadband — |1 − 0| > 1 is false, and
+  // 0x0A0's six flags, added 2026-08-19 to complete Energica's ten defined ABS signals.
+  // All six are true 1/0 bits, so none may carry a deadband — |1 − 0| > 1 is false, and
   // a flag with a deadband of 1 logs once after boot and then never again, silently. That is
   // enforced rather than merely intended: scripts/check-can-decoders.ts asks bounds.js which
   // signals are gated to 0/1 and fails the build for any of them carrying one.

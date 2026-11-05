@@ -21,7 +21,7 @@ import { lookupInfokey, infokeyWidth, type InfokeyField } from "./infokey-table.
 // code means going through ./dtc-table.ts' OBD column, which is what
 // `infokeysForObdCode` does — and why it can return more than one answer.
 //
-// ── ⚠️ `serviceToolObdCode` IS A CROSS-CHECK, NOT AN AUTHORITY ──────────────
+// ── ⚠️ `definitionObdCode` IS A CROSS-CHECK, NOT AN AUTHORITY ──────────────
 // Where it disagrees with ./dtc-table.ts, THE DTC TABLE WINS: that table is
 // reconciled against the type-approval PDF and this bike's own mode-03 reply, and
 // this one is a single vendor build. Exactly two disagreements today, both the
@@ -38,7 +38,7 @@ export interface FaultInfokeys {
   /** Which fault of that component, 0…15. */
   symptom: number;
   /** The manufacturer's code for this pair. A cross-check only — see the header. */
-  serviceToolObdCode: string;
+  definitionObdCode: string;
   /**
    * The infokey ids, IN PAYLOAD ORDER. May be empty — see the note on (60,0).
    * Never sort this.
@@ -287,11 +287,11 @@ export const MAX_FREEZE_FRAME_FIELD_BYTES: number = FAULT_INFOKEYS.reduce(
 const BY_COMPONENT_SYMPTOM = new Map(FAULT_INFOKEYS.map(entry => [key(entry.component, entry.symptom), entry]));
 
 const BY_OBD_CODE = FAULT_INFOKEYS.reduce((grouped, entry) => {
-  const existing = grouped.get(entry.serviceToolObdCode);
+  const existing = grouped.get(entry.definitionObdCode);
   if (existing) {
     existing.push(entry);
   } else {
-    grouped.set(entry.serviceToolObdCode, [entry]);
+    grouped.set(entry.definitionObdCode, [entry]);
   }
   return grouped;
 }, new Map<string, FaultInfokeys[]>());
@@ -303,8 +303,8 @@ function key(component: number, symptom: number): number {
 function shortlist(
   component: number,
   symptom: number,
-  serviceToolObdCode: string,
+  definitionObdCode: string,
   infokeys: readonly number[]
 ): FaultInfokeys {
-  return { component, symptom, serviceToolObdCode, infokeys };
+  return { component, symptom, definitionObdCode, infokeys };
 }

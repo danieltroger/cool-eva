@@ -49,8 +49,8 @@ const failures: string[] = [];
 
 // ── 1. The registry: 25 rows, and the widths are LITERALS ───────────────────
 // Widths written out rather than derived from the module under test: a budget taken from
-// the thing it is judging cannot fail. These come from #219's read of A8's firmware
-// parameter table, which is the only source there is for them.
+// the thing it is judging cannot fail. These come from Energica's own definitions
+// in #219, the only source for these widths.
 const EXPECTED_WIDTHS = new Map<number, string>([
   [278, "DWORD"],
   [279, "DWORD"],

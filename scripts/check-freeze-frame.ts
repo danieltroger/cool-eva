@@ -155,12 +155,12 @@ const missingFromDtcTable: string[] = [];
 for (const entry of FAULT_INFOKEYS) {
   const tableEntry = lookupByComponentSymptom(entry.component, entry.symptom);
   if (!tableEntry) {
-    missingFromDtcTable.push(`${entry.component}/${entry.symptom} ${entry.serviceToolObdCode}`);
+    missingFromDtcTable.push(`${entry.component}/${entry.symptom} ${entry.definitionObdCode}`);
     continue;
   }
-  if (tableEntry.obdCode !== entry.serviceToolObdCode) {
+  if (tableEntry.obdCode !== entry.definitionObdCode) {
     codeDisagreements.push(
-      `${entry.component}/${entry.symptom}: dictionary says ${entry.serviceToolObdCode}, dtc-table says ${tableEntry.obdCode}`
+      `${entry.component}/${entry.symptom}: dictionary says ${entry.definitionObdCode}, dtc-table says ${tableEntry.obdCode}`
     );
   }
 }

@@ -198,8 +198,8 @@ export function startBleClient(options: BleClientOptions): BleClient {
       let lastFrameAt = monotonicNow();
 
       // Which address the hub wants in the third frame is genuinely ambiguous:
-      // the BLE deck says "the app sends its OWN MAC", but the decompiled app
-      // reads it from the *connected device* (the hub). The one enrolment we've
+      // the BLE deck says "the app sends its OWN MAC"; Energica's definitions
+      // use the *connected device's* address (the hub). The one enrolment we've
       // observed was mid-way through a probe that alternated both, so we can't
       // say which claimed the slot.
       //

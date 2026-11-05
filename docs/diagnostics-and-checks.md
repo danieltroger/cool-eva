@@ -37,7 +37,7 @@ In the freeze-frame request the SYMPTOM is not sent at all. It comes back in the
 
 **First source.** Transcribed from `<Energica_Manuals>/2 Technical/CAN & Diagnostics/CANBUS from Type Approval.pdf` (EN.H.010134.001.OBD E2110, 24/03/2022, §7.6.2.7.4 "List of all OBD output codes and formats used").
 
-**Second source, 2026-08-15 — the manufacturer's diagnostic definitions.** The same table has one JSON `{id, code, symptom, title}` record per fault. It corroborates the PDF transcription through a machine-readable definition rather than a PDF read by eye. Against the 2021 extract they share **147** (component, symptom) pairs and **144** of those carry an IDENTICAL OBD code; the 2024 extract adds two pairs and changes none of those numbers otherwise.
+**Second source, 2026-08-15 — the manufacturer's diagnostic definitions.** The same table has one JSON `{id, code, symptom, title}` record per fault. Where the two agree, the transcription is corroborated through a machine-readable definition rather than a PDF read by eye. Against the 2021 extract they share **147** (component, symptom) pairs and **144** of those carry an IDENTICAL OBD code; the 2024 extract adds two pairs and changes none of those numbers otherwise.
 
 **⚠️ The two definition versions are ONE source, not two.** Both the 2021 definitions (153 records) and the 2024 definitions (155) were compared; the 2024 table is a strict superset with ZERO id or title changes — it only adds (4,5) U0115 and (35,2) B1021 "REAR BRAKE PROLONGED PRESSURE FAULT". So the newer definitions cannot corroborate the older ones: it is the same file carried forward. Where the definitions and the PDF conflict, three years of shipping did not settle it.
 
@@ -174,7 +174,7 @@ response  7E0:  F1 ..  57 …
 
 **✅ The response layout is now proven too, and this paragraph used to say the opposite.** It read: _"the census counted service bytes and discarded the payloads, so no `0x17` reply has ever been recorded."_ That was wrong. The census looked at `7C0`, which carries only requests; the replies were on `7E0` the whole time. All 29 are in `scripts/captured-freeze-frames.ts`, and §11.3.1 has what they settle. The reasoning below is kept because it was right — the 5-byte reading it argues for is the one the captures confirm — but read it as the argument that anticipated the answer, not as an open question.
 
-**🟡 What IS known:** Energica's definition reads the status from index 3 of its buffer and starts the fields at index 4, walking the DTC's infokeys in order by datatype width (a second owner's definitions give the same two constants). Both agree the status sits immediately before the fields. What neither settles is whether that buffer still has the `57` service byte on the front — so there are two readings, and they differ by ONE byte:
+**🟡 What IS known:** Energica's definition reads the status from index 3 of its buffer and starts the fields at index 4, walking the DTC's infokeys in order by datatype width (another owner's implementation gives the same two constants). Both agree the status sits immediately before the fields. What neither settles is whether that buffer still has the `57` service byte on the front — so there are two readings, and they differ by ONE byte:
 
 ```
 5-byte header  57 <count> <compHi> <compLo> <status> <fields…>   ← implemented
@@ -198,7 +198,7 @@ Empty when the shortlist is unknown, because then there is nothing to compare a 
 
 **Every response variant carries `rawHex`**, not just the successful one. On the first read against a real bike the LIKELIEST outcome is `unrecognised`, and that is precisely the reply whose bytes would say what the layout actually is. A one-line reason with the payload thrown away would waste the only run that could settle it.
 
-`payload` given to `decodeFreezeFrameResponse` starts with the response service byte — `57` positive, `7F` refusal — with every ISO-TP PCI byte already stripped. That is this repo's convention everywhere and it is ONE MORE than the index the second owner's reference counts from, which counts a payload with the service byte removed. Both readings put the fields in the same place; only the numbers in the two files' comments differ.
+`payload` given to `decodeFreezeFrameResponse` starts with the response service byte — `57` positive, `7F` refusal — with every ISO-TP PCI byte already stripped. That is this repo's convention everywhere and it is ONE MORE than the index another owner's implementation counts from, which counts a payload with the service byte removed. Both readings put the fields in the same place; only the numbers in the two files' comments differ.
 
 **Somebody else's refusal on the shared response id** is a thing that happens rather than a hypothetical: this repo's own parameter sweep asks `0x22` on `0x7C0` and is answered on `0x7E0`, so a `7F 22 31` can land in our reply window. Filing it as ours would report the freeze-frame read as refused when the micro never heard the question, and `service` sitting in the result does not help — the KIND already claims it answered us. Likewise `component-mismatch` is kept apart from `unrecognised` for the reason `src/vcu/param-codec.ts` keeps `identifier-mismatch` apart: the bytes decode perfectly, they are just the answer to another question.
 
@@ -214,7 +214,7 @@ A component number outside 1…63 is **thrown, not clamped**: it is a bug in the
 
 ### 5.2 The status byte
 
-**🟡 Inferred, 2026-08-16**, and one notch weaker than the layout above: this comes from a second owner's reading of the manufacturer's status definition, not from any capture.
+**🟡 Inferred, 2026-08-16**, and one notch weaker than the layout above: this follows another owner's implementation, not any capture.
 
 ```
 bits 7:4  symptom — part of the code's identity, not a flag
@@ -250,7 +250,7 @@ The 1.2.0 and 1.3.0 definitions carry the same table.
 
 **⚠️ The order is the wire layout, not a display preference.** A freeze-frame payload is these fields concatenated in exactly this order, each occupying its datatype's width. Sorting a list, de-duplicating it, or filtering out a field whose name means nothing to us would silently shift every field after it and decode the rest of the frame as garbage that still looks like numbers. Treat each array as a struct definition.
 
-**⚠️ `serviceToolObdCode` is a cross-check, not an authority.** It is the manufacturer's definition of each (component, symptom) pair, carried so a change in either source shows up as a diff rather than as nothing. Where it disagrees with `dtc-table.ts`, **the DTC table wins**: that table is reconciled against the type-approval PDF and against this bike's own mode-03 reply, and this one is a single vendor build. There are exactly two disagreements today, both the water pump — the dictionary swaps (44,0) and (44,2) relative to the PDF — and `scripts/check-freeze-frame.ts` asserts that the set is still exactly those two, so a third one cannot appear quietly.
+**⚠️ `definitionObdCode` is a cross-check, not an authority.** It is the manufacturer's definition of each (component, symptom) pair, carried so a change in either source shows up as a diff rather than as nothing. Where it disagrees with `dtc-table.ts`, **the DTC table wins**: that table is reconciled against the type-approval PDF and against this bike's own mode-03 reply, and this one is a single vendor build. There are exactly two disagreements today, both the water pump — the dictionary swaps (44,0) and (44,2) relative to the PDF — and `scripts/check-freeze-frame.ts` asserts that the set is still exactly those two, so a third one cannot appear quietly.
 
 **One fault, (60,0) `P1052` BATTERY STATISTICS INFO3, has an EMPTY shortlist.** That is Energica's data, not a gap in the extraction, and it decodes to a freeze frame with no fields — which is a real answer and not an error. `shortlistKnown: false` (no shortlist for the returned pair) and an empty frame must not look the same on screen.
 

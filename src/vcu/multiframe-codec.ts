@@ -52,8 +52,8 @@ export type VcuMultiFrameRequest =
    * instead of all 63 in turn.
    *
    * ✅ CAPTURED: `7C0: A8 04 18 02 FF FF 00 00`, once on A8 in the 2026-08-08 capture,
-   * answered `58`. That is byte for byte the frame in a second owner's
-   * definitions — the two now agree. Those definitions also record that **a
+   * answered `58`. That is byte for byte the frame in another owner's
+   * implementation — the two now agree. That implementation also records that **a
    * bare status byte is rejected with incorrectMessageLengthOrInvalidFormat**, so the three
    * operand bytes are required rather than conventional.
    */
@@ -139,9 +139,8 @@ const READ_FREEZE_FRAME_OPERAND = [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xf
  * `18 02 FF FF` — status mask `02` ("all identified DTCs"), DTC group `FF FF`
  * ("all groups").
  *
- * 🟡 From a second owner's definitions, not sniffed
- * which also record that **a bare status
- * byte without the group is rejected with incorrectMessageLengthOrInvalidFormat**
+ * 🟡 Another owner's implementation supplies this, not a capture. It rejects
+ * **a bare status byte without the group with incorrectMessageLengthOrInvalidFormat**
  * — so all three bytes are required and this is not a place to economise.
  */
 const LIST_STORED_DTCS_OPERAND = [0x02, 0xff, 0xff];
@@ -484,8 +483,8 @@ export function isUploadFinished(body: Uint8Array): boolean {
  * ✅ The LAYOUT came from Energica's definitions rather than a capture,
  * and has since been captured and confirmed: `58 <count>` then three-byte
  * `<codeHi> <codeLo> <status>` records, which is the shape
- * ../diagnostics/freeze-frame.ts' header argues for from the same source, and which the
- * second owner's definitions document identically ("unconditionally skips
+ * ../diagnostics/freeze-frame.ts' header argues for from the same source, and which
+ * another owner's implementation matches ("unconditionally skips
  * payload[0]", then walks 3-byte records). The 2026-08-08 session holds an 89-byte
  * `0x58` reply — count byte `0x1D` = 29, then 29 records whose `(component, status)`
  * pairs match the 29 freeze-frame replies exactly, in order. The definition-based reading was
