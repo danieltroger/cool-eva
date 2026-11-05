@@ -56,6 +56,11 @@ interface SelfCheck {
 /** In script-name order; they are independent, so nothing depends on which runs first. */
 const CHECKS: SelfCheck[] = [
   {
+    script: "scripts/check-shutdown.ts",
+    covers:
+      "requested SIGTERM/SIGINT exits successfully through cleanup errors or late fatal errors; later cleanup runs and unrequested crashes remain failures",
+  },
+  {
     script: "scripts/check-fault-summary.ts",
     covers:
       "complete active counts despite unknown or capped individual keys, offline/silent unknown, confirmed clear and rising-edge history",

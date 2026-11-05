@@ -8,6 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { monotonicNow, since } from "../src/monotonic.ts";
 import { injectRecoveryFault, RECOVERY_FAULTS } from "./update-check/availability.ts";
 import { readUpdateStatus } from "../src/release/update-status.ts";
+import { checkRequestedStop } from "./update-check/requested-stop.ts";
 import {
   createUpdateFixture,
   fixtureEnvironment,
@@ -196,6 +197,16 @@ export async function checkUpdaterSystemd(): Promise<void> {
     assert.equal((await readState(fixture)).current, promoted.current);
     assert.equal((await readState(fixture)).previous, "old");
     console.log("real systemd: four manual restarts restarted CURRENT without consuming its rollback target");
+
+    await checkRequestedStop({
+      fixture,
+      service,
+      rollbackService,
+      appUrl,
+      control,
+      waitFor,
+      healthy: () => healthy(configuration.healthUrl),
+    });
 
     await control("reset-failed", service);
     await fetch(`${appUrl}/test/crash-once`);

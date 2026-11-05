@@ -7,6 +7,7 @@ import { createSettingsRestart } from "../../src/settings/restart.ts";
 import { startSettings } from "../../src/settings/startup.ts";
 import { settingsPaths } from "../../src/settings/paths.ts";
 import { acquireBus, type BusLease } from "../../src/vcu/bus-lease.ts";
+import { installRequestedShutdown } from "../../src/shutdown.ts";
 
 async function main(): Promise<void> {
   const [codeDirectory, replayFile, port] = process.argv.slice(2);
@@ -32,6 +33,7 @@ async function main(): Promise<void> {
   });
   let moving = false;
   let holdStop = false;
+  let failStop = false;
   let busLease: BusLease | undefined;
   const restart = createSettingsRestart({
     store: runtime.store,
@@ -74,6 +76,9 @@ async function main(): Promise<void> {
     } else if (request.url === "/test/hold-stop") {
       holdStop = true;
       response.end("synthetic slow shutdown\n");
+    } else if (request.url === "/test/fail-stop") {
+      failStop = true;
+      response.end("synthetic exit 1 on SIGTERM\n");
     } else if (request.url === "/test/crash-once") {
       response.end("synthetic one-off crash\n");
       setImmediate(() => {
@@ -85,32 +90,29 @@ async function main(): Promise<void> {
       response.writeHead(404).end();
     }
   }).listen(Number(port), "127.0.0.1");
-  process.once("SIGTERM", () => {
-    restart.consume();
-    // systemd signals this fixture's flock holder as well as Node.
-    const releasing = runtime.lock.release().catch(error => {
-      console.warn("synthetic settings holder ended during service stop:", error);
-    });
-    if (holdStop) {
-      console.log("synthetic shutdown awaiting SIGKILL timeout");
-      return;
-    }
-    void shutdown(server, context, releasing).catch(error => {
-      console.error("synthetic app shutdown failed:", error);
-      process.exit(1);
-    });
-  });
-}
-
-async function shutdown(
-  server: import("node:http").Server,
-  context: SettingsHttpContext,
-  releasing: Promise<void>
-): Promise<void> {
-  await context.runtime.store.settled();
-  await releasing;
-  await context.restart.close();
-  await new Promise<void>((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+  installRequestedShutdown([
+    { name: "consume the synthetic restart", run: () => restart.consume() },
+    {
+      name: "injected stop failure",
+      run: () => {
+        if (holdStop) {
+          console.log("synthetic shutdown awaiting SIGKILL timeout");
+          return new Promise<void>(() => {});
+        }
+        if (failStop) {
+          console.error("synthetic app attempts exit 1 on SIGTERM");
+          process.exit(1);
+        }
+      },
+    },
+    { name: "finish synthetic settings", run: () => runtime.store.settled() },
+    { name: "release the synthetic holder", run: () => runtime.lock.release() },
+    { name: "close synthetic restart", run: () => restart.close() },
+    {
+      name: "close synthetic HTTP",
+      run: () => new Promise<void>((resolve, reject) => server.close(error => (error ? reject(error) : resolve()))),
+    },
+  ]);
 }
 
 async function crashOnFirstFrame(

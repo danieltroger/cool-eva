@@ -37,7 +37,14 @@ export async function checkQemuDiagnostics(parent: string): Promise<void> {
     ["dmesg", "echo SYNTHETIC_KERNEL"],
     ["sleep", 'if [ -e "$QEMU_TEST_ROOT/ticked" ]; then exit 77; fi; touch "$QEMU_TEST_ROOT/ticked"'],
   ]) {
-    await writeFile(join(root, "bin", name), `#!/bin/sh\n${script}\n`, { mode: 0o755 });
+    await writeFile(
+      join(root, "bin", name),
+      `#!/bin/sh
+printf '%s\\n' "$*" >> "$QEMU_TEST_ROOT/${name}.calls"
+${script}
+`,
+      { mode: 0o755 }
+    );
   }
   const seed = join(root, "seed.sh");
   await writeFile(seed, mapFixture(guestDiagnosticsSeed(), root));
@@ -76,6 +83,9 @@ export async function checkQemuDiagnostics(parent: string): Promise<void> {
   ]) {
     assert(report.includes(expected), expected);
   }
+  await assertUpdaterQueries(root, false);
+  await writeFile(join(root, "systemctl.calls"), "");
+  await writeFile(join(root, "journalctl.calls"), "");
   const guest: GuestSsh = { key: "fixture", knownHosts: "fixture", port: 12345 };
   const execute = async (_guest: GuestSsh, command: string): Promise<string> => {
     const result = await promisify(execFile)("sh", ["-c", mapFixture(command.replace(/^sudo sh/, "sh"), root)], {
@@ -85,6 +95,7 @@ export async function checkQemuDiagnostics(parent: string): Promise<void> {
   };
   await captureGuestInspection(guest, join(root, "inspection.log"), execute);
   const inspection = await readFile(join(root, "inspection.log"), "utf8");
+  await assertUpdaterQueries(root, true);
   for (const expected of [
     "SYNTHETIC_JOURNAL",
     "SYNTHETIC_FREE_MEMORY",
@@ -122,6 +133,20 @@ printf 'COOL_EVA_QEMU_GUEST unit query failed\\n' >> "$QEMU_TEST_ROOT/log/cool-e
   console.log(
     "QEMU diagnostics: getty masks, persistent collection, bounded queries, failure snapshot and live-versus-stale sampling passed."
   );
+}
+
+async function assertUpdaterQueries(root: string, inspection: boolean): Promise<void> {
+  const calls = (await readFile(join(root, "systemctl.calls"), "utf8")).split("\n");
+  const queries = calls.filter(line => line.includes(" show ") || line.includes(" status "));
+  assert.equal(queries.length, 2, "Two sampler ticks, or inspection status plus show");
+  for (const query of queries) {
+    for (const unit of ["cool-eva-rollback.service", "cool-eva-update.service", "cool-eva-update-repair.service"]) {
+      assert(query.split(" ").includes(unit), `${unit} must be queried in ${inspection ? "inspection" : "sampler"}`);
+    }
+  }
+  const journal = await readFile(join(root, "journalctl.calls"), "utf8");
+  assert(journal.includes(inspection ? "-u cool-eva-rollback.service" : "--unit=cool-eva-rollback.service"));
+  assert(journal.includes(inspection ? "-u cool-eva-update*.service" : "--unit=cool-eva-update*.service"));
 }
 
 function mapFixture(script: string, root: string): string {

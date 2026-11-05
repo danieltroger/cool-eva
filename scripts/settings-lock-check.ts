@@ -48,6 +48,19 @@ process.stdout.write('cool-eva-settings-lock\\n');
     } finally {
       await lost.release();
     }
+    const hangingScript = join(directory, "hanging-holder.mjs");
+    await writeFile(
+      hangingScript,
+      `process.stdin.resume();
+setInterval(() => {}, 1000);
+process.stdout.write('cool-eva-settings-lock\\n');
+`
+    );
+    const hanging = await acquireSettingsWriterLock(join(directory, "hanging.lock"), {
+      executable: process.execPath,
+      arguments: [hangingScript],
+    });
+    await assert.rejects(hanging.release(), /did not stop/, "Ignoring stdin EOF must reject at the release deadline");
     console.log("  settings holder SIGTERM: normal release succeeds; unexpected loss still fences writes");
   } finally {
     await rm(directory, { recursive: true, force: true });

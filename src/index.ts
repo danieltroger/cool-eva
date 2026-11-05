@@ -4,6 +4,7 @@ import { configureArchiveAccess } from "./storage/archive-access.ts";
 import { validBleSecret } from "../public/lib/ble-secret.js";
 import { startSettings } from "./settings/startup.ts";
 import { createSettingsRestart } from "./settings/restart.ts";
+import { installRequestedShutdown } from "./shutdown.ts";
 import { handleRecordingFlushEndpoint } from "./http/recording-flush.ts";
 import { handleSettingsEndpoint } from "./http/settings.ts";
 import { scanHubCandidates } from "./settings/hub-discovery.ts";
@@ -549,7 +550,7 @@ console.log(
 const server = createServer(async (req, res) => {
   // Query strings are for the endpoints below; the static map is keyed by path.
   const url = new URL(req.url ?? "/", "http://localhost");
-  if (shuttingDown) {
+  if (isShutdownRequested()) {
     res.writeHead(503);
     res.end("Restarting. Reconnect shortly.");
     return;
@@ -783,71 +784,28 @@ console.log(
     : "charge-auto: automatic current reduction is not allowed in startup settings"
 );
 
-// --- Graceful shutdown ---
-let shuttingDown = false;
-async function shutdown(): Promise<void> {
-  osUpdateGate.close();
-  if (shuttingDown) return;
-  shuttingDown = true;
-  settingsRestart.consume();
-  console.log("\nShutting down…");
-  stopObd?.();
-  canLinkMonitor.stop();
-  wifiMonitor?.stop();
-  void bleClient?.stop();
-  void bleServer?.stop();
-  // A sweep in flight is stopped rather than left to be killed with the process:
-  // aborting settles the request in flight, stops the client transmitting, and
-  // leaves every row it had already appended to `sweep.partial.jsonl`, so the next
-  // run resumes from there. Deploy is `git pull` + `systemctl restart`, so this is
-  // not a rare path.
-  //
-  // Awaited, like closeEncryptedLog below and for the same reason: process.exit()
-  // is a few lines away and the sweep still has its archive to write.
-  // Aborted rather than awaited: a write is a few hundred milliseconds of exchanges
-  // and holds no file handle and no partial state of its own — unlike a sweep, which
-  // has an archive to write. Its audit record is appended by the action itself, and
-  // an action stopped mid-flight has already recorded whatever it got to.
-  vcuWriteRunner.stop();
-  await vcuReadRunner.stop();
-  // Awaited, not fire-and-forget: sealing the last segment is async, and
-  // process.exit() below would otherwise kill it and lose the final buffer.
-  //
-  // ⚠️ BEFORE the fan, irreversible data first. There is no TimeoutStopSec in the unit,
-  // so systemd's 90 s default is what a wedged sysfs write or a hung `pinctrl` costs —
-  // and it would cost it out of this call's budget. A lost ride-log segment is
-  // unrecoverable; a fan left spinning has the config.txt `gpio=` lines and a five-second
-  // `Restart=on-failure` behind it.
-  // Before closeEncryptedLog, so a park landing mid-shutdown cannot start a seal against a
-  // log that is already being closed.
-  stopSealOnPark();
-  await closeEncryptedLog();
-  // ⚠️ Everything that can command the fan stops BEFORE the bridge is idled — the
-  // gestures, then the curve. A hold or a tick landing after the bridge has been idled
-  // would re-command a duty into a process that is about to exit, and the enables would
-  // then be left HIGH for the five seconds until systemd restarts it.
-  handlebarGestures.stop();
-  fanCycle?.stop();
-  waypointFixes.stop();
-  fanAutomatic.stop();
-  chargeAutomatic.stop();
-  // Awaited, and before the process goes: this is the only output this service drives.
-  // Deploy is `git pull` + `systemctl restart`, so leaving a fan spinning behind a dead
-  // process is a routine path rather than a rare one. A SIGKILL skips this — but the unit
-  // restarts in five seconds and openFanPwm() drops the enables first thing, with the
-  // config.txt `gpio=17,op,dl` lines as the backstop if it never comes back.
-  await fanController.stop();
-  try {
-    channel?.stop();
-  } catch (err) {
-    console.log("can: channel stop failed during shutdown:", err);
-  }
-  ws.stop();
-  server.close();
-  await settingsRuntime.store.settled();
-  await settingsRuntime.lock.release();
-  process.exit(0);
-}
-
-process.on("SIGINT", () => void shutdown());
-process.on("SIGTERM", () => void shutdown());
+// Ordering, retained failure diagnostics and stop intent: docs/service-shutdown.md.
+const isShutdownRequested = installRequestedShutdown([
+  { name: "close the OS-update gate", run: () => osUpdateGate.close() },
+  { name: "consume the restart reservation", run: () => settingsRestart.consume() },
+  { name: "stop OBD polling", run: () => stopObd?.() },
+  { name: "stop CAN link monitoring", run: () => canLinkMonitor.stop() },
+  { name: "stop Wi-Fi monitoring", run: () => wifiMonitor?.stop() },
+  { name: "stop the BLE client", run: () => bleClient?.stop(), background: true },
+  { name: "stop the BLE server", run: () => bleServer?.stop(), background: true },
+  { name: "abort VCU writes", run: () => vcuWriteRunner.stop() },
+  { name: "finish the VCU read archive", run: () => vcuReadRunner.stop() },
+  { name: "stop sealing on park", run: () => stopSealOnPark() },
+  { name: "seal the encrypted ride log", run: () => closeEncryptedLog() },
+  { name: "stop handlebar gestures", run: () => handlebarGestures.stop() },
+  { name: "stop fan gestures", run: () => fanCycle?.stop() },
+  { name: "stop waypoint tracking", run: () => waypointFixes.stop() },
+  { name: "stop automatic fan control", run: () => fanAutomatic.stop() },
+  { name: "stop automatic charging", run: () => chargeAutomatic.stop() },
+  { name: "idle the fan bridge", run: () => fanController.stop() },
+  { name: "stop the CAN channel", run: () => channel?.stop() },
+  { name: "stop WebSockets", run: () => ws.stop() },
+  { name: "close HTTP", run: () => server.close() },
+  { name: "finish settings writes", run: () => settingsRuntime.store.settled() },
+  { name: "release the settings writer lock", run: () => settingsRuntime.lock.release() },
+]);
