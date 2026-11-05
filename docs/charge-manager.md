@@ -2,7 +2,7 @@
 
 Findings for `src/can/charge-manager.ts`. The decoder carries a pointer here and one sentence per byte; everything that is evidence rather than instruction lives in this file.
 
-This ECU is only on the bus while a charge cable is live, which is why none of it was decoded until 2026-08-19: every parked sweep found silence (`obd-garage/CHARGE_MANAGER.md` §3.5). The standing assumption was that this meant DC only. It does not — the whole group broadcasts on AC too, and AC is where most of the corpus is, so the AC-vs-DC contrast is what identifies these bytes rather than any single session. The one exception is `0x625`, which broadcasts whenever the bike is awake, parked and unplugged included.
+This ECU is only on the bus while a charge cable is live, which is why none of it was decoded until 2026-08-19: every parked sweep found silence. The standing assumption was that this meant DC only. It does not — the whole group broadcasts on AC too, and AC is where most of the corpus is, so the AC-vs-DC contrast is what identifies these bytes rather than any single session. The one exception is `0x625`, which broadcasts whenever the bike is awake, parked and unplugged included.
 
 ## Provenance
 
@@ -134,9 +134,9 @@ Both fields are now decoded, because the DBC supplies exactly the evidence that 
 
 🟡 This also corrects `src/can/vcu-flags.ts`, whose header says the charge manager's "own `CM_ERROR` / `CM_ERROR_SOURCE` / `CM_ERROR_CODE_*` telemetry is not broadcast anywhere and needs a diagnostic session". It is broadcast, on this frame, at 10 Hz. ❌ **The next sentence used to read "`vcu_err_charge_manager` (`0x100` b7 bit 1) … remains 0 in every captured frame — including all three windows above". That is wrong.** The bit fires in all three, 0.162 s after the first error frame each time, and in a fourth failure that published no code at all. §The fault corpus below has the measurement; it is the best corroboration these two bytes have.
 
-Energica's own service tool carries five DTC titles for this ECU (`CM INTERNAL ERROR`, `CM APPLICATION LAYER ERROR`, `CM-VEHICLE COMMUNICATION ERROR`, two unclassified), served through the VCU. So the fault path exists; what these two codes map to is unknown.
+Energica's own diagnostic definitions carry five DTC titles for this ECU (`CM INTERNAL ERROR`, `CM APPLICATION LAYER ERROR`, `CM-VEHICLE COMMUNICATION ERROR`, two unclassified), served through the VCU. So the fault path exists; what these two codes map to is unknown.
 
-🔍 **Where the next pass should start.** `src/diagnostics/dtc-table.ts` already carries seven charge-path codes under ECU group 54, decoded from the same service tool: `C1003` unspecified CM error, `C1006` CM-to-vehicle communication error, `C1008` EVSE emergency shutdown, `C1010` protocol error, `C1012` SLAC process error, `C1014` unclassified CM error, plus `P1045` error inlet. Neither 853 nor 1101 is any of those numbers, and neither is their group/index pair, so the mapping is not the obvious one — but a bike that produces a stored DTC and a live `charge_manager_error_code` in the same minute would settle it in one reading, and that is now a thing this project logs rather than a thing it would have to be running a diagnostic session to see.
+🔍 **Where the next pass should start.** `src/diagnostics/dtc-table.ts` already carries seven charge-path codes under ECU group 54, from those same definitions: `C1003` unspecified CM error, `C1006` CM-to-vehicle communication error, `C1008` EVSE emergency shutdown, `C1010` protocol error, `C1012` SLAC process error, `C1014` unclassified CM error, plus `P1045` error inlet. Neither 853 nor 1101 is any of those numbers, and neither is their group/index pair, so the mapping is not the obvious one — but a bike that produces a stored DTC and a live `charge_manager_error_code` in the same minute would settle it in one reading, and that is now a thing this project logs rather than a thing it would have to be running a diagnostic session to see.
 
 ### The gate is `b4 = 0xF1`, and why it is not the whole triple
 
@@ -489,7 +489,7 @@ Whatever the field is, either the DC path does not heat measurably during a fast
 
 ### 0x630 — DLC 3, and a poll addressed per ECU
 
-The only DLC-3 frame on a bus where almost everything is 8. 1 964 694 frames. b0 takes {`0xA1`, `0xA2`, `0xA3`, `0xA5`, `0xA9`, `0xEA`} — the first five are precisely Energica's own `MotorbikeECU` node ids (BMSuControl `0xA1`, Logo `0xA2`, CNode `0xA3`, DCDC `0xA5`, VCUControl `0xA9`), which says `0x630` is addressed per-ECU. `0xEA` is not in that enum and appears 18 times.
+The only DLC-3 frame on a bus where almost everything is 8. 1 964 694 frames. b0 takes {`0xA1`, `0xA2`, `0xA3`, `0xA5`, `0xA9`, `0xEA`} — the first five are precisely Energica's own node ids (BMSuControl `0xA1`, Logo `0xA2`, CNode `0xA3`, DCDC `0xA5`, VCUControl `0xA9`), which says `0x630` is addressed per-ECU. `0xEA` is not in that list and appears 18 times.
 
 thimo's observation that "byte 2 sometimes echoes byte 0" holds, and the corpus makes it sharper — **the echo is per node and total**, not occasional:
 
@@ -525,7 +525,7 @@ All eight bytes are `00` in 100.000 % of 157 441 frames, so only its presence ca
 
 ### 🟡 Is `CM_ERROR_SRC` the DTC symptom number? Probably not, and here is the timing
 
-Energica's `dtcodes.emsd` gives component **54 = CM ERROR** fourteen named symptoms, C1003…C1018 — all fourteen already in `src/diagnostics/dtc-table.ts` from an independent source, which is why a stored `C1010` renders as PROTOCOL ERROR on the Faults tab today. All fourteen store the same five info-keys, including **118 `CM_ERROR_SOURCE`, 119 `CM_ERROR_CODE_MSB`, 120 `CM_ERROR_CODE_LSB`** — the same two fields `0x610` carries live.
+Energica's diagnostic dictionary gives component **54 = CM ERROR** fourteen named symptoms, C1003…C1018 — all fourteen already in `src/diagnostics/dtc-table.ts` from an independent source, which is why a stored `C1010` renders as PROTOCOL ERROR on the Faults tab today. All fourteen store the same five info-keys, including **118 `CM_ERROR_SOURCE`, 119 `CM_ERROR_CODE_MSB`, 120 `CM_ERROR_CODE_LSB`** — the same two fields `0x610` carries live.
 
 That invites an obvious identification: our live sources are **7 and 8**, and symptoms 7 and 8 are `PROTOCOL ERROR` and `CM APPLICATION LAYER ERROR`, both layer names, which is the sort of thing a "source" holds. ⚠️ **Do not adopt it.** The corpus argues against it, and the timing is what makes the argument bite:
 
@@ -540,7 +540,7 @@ So "the DTC had not latched yet" does not explain the miss — C1011 had forty m
 
 Two readings survive and this corpus cannot separate them: the source is not the symptom, **or** it is and E2 never latched a DTC at all — E2 ends with the capture, so how it resolved is unknown.
 
-⚠️ **The code is a separate question and is not named by anything.** 853 (`0x0355`) and 1101 (`0x044D`) are not C-numbers, there is no `VAL_` table for `CM_ERROR_CODE` in the factory DBC, no `/e:` enum in the `.sym`, and neither value appears in the manufacturer's service tool's resource bundle. Two values is a list, not a pattern.
+⚠️ **The code is a separate question and is not named by anything.** 853 (`0x0355`) and 1101 (`0x044D`) are not C-numbers, there is no `VAL_` table for `CM_ERROR_CODE` in the factory DBC, no `/e:` enum in the `.sym`, and neither value appears in the manufacturer's diagnostic definitions. Two values is a list, not a pattern.
 
 **What would settle it**, in order of cost: read a stored component-54 DTC whose `118` is non-zero and compare it against the symptom it was filed under. We have exactly one component-54 freeze frame — `(54, 11)` `C1014` UNCLASSIFIED CM ERROR — and its `118/119/120` triple is **`0, 0, 0`**. 🟡 That is itself a lead: `C1014` UNCLASSIFIED may be precisely the symptom stored _when there is no source and code to store_, in which case the informative freeze frames are the other thirteen and this one never could have helped.
 
@@ -694,7 +694,7 @@ Plus one partial that starts mid-path at `0x04` (2026-08-09 17:55, `04 05 07 09 
 
 - **Not a DTC number.** `src/diagnostics/dtc-table.ts` carries fourteen charge-manager codes under component 54, `C1003`…`C1018`. Neither 853 nor 1101 is any of those numerals, nor a component/symptom pair (`853` → 3/85 and `1101` → 4/77 under a byte split; symptoms only run 0-15), nor a decimal split that lands in range.
 - **Not a subsystem in the high byte, on two samples.** The high bytes are 3 and 4 and the low bytes 0x55 and 0x4D. With one code per high byte there is nothing to test.
-- **Nothing on disk carries either number** in a charge-manager context — `obd-garage/`, the service-tool extracts, the factory PDFs and the community repos were all searched.
+- **Nothing on disk carries either number** in a charge-manager context — local observations, manufacturer definitions, factory PDFs and the community repos were all searched.
 - 1101 − 853 = 248, which is not 256 and not anything else.
 
 🟡 **One coincidence that is worth naming precisely so it is not mistaken for a finding.** `CM_ERROR_SRC` takes the values 7 and 8, and component 54's symptoms run 0…13, so both land in range — and (54, 7) is `C1010 PROTOCOL ERROR`, (54, 8) is `C1011 CM APPLICATION LAYER ERROR`, both plausible for a failed CCS handshake. **It is very likely a coincidence.** Energica's freeze-frame shortlist for every one of `C1003`…`C1018` is `[VEHICLE_SUBSTATE, VCU_CM_COM_BYTE0, CM_ERROR_SOURCE, CM_ERROR_CODE_MSB, CM_ERROR_CODE_LSB]` — the source is captured _alongside_ the symptom, in all fourteen. A field that is stored next to the symptom is not the symptom. Two values in a fourteen-wide range is also a 1-in-... nothing: any two values would have landed in it.
@@ -703,11 +703,11 @@ Plus one partial that starts mid-path at `0x04` (2026-08-09 17:55, `04 05 07 09 
 
 ### The factory files, re-checked specifically for an enumeration
 
-**There is no enumeration of `CM_ERROR_SOURCE` or `CM_ERROR_CODE` values anywhere on this machine.** Checked and negative: the manufacturer's telemetry-scaling table (ids 92, 118, 119, 120 — `unit` and `equation` columns empty), a byte-level scan of the service tool's shared library, the manufacturer's CAN signal database and the service tool's network library (zero occurrences of the strings at all), the embedded JSON resource inside the service-tool executable (the signals are there, `"equation": ""`), the rider-supplied `.xdbc`, the type-approval PDF, the Ribelle workshop and owner manuals, `Component and diagnosis information`, and the three community repos. thimo's own report says the same from the DBC side: names only, factor 1, offset 0.
+**There is no enumeration of `CM_ERROR_SOURCE` or `CM_ERROR_CODE` values anywhere on this machine.** Checked and negative: the manufacturer's telemetry-scaling table (ids 92, 118, 119, 120 — `unit` and `equation` columns empty), a byte-level scan of the manufacturer's protocol definitions and CAN signal database (zero occurrences of the strings at all), the manufacturer's JSON definitions (the signals are there, `"equation": ""`), the rider-supplied `.xdbc`, the type-approval PDF, the Ribelle workshop and owner manuals, `Component and diagnosis information`, and the three community repos. thimo's own report says the same from the DBC side: names only, factor 1, offset 0.
 
 Two things the search did turn up that this document did not have:
 
-🟡 **`0x610` is in no factory CAN database on this disk.** The manufacturer's CAN signal database, extracted from a 2024 service-tool build, has no entry for id `0x610` — its highest is `0x501` — and the 2022 type-approval PDF reaches `CM_V_COM_BYTE0` as a diagnostic freeze-frame info-key over KWP2000, not as a broadcast frame. **The `CM_V_COM` / `CM_ERROR_SRC` / `CM_ERROR_CODE` naming of this frame rests on thimo's DBC and on nothing else available here.** That is not a reason to doubt it — the type-approval PDF independently names `VCU_CM_COM_BYTE0`, `V_EV_ERROR`, `CM_V_COM_BYTE0` and `CM_ERROR` as the VCU↔CM signal set, which is exactly the naming convention thimo describes, and the 0.162 s agreement with `0x100` is a measurement rather than a name. It is a reason to say "one source" out loud wherever this decode is quoted.
+🟡 **`0x610` is in no factory CAN database on this disk.** The manufacturer's CAN signal database, in its 2024 version, has no entry for id `0x610` — its highest is `0x501` — and the 2022 type-approval PDF reaches `CM_V_COM_BYTE0` as a diagnostic freeze-frame info-key over KWP2000, not as a broadcast frame. **The `CM_V_COM` / `CM_ERROR_SRC` / `CM_ERROR_CODE` naming of this frame rests on thimo's DBC and on nothing else available here.** That is not a reason to doubt it — the type-approval PDF independently names `VCU_CM_COM_BYTE0`, `V_EV_ERROR`, `CM_V_COM_BYTE0` and `CM_ERROR` as the VCU↔CM signal set, which is exactly the naming convention thimo describes, and the 0.162 s agreement with `0x100` is a measurement rather than a name. It is a reason to say "one source" out loud wherever this decode is quoted.
 
 🧨 **The charge-manager error triple HAS been captured, and it reads zero.** `src/diagnostics/fault-infokeys.ts` says at (54, 13): "The charge-manager error triple this project has never captured." It has — in `scripts/captured-freeze-frames.ts`, which carries a component-54 freeze frame the bike actually sent on 2026-08-08:
 
@@ -719,7 +719,7 @@ Two things the search did turn up that this document did not have:
       CM_ERROR_CODE_MSB   0
       CM_ERROR_CODE_LSB   0
 
-Decoded through `decodeFreezeFrameResponse()` itself, not by hand. **A stored charge-manager DTC's own freeze frame preserved the error triple as all zeros** — so the freeze-frame route, which the service-tool file analysis in obd-garage/ §3.4 and this project's own notes both nominate as the way to see these values without a live fault, did not preserve them on the one occasion it was read. Whether that is because the fault was recorded before the triple was populated, because the record is stale, or because the VCU stores zero when the CM did not supply a value, this capture cannot say. It does mean the freeze-frame route is not the shortcut it looked like.
+Decoded through `decodeFreezeFrameResponse()` itself, not by hand. **A stored charge-manager DTC's own freeze frame preserved the error triple as all zeros** — so the freeze-frame route, which Energica's definitions and this project's own notes both nominate as the way to see these values without a live fault, did not preserve them on the one occasion it was read. Whether that is because the fault was recorded before the triple was populated, because the record is stale, or because the VCU stores zero when the CM did not supply a value, this capture cannot say. It does mean the freeze-frame route is not the shortcut it looked like.
 
 🔍 And the corresponding positive: **six charge-manager DTCs are stored on this bike.** The mode-03 list captured 2026-08-04 (39 codes, in `scripts/captured-dtc-transfer.ts`) decodes to `C1003`, `C1006`, `C1008`, `C1010`, `C1012` and `C1014` among others — unspecified CM error, CM-vehicle communication error, EVSE emergency shutdown, protocol error, SLAC process error, unclassified CM error. So the charge manager's fault path has fired in at least six distinct ways on this motorcycle over its life, while the entire live capture corpus caught three episodes carrying two codes. **The live corpus is a small and probably unrepresentative sample of this ECU's failure modes**, and any table built from it would be built from the wrong end.
 

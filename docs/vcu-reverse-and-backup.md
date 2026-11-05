@@ -15,13 +15,13 @@ All four are `WORD S` (signed 16-bit) served by the **A9** micro, addressed `CID
 | 69 | `0x1045` | `REVERSE_MAX_SPD` | 45 | speed ceiling in park assist | **4.5 km/h** (0.1 km/h/count) — see §2.3 |
 | 149 | `0x1095` | `BACKUP_MODE_TRQ` | 250 | torque ceiling in the degraded-throttle fallback | **25.0 Nm** |
 
-**Where "this bike" comes from, and its date.** `obd-garage/kwp_scan_raw.txt`, the A9 dump of 2026-06-14, reads `A9 B1 0043 2 0258`, `0044 2 00c8`, `0045 2 002d`, `0095 2 00fa` → 600, 200, 45, 250. That dump is three months old. What dates the values to the incident is the log itself: a 599-count ceiling at 16:07 on 2026-09-13 (§3) says index 67 still held 600 at that moment.
+**Where "this bike" comes from, and its date.** The A9 dump of 2026-06-14 reads `A9 B1 0043 2 0258`, `0044 2 00c8`, `0045 2 002d`, `0095 2 00fa` → 600, 200, 45, 250. That dump is three months old. What dates the values to the incident is the log itself: a 599-count ceiling at 16:07 on 2026-09-13 (§3) says index 67 still held 600 at that moment.
 
 ⚠️ **Index 67 no longer reads 600.** The owner raised it to 750 on 2026-09-13 (§8) and a live probe on **2026-09-14** read it back as `rawHex 02 EE` = **750**, so that is the value in the bike today. The table's 600 is the factory-matching value the incident happened on, kept because the whole of §3 is measured against it.
 
 **There is no factory default for any of them, and that statement now has a caveat.** `params.ecf` is not a defaults table — `src/vcu/param-file.ts:10-13` is blunt that its values "are NOT any particular bike's" and "must never be rendered as a reading". It happens to carry the same four values this bike reads, which is not the same as a factory default.
 
-⚠️ **But the firmware's parameter table carries an unidentified 16-bit field at +0x08 that nobody has examined**, and an earlier draft asserted "nothing else on disk states one" without looking at it — in a table §4 was already walking. It reads **300 / 12000 / 125 / 250** for indices 67 / 68 / 69 / 149, and equals the `params.ecf` value on **141 of 232** A9 rows. It is **not** simply a defaults column (it disagrees on the other 91, including three of these four), and it is **not** a maximum either — it is _below_ the live value at index 49 (400 against 600) and index 67 (300 against 600). `TORQUE_LIMIT`'s entry reads 1950, which is this bike's `MAP1_TORQUE`. Unidentified, and worth its own investigation rather than a guess here.
+⚠️ **But the parameter table in the A9 firmware carries an unidentified 16-bit field at +0x08 that nobody has examined**, and an earlier draft asserted "nothing else on disk states one" without looking at it — in a table §4 was already walking. It reads **300 / 12000 / 125 / 250** for indices 67 / 68 / 69 / 149, and equals the `params.ecf` value on **141 of 232** A9 rows. It is **not** simply a defaults column (it disagrees on the other 91, including three of these four), and it is **not** a maximum either — it is _below_ the live value at index 49 (400 against 600) and index 67 (300 against 600). `TORQUE_LIMIT`'s entry reads 1950, which is this bike's `MAP1_TORQUE`. Unidentified, and worth its own investigation rather than a guess here.
 
 **Table identity.** This bike runs table **16407**, whose only delta from `params.ecf`'s 16406 is index 249 `R_BRAKE_POPUP` (`src/vcu/table-catalog.data.ts`). Indices 67-69 and 149 are untouched by that delta, so the names above are this bike's names.
 
@@ -39,7 +39,7 @@ Energica states the scale for the torque _telemetry_ in **the manufacturer's tel
 
 ⚠️ That file scales telemetry, not EEPROM records. Applying it to the _parameters_ is an inference — a well-supported one, since `docs/vcu-parameters.md` §5 already makes it for `TORQUE_LIMIT` and `REGEN_TORQUE_LIMIT`, Energica's factory options write 2000/2150 into `MAP1_TORQUE` for a platform published at 200/215 Nm, and §3 below measures a 59.9 Nm plateau against a stored 600. Three independent things agreeing is why this is marked ✅ rather than 🟡, but it is agreement, not a statement about parameters.
 
-The firmware is consistent with it and adds nothing: A9 works in raw counts throughout, so 0.1 Nm is a display convention rather than something the code knows. ⚠️ Method for that negative, since it is a universal one: the image carries no `0.1f` or double-precision 0.1 constant and no divide-by-10 reciprocal magic; the only reciprocal constant in the reverse block is `0x51EB851F`, which is `/100` and belongs to the slew-rate arithmetic in §2.2.
+The A9 firmware is consistent with it and adds nothing: A9 works in raw counts throughout, so 0.1 Nm is a display convention rather than something the code knows. ⚠️ Method for that negative, since it is a universal one: that firmware carries no `0.1f` or double-precision 0.1 constant and no divide-by-10 reciprocal magic; the only reciprocal constant in the reverse block is `0x51EB851F`, which is `/100` and belongs to the slew-rate arithmetic in §2.2.
 
 ### 2.2 Slew rate: 1 count = 1 Nm/s ✅
 
@@ -47,7 +47,7 @@ In park assist the torque command's rate of change is limited. The per-frame ste
 
 ⚠️ On the wire alone that is a _mode_, not a hard wall — of 232 up-steps between rows exactly 20 ms apart, 3 exceed +4.0 (max +4.5); widening to 19-21 ms gives 6 above, to +6.5. So the wire on its own cannot pin a unit, and an earlier draft of this document withdrew the claim for exactly that reason.
 
-**The firmware settles it, and the argument is the asymmetry.** In §4's block, the up limit is `REVERSE_TORQUE_SLEWRATE_LIMIT × 10000` (`0x2A744`: `movw r1, #0x2710`; `0x2A748`: `muls`) = **2 000 000** at 200 counts. The down limit is the literal **−1 000 000**, loaded at `0x2A844` (`=0xFFF0BDC0`) and passed through the identical helper and the identical `/100` reciprocal (`0x51EB851F`). Ratio exactly **2 : 1**. Measured on the wire, independently and before any of this was disassembled: up ≈ +200 Nm/s, down exactly −100 Nm/s. **Also 2 : 1** — and the down side carries no calibration at all, because it is a constant in the code.
+**The A9 firmware settles it, and the argument is the asymmetry.** In §4's block, the up limit is `REVERSE_TORQUE_SLEWRATE_LIMIT × 10000` (`0x2A744`: `movw r1, #0x2710`; `0x2A748`: `muls`) = **2 000 000** at 200 counts. The down limit is the literal **−1 000 000**, loaded at `0x2A844` (`=0xFFF0BDC0`) and passed through the identical helper and the identical `/100` reciprocal (`0x51EB851F`). Ratio exactly **2 : 1**. Measured on the wire, independently and before checking the A9 firmware: up ≈ +200 Nm/s, down exactly −100 Nm/s. **Also 2 : 1** — and the down side carries no calibration at all, because it is a constant in the code.
 
 So the internal unit is 10 000 per Nm/s, `−1 000 000` is −100 Nm/s, and `200 × 10 000` is +200 Nm/s: **one count of `REVERSE_TORQUE_SLEWRATE_LIMIT` is one Nm/s**, equivalently 0.1 Nm per 100 ms. That is anchored on a hard-coded constant rather than on a 1:1 numeric coincidence.
 
@@ -96,11 +96,11 @@ Screened across the whole decrypted history, every full-throttle park-assist epi
 
 ## 4. What the firmware does with these numbers
 
-The owner raised `REVERSE_TORQUE_LIMIT` to **750** through the dashboard's `/vcu-write` and rebooted the bike, and still could not climb the lip. The VCU firmware was disassembled to find out why — `VCU_Control_CRP.mot` (the A9 image, referred to below as `vcu_control.bin` once converted) and `VCU_Safety_CRP (5).mot`, plus both `ULTIMI` builds as a cross-check; all ARM Cortex-M, Thumb-2, load base `0x8100`.
+The owner raised `REVERSE_TORQUE_LIMIT` to **750** through the dashboard's `/vcu-write` and rebooted the bike, and still could not climb the lip. The A9 (control) and A8 (safety) firmware were checked across both versions; all ARM Cortex-M, Thumb-2, load base `0x8100`.
 
-**A9's parameter table is at `0x00034A94`** — 20-byte entries, EEPROM offset at +0x02, storage type at +0x04, RAM shadow at +0x0C, parameter index at +0x12. Index 67 → EEPROM `0x023E`, shadow `0x200011F6`, working global `0x2000032A`; index 68 → global `0x2000032C`. Verified independently against eight checkpoint indices. That `vcu_control.bin` is the A9 image and not the A8 one is checkable rather than assumed: its table holds 233 entries, none of them an A8 index, with 233/233 storage-width agreement against `params.ecf`.
+**A9's parameter table is at `0x00034A94`** — 20-byte entries, EEPROM offset at +0x02, storage type at +0x04, RAM shadow at +0x0C, parameter index at +0x12. Index 67 → EEPROM `0x023E`, shadow `0x200011F6`, working global `0x2000032A`; index 68 → global `0x2000032C`. Verified independently against eight checkpoint indices. That this is the A9 firmware rather than the A8 firmware is checkable rather than assumed: its table holds 233 entries, none of them an A8 index, with 233/233 storage-width agreement against `params.ecf`.
 
-⚠️ **An earlier draft of this document claimed that A9 never uses these parameters and that enforcement must be downstream. That was wrong, and it was wrong because the tool used to find it followed only PC-relative literal loads and stopped at the first store.** The A9 image contains the reverse torque law in one contiguous block at **`0x2A6EC`-`0x2A850`**, and it consumes all of `REVERSE_TORQUE_LIMIT`, `REVERSE_TORQUE_SLEWRATE_LIMIT` and the demand. Disassembled and read:
+⚠️ **An earlier draft of this document claimed that A9 never uses these parameters and that enforcement must be downstream. That was wrong, and it was wrong because earlier tracing followed only PC-relative literal loads and stopped at the first store.** The A9 firmware contains the reverse torque law in one contiguous block at **`0x2A6EC`-`0x2A850`**, and it consumes all of `REVERSE_TORQUE_LIMIT`, `REVERSE_TORQUE_SLEWRATE_LIMIT` and the demand. From the A9 firmware:
 
 ```
         ; --- the two parameters are copied into the working struct at 0x20001B30 ---
@@ -146,11 +146,11 @@ The owner raised `REVERSE_TORQUE_LIMIT` to **750** through the dashboard's `/vcu
 0002a846  bl      #0x33cc6           ; same helper, same /100 at 0x2a850
 ```
 
-⚠️ Lines marked `…` are elided for length; everything else is verbatim and contiguous, including the `ldr rN, =0x20001B30` struct-base reloads that an earlier draft dropped. Individual `ldr`/`str` pairs within a group are adjacent in the image.
+⚠️ Lines marked `…` are elided for length; everything else is verbatim and contiguous, including the `ldr rN, =0x20001B30` struct-base reloads that an earlier draft dropped. Individual `ldr`/`str` pairs within a group are adjacent in the A9 firmware.
 
 So: **raising index 67 does reach the torque law.** The demand is scaled by `REVERSE_TORQUE_LIMIT` and then rate-limited by a step computed from `REVERSE_TORQUE_SLEWRATE_LIMIT`, all inside A9, in the micro that stores them.
 
-✅ **`REVERSE_TORQUE_LIMIT` is a GAIN, not a ceiling — settled by the bike's own log, not by the firmware.** The multiply at `0x2A7FA` reads as a gain (a demand between 0 and 1000 scaled by the limit) rather than a `min` against a ceiling, and the firmware alone cannot distinguish the two. The owner's own write settled it: he raised 600 → 750 at **16:09:15.935 Z on 2026-09-13**, two minutes after the stall (§8), which makes the same day a controlled before/after on one bike.
+✅ **`REVERSE_TORQUE_LIMIT` is a GAIN, not a ceiling — settled by the bike's own log, not by the A9 firmware.** The multiply at `0x2A7FA` reads as a gain (a demand between 0 and 1000 scaled by the limit) rather than a `min` against a ceiling, and that firmware alone cannot distinguish the two. The owner's own write settled it: he raised 600 → 750 at **16:09:15.935 Z on 2026-09-13**, two minutes after the stall (§8), which makes the same day a controlled before/after on one bike.
 
 Park-assist samples below 3 km/h, binned by throttle in 5 % steps so the two periods are compared at like throttle — a gain scales **every** bin by 750/600 = 1.25, a ceiling would move only the saturated top:
 
@@ -173,13 +173,13 @@ Across all 12 bins with at least 8 samples each side the median ratio is **1.233
 
 🟡 Also not established: that this block is what executes in the reverse path. It exists, it reads those parameters, and the behaviour it implements is the behaviour §2.2 and §3 measured on the wire — but no reachability proof was attempted.
 
-⚠️ **The images may not be the build running in this bike.** They are Energica's shipped files and nothing has confirmed they match what is flashed. `0x1A ReadEcuIdentification` is observed working on these micros (`obd-garage/DIAG_ADDRESSES.md` §9) and would settle it in one read.
+⚠️ **The A9 and A8 firmware may differ from this bike's running builds.** Nothing has confirmed they match what is flashed. `0x1A ReadEcuIdentification` is observed working on these micros and would settle it in one read.
 
 ### The inverter is not the enforcing copy
 
-Checked because it was the leading hypothesis while §4 was wrong, and recorded so nobody re-runs it. `PRE-EMCE Configuration_Inverter_FW6701_rev3` — both the folder and its `.zip`, unzipped to scratch, originals untouched — contains an upgrade-instructions PDF, the C2Prog programming tool, one RMS firmware `.hex`, and two 96-line parameter files. **Those parameter files carry no reverse torque limit, no reverse speed limit and no backup torque.** A case-insensitive grep of the entire unzipped tree for `revers|backup|park` returns **zero hits**. What they do carry is the inverter's own ceilings — `Motor_Torque_Limit_EEPROM_(Nm)_x_10 = 2300`, `Regen_Torque_Limit = 900`, `Braking_Torque_Limit = 900`, `Torque_Rate_Limit_EEPROM_(Nm)_x_10 = 75`, `Max_Speed_EEPROM_(RPM) = 11000` — none of which is 600, and the 2300 matching the VCU's `TORQUE_LIMIT = 2300` is a useful independent corroboration of the Nm×10 convention.
+Checked because it was the leading hypothesis while §4 was wrong, and recorded so nobody re-runs it. Energica's own definitions for the inverter include two 96-line parameter files. **Those parameter files carry no reverse torque limit, no reverse speed limit and no backup torque.** A case-insensitive grep of the entire reference material for `revers|backup|park` returns **zero hits**. What they do carry is the inverter's own ceilings — `Motor_Torque_Limit_EEPROM_(Nm)_x_10 = 2300`, `Regen_Torque_Limit = 900`, `Braking_Torque_Limit = 900`, `Torque_Rate_Limit_EEPROM_(Nm)_x_10 = 75`, `Max_Speed_EEPROM_(RPM) = 11000` — none of which is 600, and the 2300 matching the VCU's `TORQUE_LIMIT = 2300` is a useful independent corroboration of the Nm×10 convention.
 
-⚠️ And it would not be this bike's inverter in any case: the folder is **PRE-**EMCE, and the owner has confirmed he runs the **EMCE**. It is cited in this document for the Nm×10 convention only, never as this bike's configuration.
+⚠️ And it would not be this bike's inverter in any case: the reference configuration is **PRE-**EMCE, and the owner has confirmed he runs the **EMCE**. It is cited in this document for the Nm×10 convention only, never as this bike's configuration.
 
 ## 5. Backup mode
 
@@ -197,7 +197,7 @@ So backup mode caps a torque demand at **min(demand, 25.0 Nm)**, gated by a flag
 
 **What it caps.** `DBW_CONFIG_2` bit 0 selects between two torque sources at `0x26F80` and the chosen one is what gets capped.
 
-⚠️ Energica's own material says **nothing** about backup mode. "backup" appears in none of **the manufacturer's fault-code table**, **the manufacturer's parameter dictionary**, the Ribelle owner manual, the Ribelle workshop manual, or any file in the `VCU/firmware` folder. Everything in this section comes from the binary.
+⚠️ The reference tables and manuals say **nothing** about backup mode. "backup" appears in none of **the manufacturer's fault-code table**, **the manufacturer's parameter dictionary**, the Ribelle owner manual, the Ribelle workshop manual, or the related reference material. Everything in this section follows the A9 firmware.
 
 It did not act on 2026-09-13 — the bike made 59.9 Nm, not 25.0. It is in this document because it is the one mechanism able to make a raised `REVERSE_TORQUE_LIMIT` irrelevant: if backup mode ever engages, **every value above 250 is moot**.
 
@@ -250,7 +250,7 @@ to         900   (90.0 Nm)      — see the reasoning below
 - ⚠️ **Park assist is the mode where a person is walking beside 280 kg of motorcycle, often on a slope, often with one hand on the bars.** This limit exists so the bike cannot climb out of your grip. 90 Nm is 1425 N at the contact patch — around 145 kgf, comfortably more than a person can hold against.
 - ⚠️ **The slew rate is unchanged at 200 Nm/s**, so a raised limit takes proportionally _longer_ to reach — 0.45 s to 90 Nm against 0.375 s to 75. The arrival is not more sudden; the destination is higher.
 - ⚠️ **Reverse is used blind, looking over a shoulder, usually with the front wheel pointed somewhere.** More thrust over a lip is also more thrust when the wheel finally frees.
-- A dealer visit reverts it: the service tool reinstalls parameter values from Energica's server, keyed by VIN.
+- A dealer visit reverts it: parameter values are restored from Energica's server, keyed by VIN.
 
 ## 7. Which allowlist it would have to join
 
@@ -310,9 +310,9 @@ Also open, and smaller: whether the fade in §2.3 is `REVERSE_MAX_SPD` acting; a
 
 ## 9. What was read
 
-Opened and used: `obd-garage/kwp_scan_raw.txt` · the 2024 service-tool analysis in `obd-garage/` (§3.3, §6.0, §6.4, Appendix A) · `obd-garage/VCU_PARAM_CHANGES.md` · `obd-garage/DIAG_ADDRESSES.md` §9 · `src/vcu/param-file.ts`, `write-targets.ts`, `write-runner.ts` · `src/can/decode.ts`, `registry.ts`, `drive.ts` · `docs/vcu-parameters.md` §5, §9 · `docs/can-decode-findings.md:150, :347, :755` · `evidence/probes-20260914.txt` (five live read-only probes, 2026-09-14) · `evidence/captures/frames-0x101-capture-20260913-150718-04632ecc.txt` (985 098 frames) · `evidence/service-writes.jsonl` line 89 · the manufacturer's telemetry-scaling table · `Energica_Manuals/VCU/firmware/FILE VCU/VCU_Control_CRP.mot` and `VCU_Safety_CRP (5).mot` and both `ULTIMI` builds, disassembled · the whole of `PRE-EMCE Configuration_Inverter_FW6701_rev3`, folder and `.zip` both, unzipped to scratch with the originals untouched — `Inverter Upgrade Instructions_REV3.pdf`, `3. Parameters_6701_Energica/*.txt`, and the file listing of the programming tool and the RMS firmware `.hex` (a different inverter; cited for the Nm×10 convention only, see §4).
+Opened and used: bus observations and this bike's parameter change log · Energica's own frame and parameter definitions · `src/vcu/param-file.ts`, `write-targets.ts`, `write-runner.ts` · `src/can/decode.ts`, `registry.ts`, `drive.ts` · `docs/vcu-parameters.md` §5, §9 · `docs/can-decode-findings.md:150, :347, :755` · `evidence/probes-20260914.txt` (five live read-only probes, 2026-09-14) · `evidence/captures/frames-0x101-capture-20260913-150718-04632ecc.txt` (985 098 frames) · `evidence/service-writes.jsonl` line 89 · the manufacturer's telemetry-scaling table · the A9 and A8 firmware, including both versions · the manufacturer's inverter parameter reference (a different inverter; cited for the Nm×10 convention only, see §4).
 
-Opened and **empty on this question**, recorded so nobody repeats the search: the manufacturer's fault-code table (0 hits for "backup") · the manufacturer's parameter dictionary (only `156,Reverse_Switch,uint16_t,,,-1,` with an empty description column; no `BACKUP_*` row) · the three `.ecuparams.ems` files in `FILE VCU` (600-byte JSON arrays carrying only lighting-current parameters) · `EVA Ribelle Owner Manual (END006918 rev01).pdf` (describes PARK ASSISTANCE mode and its slow-forward/reverse toggle, states no speed or torque) · `Workshop Manual - Eva Ribelle EMCE.pdf` (one mention: "Green light flashing: the motorcycle is in Park Assistance mode") · a grep of all three firmware folders for `BACKUP_MODE|REVERSE_TORQUE|REVERSE_MAX`: zero hits.
+Opened and **empty on this question**, recorded so nobody repeats the search: the manufacturer's fault-code table (0 hits for "backup") · the manufacturer's parameter dictionary (only `156,Reverse_Switch,uint16_t,,,-1,` with an empty description column; no `BACKUP_*` row) · the three `.ecuparams.ems` reference files (600-byte JSON arrays carrying only lighting-current parameters) · `EVA Ribelle Owner Manual (END006918 rev01).pdf` (describes PARK ASSISTANCE mode and its slow-forward/reverse toggle, states no speed or torque) · `Workshop Manual - Eva Ribelle EMCE.pdf` (one mention: "Green light flashing: the motorcycle is in Park Assistance mode") · a search across all three reference sets for `BACKUP_MODE|REVERSE_TORQUE|REVERSE_MAX`: zero hits.
 
 ## 10. Method and data-quality notes
 

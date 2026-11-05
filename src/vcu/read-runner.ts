@@ -274,7 +274,7 @@ function readGate(): ServiceGateVerdict {
  * no transfer window ever opens for the poller to land in.
  *
  * ⚠️ **It DOES park, per read, for the 25 rows of #219's A8 block** (../vcu/sweep-targets.ts),
- * whose widths come from a firmware image nobody has matched against what is flashed — the
+ * whose widths use the A8 firmware, not yet matched to the running build — the
  * objection `runProbe` records below against parking off a width. Why all 25 and not the
  * three wide ones, and what a refused park does: docs/vcu-parameters.md §9.
  */

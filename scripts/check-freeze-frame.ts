@@ -147,7 +147,7 @@ check(
 );
 
 // The cross-source check, and the only assertion here that could catch a real
-// mistake in the transcription: the service tool's OBD code for a (component, symptom)
+// mistake in the transcription: the dictionary's OBD code for a (component, symptom)
 // pair against ./dtc-table.ts', which came from the type-approval PDF and has
 // been reconciled against this bike's own mode-03 reply.
 const codeDisagreements: string[] = [];
@@ -155,12 +155,12 @@ const missingFromDtcTable: string[] = [];
 for (const entry of FAULT_INFOKEYS) {
   const tableEntry = lookupByComponentSymptom(entry.component, entry.symptom);
   if (!tableEntry) {
-    missingFromDtcTable.push(`${entry.component}/${entry.symptom} ${entry.serviceToolObdCode}`);
+    missingFromDtcTable.push(`${entry.component}/${entry.symptom} ${entry.definitionObdCode}`);
     continue;
   }
-  if (tableEntry.obdCode !== entry.serviceToolObdCode) {
+  if (tableEntry.obdCode !== entry.definitionObdCode) {
     codeDisagreements.push(
-      `${entry.component}/${entry.symptom}: service tool says ${entry.serviceToolObdCode}, dtc-table says ${tableEntry.obdCode}`
+      `${entry.component}/${entry.symptom}: dictionary says ${entry.definitionObdCode}, dtc-table says ${tableEntry.obdCode}`
     );
   }
 }
@@ -169,7 +169,7 @@ console.log(`disagreements with dtc-table.ts: ${codeDisagreements.length}`);
 for (const disagreement of codeDisagreements) {
   console.log(`  ${disagreement}`);
 }
-// EXACTLY the two water-pump codes the service tool swaps relative to the type-approval
+// EXACTLY the two water-pump codes the dictionary swaps relative to the type-approval
 // PDF, and no others. A third appearing means one of the two tables moved.
 check(
   codeDisagreements.length === 2,

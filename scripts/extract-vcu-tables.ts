@@ -14,11 +14,11 @@ import {
   type ExtractedTable,
 } from "./table-delta-build.ts";
 
-// Pulls Energica's VCU parameter tables out of the manufacturer's service-tool
-// executable and writes them into src/vcu/table-catalog.data.ts, which is the file the
+// Reads Energica's VCU parameter tables from the manufacturer's definition
+// assembly and writes them into src/vcu/table-catalog.data.ts, which is the file the
 // service actually reads.
 //
-//     node --experimental-strip-types scripts/extract-vcu-tables.ts /path/to/service-tool.exe
+//     node --experimental-strip-types scripts/extract-vcu-tables.ts /path/to/definitions.bin
 //
 // ⚠️ THIS IS THE SCRIPT THAT MAKES THIS REPO USABLE ON SOMEBODY ELSE'S BIKE. A VCU
 // addresses its parameters BY INDEX, and what an index means comes from the table it is
@@ -61,23 +61,17 @@ const ZIP_DEFLATE = 8;
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUTPUT_PATH = join(HERE, "..", "src", "vcu", "table-catalog.data.ts");
 
-// The argument is a path on the contributor's own disk, so it is DESCRIBED rather than
-// named: this is a public repo and the manufacturer's product name stays out of it
-// (scripts/check-vendor-names.ts enforces that). Nothing here matches on the file's
-// name, so the description costs the tool nothing — what it actually needs is a .NET
+// The input filename is immaterial; only the format matters: a .NET
 // assembly carrying `_<TABLE_TYPE>` resources, and the failure path below says exactly
 // that when it gets something else.
 const exePath = process.argv[2];
 if (!exePath) {
   console.error(
-    "usage: node --experimental-strip-types scripts/extract-vcu-tables.ts <service-tool.exe> [--stdout] [--replace]"
+    "usage: node --experimental-strip-types scripts/extract-vcu-tables.ts <definitions.bin> [--stdout] [--replace]"
   );
   console.error("");
-  console.error("Point it at the main executable of Energica's Windows service tool — the dealer diagnostic");
-  console.error("application itself, not its installer. A 2024-era install puts it under");
-  console.error("  C:\\Program Files (x86)\\Energica\\<the tool's own directory>\\");
-  console.error("where it is by far the largest file (~137 MB in the 2024 build), because the parameter tables");
-  console.error("are only a small part of it.");
+  console.error("Supply Energica's parameter-definition assembly (~137 MB in the 2024 copy).");
+  console.error("It must contain .NET resources named _<TABLE_TYPE>; an installer archive is not that input.");
   process.exit(1);
 }
 
@@ -92,8 +86,7 @@ if (tables.length === 0) {
   // be read as "my install has none", which is not a thing that happens.
   console.error(
     `extract-vcu-tables: found NO \`_<TABLE_TYPE>\` resources in ${exePath}, so nothing was written.\n` +
-      "  • It has to be the service tool's own executable, not the installer. `energica-setup.msi` holds that\n" +
-      "    exe inside a compressed CAB and nothing here can see through it — install it (or unpack the MSI) first.\n" +
+      "  • Supply the definition assembly itself. MSI/CAB archives must be unpacked first.\n" +
       "  • If it IS that executable, this build stores its parameter bundles differently from the 2021 and 2024\n" +
       "    ones this was written against. Please open an issue with the build version — that is a finding, and\n" +
       "    the reader at the top of this file is where it would be fixed."

@@ -8,14 +8,14 @@ Everything below is measured over **the whole capture archive** in `~/Documents/
 
 ## 1. Where the name comes from, and what it is worth
 
-Energica's own free-frame IO table, decompiled out of the service tool and written up in `obd-garage/HEATED_GRIPS.md` §3.0, carries two rows nobody had decoded:
+Energica's own free-frame IO table carries two rows nobody had decoded:
 
 | title                      | code    | frame   | byte | bit   | mask     |
 | -------------------------- | ------- | ------- | ---- | ----- | -------- |
 | `DBS LIGHT SENS CALIB STS` | FF_D013 | `0x400` | 2    | 4     | 0x10     |
 | `DBS DAY/NIGHT MODE`       | FF_D014 | `0x400` | 5    | **7** | **0x80** |
 
-`HEATED_GRIPS.md` §3.5 independently proves `0x400` is the dashboard broadcasting its own digital inputs — every bit of byte 2 lands on a wired J8 pin on the dashboard connector, four bits and four pins with no leftovers, from a decompiled service-tool resource and an Altium schematic that had never been compared. "DBS" is the dashboard. So a day/night flag and a light-sensor calibration bit sharing that frame is exactly where they belong.
+Independent wiring evidence proves `0x400` is the dashboard broadcasting its own digital inputs — every bit of byte 2 lands on a wired J8 pin on the dashboard connector, four bits and four pins with no leftovers, from Energica's own IO definitions and an Altium schematic not previously compared. "DBS" is the dashboard. So a day/night flag and a light-sensor calibration bit sharing that frame is exactly where they belong.
 
 ⚠️ **A name off that table is not a measurement.** `charging` on `0x102` b2 bit 0 came off a third-party table the same way and is really the high beam. Everything from §2 on is what the captures show, independently of what the table calls it.
 
@@ -31,7 +31,7 @@ Over all 14 069 994 frames:
 | b3, b4, b6, b7 | `0x00`                                                                |
 | **b5**         | **`0x00` (10 381 041) · `0x80` (3 688 953 = 26.2 %)**                 |
 
-Two results beyond b5 itself. `b2` now takes four values rather than the three `can-decode-findings.md` recorded (`0x01` is the `btn_set_back` press of 2026-08-19). And **`DBS LIGHT SENS CALIB STS` — b2 bit 4 — has never been set once**, which is expected for a service-tool calibration state but is now a measured never rather than an unexamined one. **Only bit 7 of b5 has ever moved**; the other seven bits of that byte are dead.
+Two results beyond b5 itself. `b2` now takes four values rather than the three `can-decode-findings.md` recorded (`0x01` is the `btn_set_back` press of 2026-08-19). And **`DBS LIGHT SENS CALIB STS` — b2 bit 4 — has never been set once**, which is expected for a diagnostic calibration state but is now a measured never rather than an unexamined one. **Only bit 7 of b5 has ever moved**; the other seven bits of that byte are dead.
 
 ## 3. The clock, which has to come before any claim about time of day
 
@@ -117,11 +117,11 @@ The archive is not in the repo, so none of the above is a CI check — it is pro
 
 ## ⚠️ The cluster firmware's `0x400` packer contradicts this bus
 
-Added 2026-09-15 from the COBO cluster disassembly (#224). **No decoder changes** — everything above is measured off the bus and stands on its own. This is a provenance problem, not a decode problem.
+Added 2026-09-15 from the cluster firmware (#224). **No decoder changes** — everything above is measured off the bus and stands on its own. This is a provenance problem, not a decode problem.
 
 The packer at `0x000526A8`-`0x0005278C` builds `0x400` from a shadow block at `r13-0x7460 … -0x7468`, whose single writer is `0x000729E0`. What it writes, against the archive:
 
-| wire byte | the firmware writes | the bus, **2 108 672 frames** over 5 boots |
+| wire byte | the cluster firmware writes | the bus, **2 108 672 frames** over 5 boots |
 | --- | --- | --- |
 | b0 | a **rolling counter, `0 … 0x1D` then reset** (`0x72A44`-`0x72A54`) | `0x02` — **one distinct value** |
 | b1 | `0x6F` (low half of `li r0, 0xb6f`) | `0x01` — one distinct value |
@@ -132,10 +132,10 @@ The packer at `0x000526A8`-`0x0005278C` builds `0x400` from a shadow block at `r
 | b5 bits 0-6 | a variable | always 0 |
 | b6-b7 | a variable u16 | always 0 |
 
-Four of eight bytes disagree, and **a 0-29 counter reading `0x02` in 2.1 million frames is a much harder contradiction than two constants differing**. All three firmware images are structurally identical here; only the literal differs (`0xEC` against `0xE9`, which look like build numbers). So **none of the three builds we hold produces what this bus carries.**
+Four of eight bytes disagree, and **a 0-29 counter reading `0x02` in 2.1 million frames is a much harder contradiction than two constants differing**. All three cluster firmware builds are structurally identical here; only the literal differs (`0xEC` against `0xE9`, which look like build numbers). So **none of those three builds produces what this bus carries.**
 
 ❌ **"The cluster's `0x400` is switched off by configuration" — considered and REFUTED.** Each of the cluster's eight transmits is gated on its own byte, which looks like an enable flag; it is not. The scheduler **clears** the byte after a successful send and reloads a period (`0x0005279C` for `0x400`, `0x00052CD4` for `0x412`), so it is a transmit-request latch that a producer sets. It cannot express "this frame is disabled on this bike".
 
-That leaves the two candidates #224 started with, unresolved: the bike runs a **fourth build**, or **`0x400` on this bus is not the cluster's at all**. The 2026-09-15 probe of the cluster's diagnostic channel ([can-0x7c4.md](can-0x7c4.md)) is a mild point against the fourth build — the running dispatcher matches ours exactly — but all three images share that dispatcher, so it does not settle it.
+That leaves the two candidates #224 started with, unresolved: the bike runs a **fourth build**, or **`0x400` on this bus is not the cluster's at all**. The 2026-09-15 probe of the cluster's diagnostic channel ([can-0x7c4.md](can-0x7c4.md)) is a mild point against the fourth build — the running dispatcher matches the cluster firmware's dispatcher exactly — but all three builds share that dispatcher, so it does not settle it.
 
-⚠️ Consequently, treat the firmware's b5 bit 7 as **weak corroboration of this document's flag, not confirmation**. If `0x400` here is another node's frame, a one-bit day/night flag landing at the same bit position is a coincidence. What holds the flag up is the 14 069 994-frame census above, which does not depend on the firmware at all.
+⚠️ Consequently, treat b5 bit 7 in the cluster firmware as **weak corroboration of this document's flag, not confirmation**. If `0x400` here is another node's frame, a one-bit day/night flag landing at the same bit position is a coincidence. What holds the flag up is the 14 069 994-frame census above, which does not depend on that firmware at all.

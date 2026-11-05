@@ -98,7 +98,7 @@ const FIRMWARE_TABLE: readonly { index: number; type: ParameterStorageType; know
     index: 278,
     type: "DWORD",
     known:
-      "one of the two odometer-master cells the manufacturer's service tool writes in its odometer-change " +
+      "one of the two odometer-master cells written by Energica's odometer-change " +
       "action, as a 32-bit value followed by an ECU reset — which half is which is NOT established. Answered a " +
       "7-byte reply on 2026-09-14, consistent with the 4-byte record. This project reads them and never writes them",
   },
@@ -142,14 +142,14 @@ const FIRMWARE_TABLE: readonly { index: number; type: ParameterStorageType; know
     index: 1006,
     type: "WORD",
     known:
-      "one of the only two identifiers the manufacturer's service tool was ever captured WRITING (2026-08-08): it " +
+      "one of the only two identifiers ever captured WRITING (2026-08-08): the sender " +
       "read this one back as 0x9380 and wrote the same value, which reads more like a handshake than a tuning " +
       "change. Read-only from here",
   },
   {
     index: 1007,
     type: "WORD",
-    known: "the other one the service tool wrote, 0x29C2, in the same 2026-08-08 capture. Read-only from here",
+    known: "the other one written, 0x29C2, in the same 2026-08-08 capture. Read-only from here",
   },
 ];
 
@@ -163,7 +163,7 @@ const FIRMWARE_TABLE: readonly { index: number; type: ParameterStorageType; know
 function serviceStampKnown(half: string): string {
   return (
     `${half} of the last-service stamp — value = (high << 16) | low, the date a count of seconds since ` +
-    "2000-01-01 UTC, decompiled from the manufacturer's service tool and live-confirmed on 2026-09-08 " +
+    "2000-01-01 UTC, from Energica's definitions and live-confirmed on 2026-09-08 " +
     "(all four answered two bytes, all zero). Written only by the service-point routine, never by a parameter write"
   );
 }

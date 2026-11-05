@@ -100,7 +100,7 @@ function FaultCard(fault) {
 }
 
 /**
- * Three-way, not a boolean: the six codes that reach us from the service-tool
+ * Three-way, not a boolean: the six codes that reach us from the manufacturer
  * data alone have no MIL column in any source, and "no" would be an answer we
  * do not have. Same distinction `rank()` sorts on below.
  * @param {boolean | null} illuminatesMil

@@ -110,7 +110,7 @@ const TARGET_ADDRESS: Record<VcuTarget, number> = { A8: 0xa8, A9: 0xa9 };
  * Which 11-bit CAN ids each target speaks on.
  *
  * Both micros share one pair and differ only by the address byte. Live since
- * 2026-08-08. Nothing else may be added here without a decompile or a capture behind
+ * 2026-08-08. Nothing else may be added here without a definition or capture behind
  * it — see the removal note above for what happens when a pair is written down from
  * a plausible guess.
  */
@@ -410,9 +410,9 @@ export const NAME_TABLE = "the name table";
  *
  * ⚠️ It names WHICH width it contradicts, and that is the whole reason it is shared rather
  * than written at each surface: the name table's TYPE column has 233 live records behind
- * it, so a mismatch against it means the framing is wrong; A8's firmware table has one
- * disassembly behind it, so a mismatch against that is at least as likely to mean the
- * firmware image is not what is flashed. Same withheld value, very different thing to go
+ * it, so a mismatch against it means the framing is wrong; A8's widths use one build
+ * of its firmware, so a mismatch is at least as likely to mean that
+ * firmware does not match what is flashed. Same withheld value, very different thing to go
  * and look at. docs/vcu-parameters.md §2.
  */
 export function describeWidthMismatch(recordLength: number, encoding: RecordEncoding): string {

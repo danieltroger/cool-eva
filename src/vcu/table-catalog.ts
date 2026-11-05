@@ -35,7 +35,7 @@ import { PARAMETER_TABLE_DELTAS } from "./table-catalog.data.ts";
 export interface ParameterTableDelta {
   /**
    * The number the VCU reports at parameters 276/277, and the `_<TABLE_TYPE>` resource
-   * name inside the service-tool executable.
+   * name in the definition bundle.
    */
   tableType: number;
   /** Energica's `yyyyMMddHHmm` export stamp for the bundle. Provenance, and how two builds' copies are compared. */
@@ -64,7 +64,7 @@ export interface VcuParameterTable {
  */
 export const BASE_TABLE_TYPE = 16406;
 
-/** Every `TABLE_TYPE` this software can describe a bike with, ascending. 28 in the 2024 service-tool build. */
+/** Every `TABLE_TYPE` this software can describe a bike with, ascending. 28 in the 2024 definitions. */
 export const KNOWN_TABLE_TYPES: readonly number[] = PARAMETER_TABLE_DELTAS.map(delta => delta.tableType).sort(
   (left, right) => left - right
 );
@@ -233,7 +233,7 @@ export function buildParameterTable(delta: ParameterTableDelta): VcuParameterTab
       `table-catalog: rebuilding table ${delta.tableType} from params.ecf plus its delta gives fingerprint ` +
         `${rebuilt}, but src/vcu/table-catalog.data.ts records ${delta.fingerprint} for it. The delta and the ` +
         "params.ecf text in src/vcu/param-file.ts no longer agree, so every NAME this table would give is a " +
-        "guess. Regenerate with `node --experimental-strip-types scripts/extract-vcu-tables.ts <service-tool.exe>`."
+        "guess. Regenerate with `node --experimental-strip-types scripts/extract-vcu-tables.ts <definitions.bin>`."
     );
   }
   return {

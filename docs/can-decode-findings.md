@@ -58,7 +58,7 @@ The other six bytes read all-zero across the whole capture. The `.xdbc` splits t
 
 ✅ **The 0.1 Nm scale has THREE independent sources**, which is unusual here and worth stating:
 
-1. **Energica states it outright.** Their own telemetry-scaling table carries `94 D_TRQ_CMD int16_t f(x)=x*0.1 Nm` and `95 D_TRQ_FEED int16_t f(x)=x*0.1 Nm` — an explicit unit column, not an inference. (`FramesDB` itself carries no scalings at all; the two files have to be read together. See the 2024 service-tool analysis in `obd-garage/`, §6.0.)
+1. **Energica states it outright.** Their own telemetry-scaling table carries `94 D_TRQ_CMD int16_t f(x)=x*0.1 Nm` and `95 D_TRQ_FEED int16_t f(x)=x*0.1 Nm` — an explicit unit column, not an inference. (The frame definitions carry no scalings; the scaling table must be read alongside them.)
 2. **The factory Optionals** write `MAP1_TORQUE` = 2000 and 2150 for this platform's published 200 Nm and 215 Nm peaks — 0.1 Nm per count from a completely separate document.
 3. **The capture rules out the neighbouring scales on physics alone.** Peak feedback was 482 counts. At ×1 that is 482 Nm, more than twice the motor's rated peak; and comparing mechanical power (torque × 0x104 motor rpm) against electrical pack power over the lap gives a ratio of 0.60 at >100 rpm and 0.85 at >250 rpm — losses dominating at walking pace, exactly as expected. At ×1 that ratio would be 6.0-8.5, a motor producing eight times more power than it consumes; at ×0.01 it would be 0.06, a 6 % efficient drive. Only ×0.1 lands anywhere physical.
 
@@ -104,7 +104,7 @@ Verified in Grafana 11.3 at `insertNulls: 20000, spanNulls: false`: at a 2-minut
 
 `src/can/abs.ts`. The ABS module's broadcast at 10 Hz: wheel speeds, the ABS warning lamp, front brake pressure — a quantity nothing else on this bus carries, and the reason this frame was worth chasing — and six flags.
 
-Layout is Energica's own, out of the `FramesDB.ParseABS_INFO` handler (the 2024 service-tool analysis in `obd-garage/`, §`0x0A0` `ABS_INFO`). All ten signals it names are decoded:
+Layout is from Energica's own frame definitions. All ten signals it names are decoded:
 
 ```
 b0-1 LE  A_F_SPD_SENS   front wheel speed
@@ -129,7 +129,7 @@ Consequence for everything below: a flag that has never been seen set cannot be 
 
 ### Why the flags read through `bit()` and not the vendor's masks
 
-The six flags read through `bit()` rather than the vendor's masks written literally (`data[4] & 0x10`), which would yield 16 rather than 1. That is not a hypothetical slip: it is the exact mistake `public/lib/bounds.js` gates the boolean groups against after `high_beam` once logged 193, and a flag arriving as 16 would be rejected as a dead sensor rather than shown. The vendor mask is named in the comment beside each so the bit index can still be checked against `ParseABS_INFO` at a glance.
+The six flags read through `bit()` rather than the vendor's masks written literally (`data[4] & 0x10`), which would yield 16 rather than 1. That is not a hypothetical slip: it is the exact mistake `public/lib/bounds.js` gates the boolean groups against after `high_beam` once logged 193, and a flag arriving as 16 would be rejected as a dead sensor rather than shown. The vendor mask is named in the comment beside each so the bit index can still be checked against Energica's ABS definition at a glance.
 
 **b6 keeps its own length guard** so that the four signals logged since 2026-08-16 cannot be silenced by a short frame on account of these three — the same arrangement 0x109's throttle and 0x660's offset pair already use. Every one of the 565 376 frames on disk is DLC 8, so this branch has never yet been the false one; it is there because a truncated frame decoding b6 out of CAN padding would report "pressure invalid, no channel active", which reads as a healthy answer rather than as a missing byte.
 
@@ -230,7 +230,7 @@ Two consequences are handled elsewhere and are worth knowing about here: `public
 
 ### The six flags, and exactly how much each one is worth
 
-Added 2026-08-19, completing the ten signals `ParseABS_INFO` names. Three of them have been watched firing; three never have. That split is the whole content of this section, and it is kept explicit because "reads 0" means something completely different in the two cases.
+Added 2026-08-19, completing the ten signals Energica's ABS definition names. Three of them have been watched firing; three never have. That split is the whole content of this section, and it is kept explicit because "reads 0" means something completely different in the two cases.
 
 ⚠️ **Rewritten 2026-08-20 against a corpus 12× larger, and it overturned three claims that stood here.** The five captures above were the five that had been LOOKED at, not the five that exist. Re-scanning every `*.log` and `*.txt` in the archive — 245 files, **565 376 frames of 0x0A0** — finds interventions in **15 distinct captures**, not two. What changed:
 
@@ -352,7 +352,7 @@ That is real but it is **four times smaller** than the "10-20 km/h over" this bi
 
 `src/can/vcu-flags.ts`. The VCU's error and status bitfield at 10 Hz.
 
-Energica's `FramesDB.ParseVCU_VEHICLE_FLAGS` names all 64 bits of it — byte 0 bit 0 through byte 7 bit 7, one named flag each, no multi-byte fields at all (the 2024 service-tool analysis in `obd-garage/`, §`0x100` `VCU_VEHICLE_FLAGS`). That makes it the VCU's counterpart to the BMS's own error/warning words on 0x201, and it is handled the same way this repo already handles those: log the raw words so no flag can ever be lost, then break out only the ones worth an alert.
+Energica's own frame definitions name all 64 bits of it — byte 0 bit 0 through byte 7 bit 7, one named flag each, no multi-byte fields at all. That makes it the VCU's counterpart to the BMS's own error/warning words on 0x201, and it is handled the same way this repo already handles those: log the raw words so no flag can ever be lost, then break out only the ones worth an alert.
 
 **The reason it is worth having at all is `ERR_ChargeCM_Out`, byte 7 bit 1** — a rollup of charge-manager faults, which matters directly to the open question of why DC fast charging caps below the bike's advertised 75 A.
 
@@ -437,7 +437,7 @@ b2 bit 1 vs b0 bit 7 (low beam):   1 103 000 / 1 103 000 agree, 0 disagreements
 
 Not an artefact of both being nearly constant, because the cross-pairs fall apart: b2 bit 0 against b0 bit 7 agrees only **49.35 %** of the time. And `charging` reads 0 through every real charge in the corpus — four AC sessions including 48 minutes at 14 A, plus the DC session — while the bit it does track is the flash-to-pass.
 
-Energica's own VCU digital list, recovered from the service-tool executable, names both families and separates them exactly the way this frame does:
+Energica's own VCU digital list names both families and separates them exactly the way this frame does:
 
 ```
 V_HIGH_BEAM_SW, V_LOW_BEAM_SW, V_L_TURN_SW, V_R_TURN_SW …   ← the switches
@@ -518,7 +518,7 @@ Nothing about "a bit toggles" forces that pattern; it is what a speed-locked men
 18:04:46.005  ▶ held 809 ms
 ```
 
-Speed decays 87.9 → 83.6 km/h until 18:04:45.4, then climbs back and sits at 85.5-86.2 km/h for the rest of the window. ▶ is pressed only while cruise is armed, in long holds rather than taps, at a speed where the menu it otherwise drives is unreachable — the menu is stationary-only, > 3 km/h exits it (`obd-garage/CAN_MAP.md` §Connectivity). The owner confirms he was working the cruise control. One arming event, so this is the best explanation rather than a settled second key function; a second armed ride watching this bit closes it.
+Speed decays 87.9 → 83.6 km/h until 18:04:45.4, then climbs back and sits at 85.5-86.2 km/h for the rest of the window. ▶ is pressed only while cruise is armed, in long holds rather than taps, at a speed where the menu it otherwise drives is unreachable — the menu is stationary-only, > 3 km/h exits it. The owner confirms he was working the cruise control. One arming event, so this is the best explanation rather than a settled second key function; a second armed ride watching this bit closes it.
 
 **2. Held 191.2 s from 2026-08-04 21:00:31.712 while the bike was AC charging** — something resting on the button, not a press. In `capture-20260804-210015-b406ea70.log`, across the whole 191 s NOTHING else on the bars moves: mode ◀ and ENTER, both indicator switches, cancel, high beam, horn, both brakes, SET|BACK and both cruise buttons record zero transitions each, and the bike is stationary. Then 0.1 s after the bit releases, six ordinary presses land within 1.7 s (170, 170, 170, 30, 120, 150 ms) — someone lifting the object off and carrying straight on. The owner's account is that his jacket lay on the bar while the bike charged unattended, which is what this looks like; the measurement shows an object, not which object.
 
@@ -647,7 +647,7 @@ b6-7 LE int16 = pitch, Energica's AttitudeSensor_Thete.  Positive = nose-down, i
 
 ✅ **Four independent things establish that**, all from stored data — the bike itself was not touched, it was out of reach for about a week from 2026-08-15.
 
-1. **The bytes match Energica's own block.** The parked side-stand capture of 2026-08-02, `80 10 02 44 99 FF D8 FF`, has b4-5 = 0xFF99 = **−103**. The KWP dump of 2026-06-14 (`obd-garage/kwp_scan_raw.txt`) reads A9 bank 2 id 0x8A — `AttitudeSensor_Phi` — as the _same bytes_, `ff99` = −103. That same block's gravity vector (Gx 53, Gy −179, Gz 982 mg, |G| = 999.6 mg) independently gives atan2(Gy, Gz) = **−10.33°**. So −103 is −10.3° of roll: the bike leaning left on its side stand, which is where it was.
+1. **The bytes match Energica's own block.** The parked side-stand capture of 2026-08-02, `80 10 02 44 99 FF D8 FF`, has b4-5 = 0xFF99 = **−103**. The KWP dump of 2026-06-14 reads A9 bank 2 id 0x8A — `AttitudeSensor_Phi` — as the _same bytes_, `ff99` = −103. That same block's gravity vector (Gx 53, Gy −179, Gz 982 mg, |G| = 999.6 mg) independently gives atan2(Gy, Gz) = **−10.33°**. So −103 is −10.3° of roll: the bike leaning left on its side stand, which is where it was.
 2. **The values lie on an arctangent lattice.** Across the 15 455 rows logged under the old keys the pair only ever takes values whose spacing SHRINKS with magnitude — ~5.7 apart near zero, ~3.4 apart near 400. A count scaled by a constant cannot do that; round(A·atan(k·q)) does exactly that. Fitting A and q freely over the 80 distinct positive values gives **A = 576.9 units per radian**, against 572.958 for 0.1°/radian — 0.7 % off, and a factor of ten away from either 1° or 0.01°.
 3. **Roll tracks the side stand and nothing else.** Median −10.8° with the stand down (`stand_up` = 0), −0.6° with it up and the bike moving, and — outside the one 230 ms transient described below — it never left ±17.9° across the other 488 of its 494 moving samples, on rides that reached 186 km/h. A _true_ lean angle would pass 30° on any roundabout. A gravity-referenced one reads ≈ 0 in a steady corner, because the bike leans into the resultant — which is what this does.
 4. **Pitch tracks longitudinal acceleration, and gives the sign convention:** median +13.1° while the brake bit is set against −5.2° while it is not, +9.2° at closed throttle (regen) and −12.5° above 25 % throttle. Same apparent-vertical effect on the other axis.
@@ -702,7 +702,7 @@ attitude_pitch_deg   3 782 692 rows    −86.0 …  +85.4       0 rows beyond ±
 
 A pitch taken as the angle of one axis against the magnitude of the other two is bounded by ±90 **by construction**; a roll taken as an `atan2` of two is not. That asymmetry is the aerospace convention showing through 4.9 M samples, with no experiment at all. The fall then demonstrates the same thing directly: the axis that reaches 90° when the bike goes over is b4-5, and pitch never leaves ±52° across the whole event. Of the 22 roll rows beyond ±90 in the corpus, **seven are this fall** — and it is the only event in 1 120 961 rows where the angle crosses 45° and stays there. Every other one is a 40-60 ms wrap spike.
 
-✅ **A fifth witness, from the manufacturer's own FRAME database rather than its parameter list.** Everything above was reached through KWP parameter reads (A9 bank 2 ids 138/139). The 2024 service-tool analysis in `obd-garage/`, §`0x102` `VCU_DIGITALS` — 34 signals — ends verbatim with:
+✅ **A fifth witness, from Energica's own frame definitions rather than its parameter list.** Everything above was reached through KWP parameter reads (A9 bank 2 ids 138/139). Energica's own `0x102` `VCU_DIGITALS` frame definitions — 34 signals — include verbatim:
 
 ```
 | V_PHI   | short | bytes 4..5 LE |
@@ -792,7 +792,7 @@ The decoded ride log put that sustained run at 5.158 s; the raw frames put it at
 
 ### ✅ The field boundaries, re-cut 2026-09-14 — and no logged value moved
 
-The layout was `odometer u32 · speed u13 at bit 32 · rpm u15 at bit 45 ×1 · a "u3 at bits 60-62" · bit 63`. Three of those are wrong, and the manufacturer's own frame database says so — it gives `0x104 VCU_SPEEDODO` exactly four signals: `V_ODOMETER` (bytes 0-3), `V_REAL_SPEED` (bytes 4-5), `V_TACHO_OUT` (byte 7 mask 0x40) and `V_SPD_DIR` (byte 7 mask 0x80). The corrected cut:
+The layout was `odometer u32 · speed u13 at bit 32 · rpm u15 at bit 45 ×1 · a "u3 at bits 60-62" · bit 63`. Three of those are wrong, and Energica's own frame definitions say so — they give `0x104 VCU_SPEEDODO` exactly four signals: `V_ODOMETER` (bytes 0-3), `V_REAL_SPEED` (bytes 4-5), `V_TACHO_OUT` (byte 7 mask 0x40) and `V_SPD_DIR` (byte 7 mask 0x80). The corrected cut:
 
 | bits  | field                                 | key                 |
 | ----- | ------------------------------------- | ------------------- |
@@ -856,11 +856,11 @@ Measured 2026-09-08 with the bike connected, reverse selected deliberately twice
 
 A 1 Hz sampler would have seen that longest one set on seventeen consecutive samples. So the pulse SHAPE is the common case rather than the rule, and the consequence drawn from it — that a sampling consumer cannot see the bit — does not hold.
 
-✅ **And it now has a name and a mechanism.** The 2024 service-tool analysis in `obd-garage/`, §`0x104` `VCU_SPEEDODO`, gives the field verbatim as `V_SPD_DIR | byte | byte 7 mask 0x80 >>7` — which is bit 63 exactly, the bit `src/can/decode.ts` emits as `reverse_gear`. **Energica calls it speed direction.** The key name is therefore wrong: it is not a gear. It is left alone here rather than renamed, because a rename is a history migration (the `accel_*_raw` and `charging` precedents) and belongs in its own change.
+✅ **And it now has a name and a mechanism.** Energica's own `0x104` `VCU_SPEEDODO` frame definition gives the field verbatim as `V_SPD_DIR | byte | byte 7 mask 0x80 >>7` — which is bit 63 exactly, the bit `src/can/decode.ts` emits as `reverse_gear`. **Energica calls it speed direction.** The key name is therefore wrong: it is not a gear. It is left alone here rather than renamed, because a rename is a history migration (the `accel_*_raw` and `charging` precedents) and belongs in its own change.
 
-✅ **Reported by #216 and since verified against the A8 image and a second reviewer (2026-09-14):** a firmware read of the A8, over 681 458 raw `0x104` frames, gives the bit as `(signed D_MOTOR_SPD from 0x025 < 0)` gated by a **±500-count (~0.5 km/h) deadband with no hysteresis**. That is attributed rather than reproduced — this document has not read that firmware, and CLAUDE.md's rule is to cite source you have read.
+✅ **Reported by #216 and since checked against the A8 firmware and a second reviewer (2026-09-14):** that firmware, considered alongside 681 458 raw `0x104` frames, gives the bit as `(signed D_MOTOR_SPD from 0x025 < 0)` gated by a **±500-count (~0.5 km/h) deadband with no hysteresis**. That is attributed rather than reproduced — this document has not checked that firmware, and CLAUDE.md's rule is to cite source you have read.
 
-✅ **What this corpus does independently corroborate** is the consequence, which is a sharper test than it sounds. A hysteresis-free comparator on a bike creeping across ±0.5 km/h at 100 Hz predicts short runs in _both_ directions; #216 predicts median 30 ms high and 50 ms low from the firmware; the table above, measured from the ride log with no knowledge of that, gives **30 ms and 40 ms**. It also explains the two numbers this document could not: the rising edges cluster at walking pace because the threshold is at walking pace — median `speed_can_kmh` **0.3 km/h**, p95 0.9, max **1.2**, and **0 of 240 above 4.5** — which reproduces §12's median 0.4 / p95 0.7 / never-above-4.1 on a seventh day and a corpus neither earlier analysis used. It strengthens to a form neither had: **never above 4.9 km/h at any moment while set**, not merely at the rise.
+✅ **What this corpus does independently corroborate** is the consequence, which is a sharper test than it sounds. A hysteresis-free comparator on a bike creeping across ±0.5 km/h at 100 Hz predicts short runs in _both_ directions; #216 predicts median 30 ms high and 50 ms low from that firmware; the table above, measured from the ride log with no knowledge of that, gives **30 ms and 40 ms**. It also explains the two numbers this document could not: the rising edges cluster at walking pace because the threshold is at walking pace — median `speed_can_kmh` **0.3 km/h**, p95 0.9, max **1.2**, and **0 of 240 above 4.5** — which reproduces §12's median 0.4 / p95 0.7 / never-above-4.1 on a seventh day and a corpus neither earlier analysis used. It strengthens to a form neither had: **never above 4.9 km/h at any moment while set**, not merely at the rise.
 
 ⚠️ **The polarity is still not established from anything in this repo.** The vendor table names the field and gives no sense; `speed_can_kmh` and `motor_rpm_can` are both unsigned, so no witness in the ride log can tell "travelling backwards" from "travelling forwards" directly. #216's firmware condition implies 1 = reverse, and the observed confinement to ≤ 4.9 km/h is consistent with it, but consistency is not a measurement of direction.
 
@@ -939,7 +939,7 @@ Both track their PIDs to within ~1-2 % across the lap, which fixed speed as a **
 
 Removed 2026-08-20. The `.xdbc`'s unidentified "Current other" gave 153.8 A parked under that scaling. Read as a u16 it produces **5069.0 A in 490 165 frames of one capture alone**, which is an order of magnitude past anything this pack can deliver, and it takes a handful of discrete values rather than varying the way a measured current does. The name came off the `.xdbc`, a rider's file — the same source that gave 0x102 `charging` when the bit was the high beam.
 
-Energica's own `FramesDB.ParseVCU_DRIVEBYWIRE` (the 2024 service-tool analysis in `obd-garage/`, §`0x109` `VCU_DRIVEBYWIRE`) says **b6 is a bitfield**:
+Energica's own `0x109` `VCU_DRIVEBYWIRE` frame definition says **b6 is a bitfield**:
 
 ```
 bit0     V_MAP_CHANGING
@@ -966,7 +966,7 @@ b6 takes only 0x02, 0x42 and 0x82 in these captures, i.e. ride map 1 throughout 
 
 ## 0x10B — `VCU_VEHICLE_CONSUMPTION`
 
-`src/can/consumption.ts`. 10 Hz. Layout is Energica's, from `FramesDB.ParseVCU_VEHICLE_CONSUMPTION` (the 2024 service-tool analysis in `obd-garage/`, §`0x10B`):
+`src/can/consumption.ts`. 10 Hz. Layout is from Energica's own frame definitions:
 
 ```
 b0-1 LE u16  V_INST_KM_KWH        instantaneous, km/kWh
@@ -1027,7 +1027,7 @@ The bike's TFT lets the rider pick a DC fast-charge current on the charging scre
 
 |  |  |
 | --- | --- |
-| **the CEILING** | VCU calibration parameter 258 `MAX_DC_CHG_CURRENT`, 75 on this bike. Changed only with the manufacturer's service tool, which sells it as the "Fast Charge 60/75/80 Amps" options — all three write this one byte. |
+| **the CEILING** | VCU calibration parameter 258 `MAX_DC_CHG_CURRENT`, 75 on this bike. Changed only through manufacturer calibration, offered as the "Fast Charge 60/75/80 Amps" options — all three write this one byte. |
 | **the SETTING** | what the rider actually dialled in, ≤ the ceiling. This frame. |
 
 **The setting is not a calibration parameter.** All 277 rows of this bike's own VCU parameter export were searched and there is no second charge-current entry — 258 is the only one, and the `[EVSE]` block's spare slots (`EE_EVSE_DUMMY_1/2/3`, `EVSE_DUMMY_WORD4`) all read 0. The same holds across all 28 of Energica's parameter tables, and none of the 120 telemetry infokeys is a charge-current setpoint either. So WHERE the bike keeps it is not known — only that 0x121 is the one place it is ever stated on this bus. Whether it survives a power cycle is an open question; see the event note below.
@@ -1066,7 +1066,7 @@ From the archive, 10 DC sessions (0x645 present) and 8 AC ones:
 
 - Over the 15 plateaus that follow an event — **53 268 samples** — the current NEVER ONCE exceeded the commanded setpoint. **100.000 %.** 🟡 Read this as the request never exceeding the setpoint unless the samples are known to come from `0x200`; see the relabelling note above.
 
-**Dialling UP is not obeyed the same way, and that is the point of having the signal:** set 75 and the current stops at 66, 73, 53 or 36 depending on the session. Something else is binding (station envelope, VCU pack-temperature derate — see `obd-garage/DC_CHARGE_LIMITS.md`). So this signal answers "did I cap it myself?", which is exactly the question that was unanswerable while the two numbers were conflated.
+**Dialling UP is not obeyed the same way, and that is the point of having the signal:** set 75 and the current stops at 66, 73, 53 or 36 depending on the session. Something else is binding (station envelope, VCU pack-temperature derate). So this signal answers "did I cap it myself?", which is exactly the question that was unanswerable while the two numbers were conflated.
 
 **The AC twin (0x1A)** is decoded far enough to be rejected, and deliberately emits nothing: `charge_limit_a` already carries the AC setting continuously off 0x10A b7 ÷ 7. The 0x1A events are what **CONFIRM that ÷ 7 scale** — on 2026-08-08 23:49:59 a commanded 9 A put 0x10A b7 at 63 within 0.09 s, and 8 A put it at 56 — so the two agree to the amp and there is no reason to log the same number twice.
 
@@ -1105,7 +1105,7 @@ fast_dc_limit_a             0x620 b0  the limit in force this second, 0…75 in 
 
 ## 0x125 / 0x127 — redundant road speed and the throttle position sensor
 
-`src/can/drive.ts`. Neither is in Energica's `FramesDB`; both are settled by the capture alone.
+`src/can/drive.ts`. Neither is in Energica's frame definitions; both are settled by the capture alone.
 
 ### 0x127 — the dual throttle position sensor, 4 Hz
 
@@ -1138,7 +1138,7 @@ Still not converted to km/h, and now **for a better reason than "no scale is kno
 
 ## 0x200 / 0x660 — pack temperature, and the clamp
 
-`src/can/decode-bms.ts` and `src/can/pack-temperature.ts`. The BMS layouts are **not** reverse-engineered: they were read out of the bike's decrypted BMS configuration file (`stockconfig_eva_ribelle_2021.bms`) cross-referenced with the memory map and flag tables in the LiBAL Application Engineering Manual. Where that disagreed with notes taken off the wire, the config wins — see the "Corrections" section of `obd-garage/CAN_MAP.md`. Everything the BMS sends is big-endian except 0x207 and 0x300, which the config marks little-endian. 0x660-0x665 only exist once the extended config is flashed; until then they simply never arrive.
+`src/can/decode-bms.ts` and `src/can/pack-temperature.ts`. The BMS layouts are **not** reverse-engineered: they were read out of the bike's decrypted BMS configuration file (`stockconfig_eva_ribelle_2021.bms`) cross-referenced with the memory map and flag tables in the LiBAL Application Engineering Manual. Where that disagreed with notes taken off the wire, the config wins. Everything the BMS sends is big-endian except 0x207 and 0x300, which the config marks little-endian. 0x660-0x665 only exist once the extended config is flashed; until then they simply never arrive.
 
 ### Why 0x200 b0/b3 are `batt_temp_*_vcu` and not `batt_temp_*`
 
@@ -1156,7 +1156,7 @@ What they mean depends on which BMS config is flashed. The VCU derates DC chargi
 
 Under the archived 15 configuration the difference `batt_temp_hi − batt_temp_hi_vcu` is 0 below 35 °C, `(true − 35)` from 35 to 54 °C, and 0 again from 55 °C up. **A constant 15 is the one thing it is NOT**, and it is not even monotonic in temperature. Do not treat any particular difference as a health check. See the guide for [17's selected floor](bms-config.md#clamp-behavior); these measurements describe 15.
 
-**The upper bound exists because the VCU enters limp mode at 55 °C** (`LIMP_B_TEMP` = 55 in the A9 parameter block — `obd-garage/DC_CHARGE_LIMITS.md` §7 puts it plainly: pinned at 35, the unbounded clamp does not delay that protection, it **disables** it). Not hypothetical: this bike's own log has the pack at a true 55 °C on 2026-08-08 13:45 UTC with `clamp_amount` = 20 and `batt_temp_hi_vcu` last logged at 35.
+**The upper bound exists because the VCU enters limp mode at 55 °C** (`LIMP_B_TEMP` = 55 in the A9 parameter block — put plainly: pinned at 35, the unbounded clamp does not delay that protection, it **disables** it). Not hypothetical: this bike's own log has the pack at a true 55 °C on 2026-08-08 13:45 UTC with `clamp_amount` = 20 and `batt_temp_hi_vcu` last logged at 35.
 
 So these bytes are always "what the VCU and the dash see", which is honest under every config; the true temperature comes from 0x660 when one of these is loaded. Measured 2026-08-02 under the retired flat-offset config: 0x200 reported 13/14 °C while 0x660 b3/b4 reported 28/29 °C. Measured 2026-08-04 under the clamp: 0x200 reported 35/35 while 0x660 b3/b4 reported 36/36.
 
@@ -1283,7 +1283,7 @@ Re-measured 2026-09-08 over **14 069 994 frames across 97 candump captures** —
 
 **b5 bit 7 is the dashboard's day/night flag**, decoded since 2026-09-08 as `dash_day_mode` and no longer "a slow mode flag" — it is what the phone dashboard's light theme follows. It tracks ambient light at the bike, not the beam and not the clock. **`docs/can-0x400-day-night.md`** has the census, the beam cross-tab, the garage traces, the flap rate and the three open questions — including why more than half the archive's timestamps cannot be trusted at all, which is a finding about the whole corpus rather than about this bit.
 
-⚠️ **The bit NAMES are Energica's, not ours:** they come from a free-frame IO table inside the service-tool executable (`obd-garage/HEATED_GRIPS.md` §3.0), and that table describes every model the tool serves rather than this one. **A name off a table is not a measurement** — the `charging` key on 0x102 b2 bit 0 came off a third-party table the same way and is really the high beam. So each bit carries what the captures show about it, separately, and the ones the captures cannot speak to say so.
+⚠️ **The bit NAMES are Energica's, not ours:** they come from Energica's own free-frame IO table, which describes the model range rather than this one. **A name off a table is not a measurement** — the `charging` key on 0x102 b2 bit 0 came off a third-party table the same way and is really the high beam. So each bit carries what the captures show about it, separately, and the ones the captures cannot speak to say so.
 
 **bit 0, `BUTTON [SET|BACK] (LeftBack)`.** ✅ SEEN AT LAST, 2026-08-19: eight presses at 18:31:51-53, 120-160 ms each, one payload (`02 01 01 00 00 00 00 00`) in 132 frames. Until that afternoon it had never been set in one frame of the 1.1 M, and was decoded on the vendor table's word alone. The bit is now real and is where the table said. **What is STILL the table's word is what it DOES:** the owner pressed "the button below the high beam flash" on the left pod, and a press parked produces nothing visible, so `SET|BACK` as a FUNCTION remains unverified — only the bit's existence and its pod position are measured.
 
@@ -1293,7 +1293,7 @@ Re-measured 2026-09-08 over **14 069 994 frames across 97 candump captures** —
 
 **bit 2, cruise SET SPEED.** ✅ CONFIRMED by context. ⚠️ "Exactly once" is again the 14-capture corpus: the whole archive has **78 presses, median 1.198 s, 38 of them over 1.2 s**, so a long press is this button's normal length — which is why the tab gesture pairs RISING edges and not releases. The identifying press is 2026-08-04 18:04:45.055 for 1.794 s — 2.8 s after cruise was armed, at a steady 87.6 km/h, after which speed held 89-91 km/h for the remaining 45 s of the arming. That is what setting a cruise speed looks like, and there is no other press anywhere in 1.1 M frames to compete.
 
-**b2 bit 4, `DBS LIGHT SENS CALIB STS`.** ❓ Never set in 14 069 994 frames. Expected — it is a service-tool calibration state — but now a measured never rather than an unexamined one. Not decoded.
+**b2 bit 4, `DBS LIGHT SENS CALIB STS`.** ❓ Never set in 14 069 994 frames. Expected — it is a diagnostic calibration state — but now a measured never rather than an unexamined one. Not decoded.
 
 **bit 3, `BUTTON [HEATED.GRP] (RightBack)`.** ❓ Never set, which is **EXPECTED rather than evidence**: this bike has no heated grips, and the wiring diagram says the dashboard derives this bit by sensing +12 V on `Monitor_Heated Knobs` (J8 pin 5), a wire that currently goes nowhere. Decoded anyway because it is the readout for `HEATED_GRIPS.md` §7.0 — jumper J109a pin 1 to pin 3 and this is the signal that says whether the idea works.
 
@@ -1303,7 +1303,7 @@ Re-measured 2026-09-08 over **14 069 994 frames across 97 candump captures** —
 
 `src/can/gps.ts` (the GPS multiplex) and `src/can/hub-mirror.ts` (the diagnostics types).
 
-🚨 **Its claim was wrong; the full account now lives in [can-0x410.md](can-0x410.md).** The heading stays as a stable address for older issues and PRs that link to it — ⚠️ as of #224 no code comment cites it any more, because the last citation was this section's own, and it was repointed. The frames carry the Connectivity-Hub message set byte-for-byte — byte 0 the type, byte 1 the sub-index — but **the instrument cluster transmits them**; the hub reaches it over UART and is the Bluetooth transport, not the author. The cluster also _synthesises_ each record from its own variables rather than forwarding bytes, so the CAN and BLE copies of one message type can disagree. Confirmed in `obd-garage/captures/2026-08-02_bms_90s.log`, which carries `1A 00`/`1A 01`/`1A FE` (GPS), `02 00`…`02 FE` (vehicle status), `04 00`/`04 FE` (odometer) and `00 FF` (the handshake seed) on that id.
+🚨 **Its claim was wrong; the full account now lives in [can-0x410.md](can-0x410.md).** The heading stays as a stable address for older issues and PRs that link to it — ⚠️ as of #224 no code comment cites it any more, because the last citation was this section's own, and it was repointed. The frames carry the Connectivity-Hub message set byte-for-byte — byte 0 the type, byte 1 the sub-index — but **the instrument cluster transmits them**; the hub reaches it over UART and is the Bluetooth transport, not the author. The cluster also _synthesises_ each record from its own variables rather than forwarding bytes, so the CAN and BLE copies of one message type can disagree. Confirmed in the 2026-08-02 capture, which carries `1A 00`/`1A 01`/`1A FE` (GPS), `02 00`…`02 FE` (vehicle status), `04 00`/`04 FE` (odometer) and `00 FF` (the handshake seed) on that id.
 
 That makes it **a second, passive way to read anything the hub sends** — including a diagnostics list, which only appears once something has asked for it over Bluetooth. Useful precisely because it needs no BLE connection of its own: the hub accepts one at a time and the service already holds it, so `candump can0,410:7ff` is the way to watch a reply arrive without disturbing anything.
 
@@ -1317,7 +1317,7 @@ That makes it **a second, passive way to read anything the hub sends** — inclu
 
 `src/can/decode.ts`. 10 Hz, present key-on/parked. b2-5 LE uint32 = ID of the key fob currently present; it matches slot 1 of the 3 fobs paired in the E-LOCK ECU (b0 = 05, b6 = 01 constant). 🟡
 
-**The one-shot "keys paired" read** lives in `src/can/elock.ts` (see `obd-garage/CAN_MAP.md` §E-LOCK). Plain KWP2000 over ISO-TP single frames: request on 0x791, response on 0x790. Byte 0 of every frame is the payload length, the rest is zero padding — e.g. `21 99` goes out as `02 21 99 00 00 00 00 00` and comes back as `02 61 03 …` (3 keys paired). The bare read is tried first; a diagnostic session is only opened (and then closed immediately) if the ECU won't answer without one.
+**The one-shot "keys paired" read** lives in `src/can/elock.ts`. Plain KWP2000 over ISO-TP single frames: request on 0x791, response on 0x790. Byte 0 of every frame is the payload length, the rest is zero padding — e.g. `21 99` goes out as `02 21 99 00 00 00 00 00` and comes back as `02 61 03 …` (3 keys paired). The bare read is tried first; a diagnostic session is only opened (and then closed immediately) if the ECU won't answer without one.
 
 ⚠️ **This is the immobilizer ECU**, so that module is deliberately minimal:
 
@@ -1331,7 +1331,7 @@ That makes it **a second, passive way to read anything the hub sends** — inclu
 
 `src/can/psu.ts`. The PSU / DC-DC converter's monitor frame at 10 Hz.
 
-This was `CAN_MAP.md`'s "best remaining stimulus target" — _"four narrow channels with two constant separators"_. **There are no separators:** it is four little-endian 16-bit channels whose high bytes barely move, and Energica's `FramesDB.ParsePSU_MONITOR` names all four (the 2024 service-tool analysis in `obd-garage/`, §`0x501` `PSU_MONITOR`):
+This was `CAN_MAP.md`'s "best remaining stimulus target" — _"four narrow channels with two constant separators"_. **There are no separators:** it is four little-endian 16-bit channels whose high bytes barely move, and Energica's own `0x501` `PSU_MONITOR` frame definition names all four:
 
 ```
 b0-1 LE u16  P_12V     the 12 V rail
@@ -1358,7 +1358,7 @@ Three separate loads, three separate steps, all positive, all of a plausible siz
 
 ❓ **`P_12VLP`** — millivolts by the same argument as `P_12V`, but it reads 9008-9055 mV, i.e. ~9.03 V, which is not 12 V whatever "LP" stands for. Logged because it is a direct read of PSU health and a rail that drifts is worth seeing; **do NOT read the name as a promise about what it feeds.** It is rock steady across the whole lap, so a real move in it means something.
 
-⚠️ **`P_TEMP` (b6-7) is deliberately NOT decoded.** The service tool's dictionary equation for it is `f(x)=x*0.1 °C`; the field reads 3900-4000 raw with only five distinct values across 4088 frames, so that would be **390 °C**. It looks like an ADC count (×0.01 would give 39.0-40.0 °C, which is at least plausible, and 0x503 b4-5 sits in a 43-46 °C band correlating with it at r = +0.945) — but **"plausible" is not a decode, and a temperature is exactly the kind of number that gets believed.** Recorded so nobody implements the documented equation from the dictionary.
+⚠️ **`P_TEMP` (b6-7) is deliberately NOT decoded.** The manufacturer's dictionary equation for it is `f(x)=x*0.1 °C`; the field reads 3900-4000 raw with only five distinct values across 4088 frames, so that would be **390 °C**. It looks like an ADC count (×0.01 would give 39.0-40.0 °C, which is at least plausible, and 0x503 b4-5 sits in a 43-46 °C band correlating with it at r = +0.945) — but **"plausible" is not a decode, and a temperature is exactly the kind of number that gets believed.** Recorded so nobody implements the documented equation from the dictionary.
 
 ---
 
@@ -1381,7 +1381,7 @@ The request goes out functionally on 0x7DF; **the VCU answers on 0x7EF**, not th
 ←  7EF  21 10 03 05 14 C1 11 C1     … eleven of these, ~5 ms apart
 ```
 
-⚠️ **THE FLOW-CONTROL FRAME DRAWS A SPURIOUS NEGATIVE RESPONSE, and misreading it is what made this look impossible.** Sent to 0x7E7 — the physical request address paired with the 0x7EF the VCU answers on — _something_ on the bus replies `03 7F 00 33`: a refusal of "service 0x00" with NRC 0x33 securityAccessDenied. **There is no service 0x00 and we never sent one**; it is an artefact of an ECU reading our flow-control frame as a request. It arrives whether or not the transfer then succeeds — transfers that completed produced it too. So a negative response naming a service we did not ask for is IGNORED rather than ending the wait. `obd-garage/CAN_MAP.md` recorded that NRC as mode 03 being locked behind SecurityAccess; **it never was**, and the note there is now dated and corrected.
+⚠️ **THE FLOW-CONTROL FRAME DRAWS A SPURIOUS NEGATIVE RESPONSE, and misreading it is what made this look impossible.** Sent to 0x7E7 — the physical request address paired with the 0x7EF the VCU answers on — _something_ on the bus replies `03 7F 00 33`: a refusal of "service 0x00" with NRC 0x33 securityAccessDenied. **There is no service 0x00 and we never sent one**; it is an artefact of an ECU reading our flow-control frame as a request. It arrives whether or not the transfer then succeeds — transfers that completed produced it too. So a negative response naming a service we did not ask for is IGNORED rather than ending the wait. Earlier notes recorded that NRC as mode 03 being locked behind SecurityAccess; **it never was**, and the note there is now dated and corrected.
 
 ⚠️ **THE TRANSFER IS NOT RELIABLE**, and the failure mode is always the same: the First Frame arrives, we answer it, and the Consecutive Frames never come. It is never a refusal and never a partial payload — **it is all 80 bytes or nothing.** Measured per-attempt success, sharing the bus with the 2 Hz mode-01 poller:
 
@@ -1505,7 +1505,7 @@ Deliberately not fixed rather than overlooked, and the shape of the fix is known
 Three sources feed `src/can/`, and they are not equal:
 
 1. **This bike's own captures** — the only thing that CONFIRMS anything. Replayed through the real decoder before a signal is wired up.
-2. **Energica's own material** — `FramesDB` handlers, the telemetry-scaling table, the VCU digital list, the free-frame IO table (all via the 2024 service-tool analysis in `obd-garage/`). Names and equations, describing every model the tool serves rather than this one. A name off a table is not a measurement.
+2. **Energica's own material** — frame definitions, the telemetry-scaling table, the VCU digital list, the free-frame IO table. Names and equations, describing the model range rather than this one. A name off a table is not a measurement.
 3. **Another rider's `energica_can_mappings.xdbc`**, which joined 2026-08-02 and names 0x020, 0x022, 0x104 and most of 0x102's bitfield. **One owner's reverse engineering of a different bike, not a manufacturer document.** Nothing from it is wired up without a live capture replayed through the decoder first, and where it contradicts something measured on this bike, ours wins.
 
 🚨 **The `.xdbc` has been caught twice**, which is why the rule above is a rule: it called the high beam `charging` (1 103 000 / 1 103 000 frames say otherwise), and it called 0x109 b6-7 a current that reads 5069 A. It also has the blinker bits and the indicator-switch sides the wrong way round. **Do not "fix" a measured decode from the third-party file.**

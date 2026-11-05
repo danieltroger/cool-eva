@@ -8,7 +8,7 @@ import type { VcuTarget } from "./param-codec.ts";
 // `0x37` RequestTransferExit. It is the whole stored LOG with timestamps, where `0x17`
 // gives one undated record per component.
 //
-// The factory tool did exactly this on 2026-08-08 and it took **~7 minutes for 1198
+// The 2026-08-08 bus capture shows exactly this: **~7 minutes for 1198
 // blocks**. That single fact drives most of the design: everything here is about a read
 // that runs for minutes on a bus shared with the brakes, rather than about the protocol,
 // which is three services and a loop. A bus lease, pacing, timers rather than loops, and a

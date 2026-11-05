@@ -9,7 +9,7 @@ import { TESTER_ADDRESS, canIdsFor, type VcuTarget } from "../src/vcu/param-code
 // expired, retrying, telling silence apart from a refusal.
 //
 // It models the two behaviours that make this bus awkward, both from
-// obd-garage/DIAG_ADDRESSES.md §3:
+// bus observations:
 //   • a micro answers NOTHING until `10 81` has been sent — not even a negative
 //     response, which is why a conventional sweep finds nothing here;
 //   • the session then expires after an idle timeout, silently, so the next read
@@ -121,7 +121,7 @@ const SERVICE_READ_DTC_BY_STATUS = 0x18;
 const SERVICE_REQUEST_UPLOAD = 0x35;
 const SERVICE_TRANSFER_DATA = 0x36;
 const SERVICE_REQUEST_TRANSFER_EXIT = 0x37;
-/** `RoutinesID.ReadFreezeFrame` — the operand `0x35` opens with and every `0x36` repeats. */
+/** Freeze-frame upload id — the operand `0x35` opens with and every `0x36` repeats. */
 const ROUTINE_READ_FREEZE_FRAME = 0x12;
 const POSITIVE_RESPONSE_OFFSET = 0x40;
 const DEFAULT_SESSION_IDLE_MS = 2500;

@@ -11,8 +11,8 @@
 // confirm the change by a follow-up READ, not by a reply.
 //
 // This crosses no diagnostic ban: 0x120 writes are the same class the app already ships, NOT the
-// 0x2F/0x27 safety-node route. But dash-command writes are UNTESTED (the service-tool analysis leaves them
-// out), so this is genuinely new. It refuses any id outside the two light-labelled candidates
+// 0x2F/0x27 safety-node route. Another owner's tool left writes UNTESTED.
+// This script refuses any id outside the two light-labelled candidates
 // unless --force-id is given, and restores the read-back value afterwards unless --no-restore.
 //
 //   sudo systemctl stop cool-eva     # the service owns can0; one raw socket at a time
@@ -35,7 +35,7 @@ const WRITE_SETTLE_MS = 40; // let the VCU apply a write before the confirming r
 const DEFAULT_HOLD_SECONDS = 8; // time to eyeball the beam with the value set, before restoring
 
 // Only these two ids may be written without --force-id: the light-labelled dash commands
-// (the service tool's dash-command name table). Everything else on this channel is charge/map/fan config we do
+// (another owner's tool). Everything else on this channel is charge/map/fan config we do
 // not want to fat-finger onto a live bus. --force-id lifts the guard deliberately.
 const WRITE_ALLOWLIST: Record<number, string> = {
   0x15: "LPR mode (0=off / 1=on)",

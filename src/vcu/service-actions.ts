@@ -9,9 +9,8 @@
 // function is a decision that can be reviewed at all.
 //
 // ── ⚠️ What is proven and what is not ────────────────────────────────────────
-//  • ✅ The stamp's ADDRESSES and ENCODING are decompiled from Energica's own service
-//    tool (`ControlMotorbikeOverview_AvailableActions.GetMotorbikeService()`,
-//    obd-garage/SERVICE_RESET.md §2) — four bank-1 WORDs on A8, ids 1000-1003, the
+//  • ✅ The stamp's ADDRESSES and ENCODING are from Energica's own definitions —
+//    four bank-1 WORDs on A8, ids 1000-1003, the
 //    date being a 32-bit count of seconds since 2000-01-01 UTC.
 //  • ✅ A8 answered all four on 2026-09-08, the first time anything asked: four 2-byte
 //    WORDs, all zero, so the block is there and no service point has ever been set on
@@ -33,7 +32,7 @@ import { toHex } from "./param-codec.ts";
  * table that claims a different source.
  *
  * The two halves are little-endian ACROSS the pair: `value = (high << 16) | low`,
- * per the decompiled `num = (date2 << 16) | date1`.
+ * per Energica's `num = (date2 << 16) | date1` definition.
  */
 export const SERVICE_STAMP_IDENTIFIERS = {
   dateLow: { index: 1000, identifier: 0x13e8 },
@@ -259,17 +258,16 @@ export function checkPiClock(evidence: PiClockEvidence): PiClockVerdict {
 // broadcast frame carries it. So this action is WRITE-ONLY and unverifiable, which is why
 // the confirmation below asks the owner to confirm the time rather than reporting success
 // afterwards. Provenance, and the three corrections this makes to
-// obd-garage/SERVICE_RESET.md §5: docs/vcu-parameters.md §13.
+// docs/vcu-parameters.md §13.
 
-/** The 11-bit id the clock sync goes out on. `VCU_COMMAND_REQ` in Energica's own frame database. */
+/** The 11-bit id the clock sync goes out on. `VCU_COMMAND_REQ` in Energica's own frame definitions. */
 export const RTC_SYNC_CAN_ID = 0x120;
 
 /** Header bytes 0-1 of every `0x120` clock frame. One opcode among several on a shared command id. */
 const RTC_SYNC_HEADER = [0x94, 0xff];
 
 /**
- * Packs a UTC instant into the 8-byte `0x120` frame. Pure. Layout from the decompiled
- * `UpdateRTC()`; fields are little-endian WITHIN themselves and split across bytes:
+ * Packs a UTC instant into the 8-byte `0x120` frame. Pure. Energica's clock layout; fields are little-endian WITHIN themselves and split across bytes:
  *
  *   byte 2  bits 0-4  hour            bits 5-7  minute, low 3 of 6
  *   byte 3  bits 0-2  minute, high 3  bits 3-7  second, low 5 of 6
@@ -278,8 +276,7 @@ const RTC_SYNC_HEADER = [0x94, 0xff];
  *   byte 6            year − 2000
  *   byte 7            zero padding to DLC 8
  *
- * ⚠️ The weekday is .NET's `DayOfWeek`: Sunday = 0, which is what `getUTCDay()` returns
- * too — no conversion, and worth stating rather than relying on silently. ✅ Checked
+ * ⚠️ Weekday numbering is Sunday = 0, matching `getUTCDay()` — no conversion. ✅ Checked
  * against two frames that really went out; docs/vcu-parameters.md §13.
  */
 export function buildRtcSyncFrame(when: Date): Uint8Array {
@@ -469,7 +466,7 @@ function describeClearRefusal(code: number): string {
     case 0x31:
       return "requestOutOfRange";
     case 0x33:
-      return "securityAccessDenied — mode 04 is not meant to need authentication, so this is worth a note in obd-garage/";
+      return "securityAccessDenied — mode 04 is not meant to need authentication, so record this response";
     default:
       return `NRC 0x${code.toString(16).padStart(2, "0")}`;
   }

@@ -34,7 +34,7 @@ import type { VcuMicro, VcuParameter } from "./param-file.ts";
  * message that shows a name off an unconfirmed table says so, and no write is permitted
  * on the strength of it.
  *
- * 16407 was measured, not chosen: obd-garage/kwp_scan_raw.txt line 233 is
+ * 16407 was measured, not chosen: the A9 dump records
  * `A9 B1 0114 2 4017` — identifier `0x0114` = index 276 `TABLE_TYPE_uC`, a 2-byte record
  * holding `0x4017` = 16407, off that bike's A9 on 2026-06-14.
  */
@@ -185,7 +185,7 @@ export function checkTableType(index: number, value: number): TableTypeVerdict |
       "different parameter — routing and record widths are the same across all of Energica's tables, so a wrong " +
       "name still reads and still writes cleanly. On 20 of the 28 tables shipped in 2024, ids 70–94 are a regen " +
       "curve rather than the battery cell block, so this is not a small difference. Do not write anything by " +
-      "name until the table is added: run scripts/extract-vcu-tables.ts against your own service-tool install (see " +
+      "name until the table is added: run scripts/extract-vcu-tables.ts against your parameter definitions (see " +
       `docs/vcu-parameters.md) and send the diff. Carried today: ${KNOWN_TABLE_TYPES.join(", ")}.`,
   };
 }

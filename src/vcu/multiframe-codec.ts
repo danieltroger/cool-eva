@@ -19,7 +19,7 @@ import type { VcuTarget } from "./param-codec.ts";
 //   • `0x34` RequestDownload is `0x35`'s mirror image — one byte away in the switch, and it
 //     points the transfer the other way, tester → ECU. It would make this same segmenter
 //     into a flasher. It must never appear.
-//   • `0x31 FE` is the service tool's freeze-frame ERASE: it destroys exactly what
+//   • `0x31 FE` is the freeze-frame ERASE: it destroys exactly what
 //     `0x35`/`0x36`/`0x37` exist to read, and unlike every read here it needs SecurityAccess.
 //
 // The framing (extended-addressed ISO-TP — a Single Frame holds 6 payload bytes, a First
@@ -52,15 +52,15 @@ export type VcuMultiFrameRequest =
    * instead of all 63 in turn.
    *
    * ✅ CAPTURED: `7C0: A8 04 18 02 FF FF 00 00`, once on A8 in the 2026-08-08 capture,
-   * answered `58`. That is byte for byte the frame obd-garage/OTHER_TOOL_AUDIT.md §4.3 had
-   * DECOMPILED from the second owner's tool — the two now agree. §4.3 also records that **a
+   * answered `58`. That is byte for byte the frame in another owner's
+   * implementation — the two now agree. That implementation also records that **a
    * bare status byte is rejected with incorrectMessageLengthOrInvalidFormat**, so the three
    * operand bytes are required rather than conventional.
    */
   | { kind: "list-stored-dtcs" }
   /**
    * `35 12 FF FF FF FF FF FF FF FF FF FF` RequestUpload — open the bulk freeze-frame log
-   * read-out. `0x12` is `RoutinesID.ReadFreezeFrame`. Upload means ECU → tester, so this is
+   * read-out. `0x12` is the freeze-frame upload identifier. Upload means ECU → tester, so this is
    * a read; `0x34` RequestDownload, which is not, must never be added beside it.
    *
    * ✅ CAPTURED VERBATIM, all twelve payload bytes, 2026-08-08 19:04:32. The ten `0xFF` were
@@ -115,10 +115,9 @@ const READ_ONLY_SERVICES: ReadonlySet<number> = new Set([
 ]);
 
 /**
- * `RoutinesID.ReadFreezeFrame`, the identifier byte of the bulk read-out.
+ * the freeze-frame upload identifier, the identifier byte of the bulk read-out.
  *
- * ⚠️ The 2024 service-tool analysis in obd-garage/, §7.2, calls this a `0x31` routine
- * id. It is not: it is the identifier of a `0x35` RequestUpload, which is why the
+ * ⚠️ Earlier notes called this a `0x31` routine id. It is not: it is the identifier of a `0x35` RequestUpload, which is why the
  * captured frame is `35 12 …` and not `31 12 …`. Sending `31 12` would be a
  * StartRoutine — a write-class service this repo does not implement anywhere.
  */
@@ -140,9 +139,8 @@ const READ_FREEZE_FRAME_OPERAND = [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xf
  * `18 02 FF FF` — status mask `02` ("all identified DTCs"), DTC group `FF FF`
  * ("all groups").
  *
- * 🟡 Decompiled rather than sniffed, from the second owner's tool
- * (obd-garage/OTHER_TOOL_AUDIT.md §4.3), which also records that **a bare status
- * byte without the group is rejected with incorrectMessageLengthOrInvalidFormat**
+ * 🟡 Another owner's implementation supplies this, not a capture. It rejects
+ * **a bare status byte without the group with incorrectMessageLengthOrInvalidFormat**
  * — so all three bytes are required and this is not a place to economise.
  */
 const LIST_STORED_DTCS_OPERAND = [0x02, 0xff, 0xff];
@@ -152,7 +150,7 @@ const LIST_STORED_DTCS_OPERAND = [0x02, 0xff, 0xff];
  *
  * ISO 14229's TransferData is `36 <blockSequenceCounter> …`, counting 01, 02, … and
  * wrapping. This micro does neither. All 1198 requests in the 2026-08-08 capture are
- * `A8 02 36 12`: a CONSTANT `0x12`, the `RoutinesID.ReadFreezeFrame` the upload was opened
+ * `A8 02 36 12`: a CONSTANT `0x12`, the freeze-frame id the upload was opened
  * with. The note that stood here was half right — no counter — and half wrong, because it
  * read "no counter" as "no operand" and shipped a bare `36`, which is one byte short of
  * anything this micro has been seen to accept. docs/vcu-parameters.md §10.
@@ -482,14 +480,14 @@ export function isUploadFinished(body: Uint8Array): boolean {
 /**
  * One `58` ReadDTCByStatus reply, split into its records.
  *
- * ✅ The LAYOUT was decompiled from the service tool's decoder rather than captured,
+ * ✅ The LAYOUT came from Energica's definitions rather than a capture,
  * and has since been captured and confirmed: `58 <count>` then three-byte
  * `<codeHi> <codeLo> <status>` records, which is the shape
- * ../diagnostics/freeze-frame.ts' header argues for from the same source, and which the
- * second owner's tool documents identically (the service tool "unconditionally skips
+ * ../diagnostics/freeze-frame.ts' header argues for from the same source, and which
+ * another owner's implementation matches ("unconditionally skips
  * payload[0]", then walks 3-byte records). The 2026-08-08 session holds an 89-byte
  * `0x58` reply — count byte `0x1D` = 29, then 29 records whose `(component, status)`
- * pairs match the 29 freeze-frame replies exactly, in order. The decompiled reading was
+ * pairs match the 29 freeze-frame replies exactly, in order. The definition-based reading was
  * right. `declaredCount` and `trailingHex` are still both reported rather than smoothed
  * over — the same tell `headerBytesThatFit` gives for `0x17`.
  */
@@ -499,14 +497,14 @@ export interface VcuStoredDtcList {
   /**
    * Every record parsed, in wire order, INCLUDING `(0, 0)` padding.
    *
-   * The service tool filters those out. This does not: a padding record and a real record
+   * The reference omits those. This does not: a padding record and a real record
    * for component 0 are the same three bytes, and dropping them here would make
    * "the micro padded its reply" indistinguishable from "the micro had nothing to
    * say about component 0". `paddingRecords` counts them so a caller can filter
    * with the count still visible.
    */
   records: { code: number; status: number }[];
-  /** How many of `records` are `(0, 0)`. The service tool treats these as padding. */
+  /** How many of `records` are `(0, 0)`. Energica's definitions mark padding. */
   paddingRecords: number;
   /** Bytes after the last whole record. Empty if the layout is right. */
   trailingHex: string;

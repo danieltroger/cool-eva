@@ -40,7 +40,7 @@ const NEGATIVE_RESPONSE_SERVICE = 0x7f;
  * VCU safety micro, and only A8.
  *
  * Not a parameter, because it is not a choice: all 29 captured `0x17` requests
- * went to A8, the service tool's own code targets `MotorbikeECU.VCUSafety`, and the
+ * went to A8, Energica's definitions target VCU-Safety, and the
  * freeze-frame flash bookkeeping fields (`FlashExt*`, infokeys 102…105) sit with
  * the safety micro. Making the target callable would invite asking A9, which
  * would at best answer nothing and at worst answer something else. The CAN ids are
@@ -125,7 +125,7 @@ export function isNoStoredRecordReply(payload: Uint8Array): boolean {
  * read, and ⚠️ what sits beside it in the factory tool is not. Neither of these may
  * ever become a second member here (nor may they in src/vcu/param-codec.ts):
  *
- *   31 FE  StartRoutine `RoutinesID.VCUErase`, operand `01 00 00 00 01 FF FF FF`,
+ *   31 FE  StartRoutine freeze-frame erase, operand `01 00 00 00 01 FF FF FF`,
  *          then `33 FE` polled until it reports 0 — the freeze-frame ERASE, taking
  *          SecurityAccess (`27 01` on A8) where the read takes none. A flash erase
  *          of the bike's own record of WHY it faulted: the least reversible thing
@@ -274,7 +274,7 @@ export interface FreezeFrame {
   /** The fields, in payload order. Empty when the fault's shortlist is empty. */
   values: FreezeFrameValue[];
   /**
-   * False when the service tool lists no shortlist for the returned pair, in which case
+   * False when the dictionary lists no shortlist for the returned pair, in which case
    * `values` is empty because nothing could be decoded — NOT because the frame
    * was empty. The two must not look the same on screen.
    */
@@ -363,7 +363,7 @@ export type FreezeFrameResponse =
  * `payload` starts with the response service byte — `57` for a positive reply,
  * `7F` for a refusal — with every ISO-TP PCI byte already stripped. That is this
  * repo's convention everywhere (./obd-dtc.ts, src/vcu/param-codec.ts) and it is
- * ONE MORE than the index the second owner's tool counts from, which counts a
+ * ONE MORE than the index another owner's implementation counts from, which counts a
  * payload with the service byte removed. Both readings put the fields in the same
  * place; only the numbers in the two files' comments differ.
  *
@@ -429,8 +429,8 @@ export function decodeFreezeFrameResponse(payload: Uint8Array, requestedComponen
     return { kind: "component-mismatch", requested: requestedComponent, received: component, rawHex };
   }
   // The symptom is part of the code's identity, not a status flag: component 8
-  // symptom 3 is U0113 and symptom 4 is U0114. The service tool's own DTCode.FindDTCFrom
-  // matches on `(status & 240) >> 4`.
+  // symptom 3 is U0113 and symptom 4 is U0114. Energica's definitions match on
+  // `(status & 240) >> 4`.
   const symptom = (status & 0xf0) >> 4;
 
   const shortlist = infokeysFor(component, symptom);

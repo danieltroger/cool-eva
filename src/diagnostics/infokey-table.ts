@@ -1,6 +1,6 @@
 // Energica's own freeze-frame field dictionary — the 120 "info keys" a stored
-// freeze frame is built out of, taken from the manufacturer's service tool's own
-// `DTCInfoKeys` resource. Data only: no I/O, no state, no clock.
+// freeze frame is built out of, from the manufacturer's own diagnostic definitions.
+// Data only: no I/O, no state, no clock.
 //
 // Every fault in ./fault-infokeys.ts names a subset of these ids, IN ORDER, and
 // that ordered subset IS the layout of that fault's freeze-frame payload. So this
@@ -8,15 +8,15 @@
 // readable, and — through `datatype` — the byte widths that make it decodable at all.
 //
 // ── ⚠️ `id` IS NOT AN ADDRESS ───────────────────────────────────────────────
-// It is the service tool's internal signal index and it has no meaning on the
+// It is the dictionary's internal signal index and it has no meaning on the
 // wire. The tempting reading `CommonIdentifier = 0x2000 | id` was tested against a
 // real bank-2 dump and REFUTED. These ids index INTO A FREEZE-FRAME PAYLOAD, which
 // is the only context this file is used in — do not pass one to
 // src/vcu/param-codec.ts.
 //
-// ⚠️ `unit` COMES FROM THE CSV EXTRACT, NOT THE EXECUTABLE: the 2024 build has
+// ⚠️ `unit` COMES FROM THE CSV, NOT THE OTHER COPY: the 2024 build has
 // U+FFFD where the degree sign belongs in all 11 temperature rows, so anything
-// extracted from the binary inherits `<?>C`.
+// read from that copy inherits `<?>C`.
 //
 // The two copies that were compared, the refutation above, and what has NOT been
 // read off this bike: docs/diagnostics-and-checks.md §5.3.
@@ -34,7 +34,7 @@ const WIDTH_BY_DATATYPE: Record<InfokeyDatatype, number> = {
 };
 
 export interface InfokeyField {
-  /** The service tool's own signal index, 1…120. An index, never an address — see the header. */
+  /** The dictionary's signal index, 1…120. An index, never an address — see the header. */
   id: number;
   /** Energica's internal name, verbatim, typos included (`AttitudeSensor_Thete`, `_0xFF`). */
   name: string;

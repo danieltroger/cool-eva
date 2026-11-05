@@ -15,7 +15,7 @@ export interface FreezeFrameListReport {
   declaredCount: number;
   /** Whole records actually parsed. */
   parsed: number;
-  /** `(0, 0)` records — the service tool's padding, and not a component. */
+  /** `(0, 0)` records — padding in the definitions, and not a component. */
   padding: number;
   /**
    * Records naming something outside 1…63.

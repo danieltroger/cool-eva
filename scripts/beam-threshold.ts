@@ -424,7 +424,7 @@ async function writeParam(spec: ParamSpec, value: number): Promise<boolean> {
   return true;
 }
 
-/** Live current via io_get (0x2F sub 0x01). Signed 16-bit trailing, per the service tool's decode. */
+/** Live current via io_get (0x2F sub 0x01). Signed 16-bit trailing, per Energica's definitions. */
 async function readSense(control: number): Promise<number | null> {
   const reply = await transact([SERVICE_IO_CONTROL, (control >> 8) & 0xff, control & 0xff, IO_GET_READING]);
   if (!reply.ok) {

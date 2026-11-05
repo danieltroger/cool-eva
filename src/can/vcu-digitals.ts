@@ -2,8 +2,8 @@
 // out. Three files decode this frame and the split is NOT on byte boundaries: decode.ts
 // keeps b0 bit 6 (`high_beam`), b1 and b2; this file has b0's other seven bits and all of
 // b3; attitude.ts has b4-7. b3's length guard stays at decode.ts's call site, with the
-// comment that argues for it. The name is Energica's own for the block (the 2024
-// service-tool analysis in `obd-garage/`, §`0x102`, 34 signals).
+// comment that argues for it. Energica's own frame definitions name the block
+// and its 34 signals.
 
 import { type DecodedValue, bit } from "./frame.ts";
 
@@ -122,8 +122,8 @@ export function handlebarSwitches(handlebar: number): DecodedValue[] {
 // bike never fell over, never went into winter storage and never had ABS switched off —
 // so for bits 4, 5 and 7 it is an absence of the occasion rather than evidence the bits
 // are dead. Energica's own table names all four: bit 3 `V_IMD_DISABLE`, bit 4
-// `V_WINTER_STORAGE`, bit 5 `V_LIEDOWN_DETECTED`, bit 7 `V_ABSOFF` (the 2024 service-tool
-// analysis in `obd-garage/`, §`0x102` `VCU_DIGITALS`). Bit 5 is decoded below.
+// `V_WINTER_STORAGE`, bit 5 `V_LIEDOWN_DETECTED`, bit 7 `V_ABSOFF`.
+// Bit 5 is decoded below.
 export function vehicleFlagsByte3(byte3: number): DecodedValue[] {
   return [
     // bit 0 — `V_FASTDC_MON_SW`, the DC fast-charge contactor state monitor, and the

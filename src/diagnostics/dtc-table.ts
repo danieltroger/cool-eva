@@ -2,7 +2,7 @@
 // `<Energica_Manuals>/2 Technical/CAN & Diagnostics/CANBUS from Type Approval.pdf`
 // (EN.H.010134.001.OBD E2110, 24/03/2022, §7.6.2.7.4 "List of all OBD output
 // codes and formats used") and reconciled against a second source, the
-// manufacturer's service-tool data. Data only — no I/O, no state. 154 codes: the
+// manufacturer's diagnostic data. Data only — no I/O, no state. 154 codes: the
 // union of the two, less (35,2) B1021. A code in neither is reported as
 // unrecognised rather than guessed at.
 //
@@ -15,11 +15,11 @@
 //
 // ⚠️ `illuminatesMil` IS `boolean | null`, AND NULL MEANS "NO SOURCE STATES IT",
 // not "no lamp". Only the PDF has a MIL column and it does not list the six
-// service-tool-only codes; the service tool's JSON has no MIL field at all, for
+// dictionary-only codes; the fault dictionary has no MIL field at all, for
 // any code. `false` would be a claim — the dashboard renders it as "warning lamp:
 // no" and sorts the code with the harmless ones.
 //
-// How the two sources were reconciled, why the two service-tool VINTAGES are one
+// How the two sources were reconciled, why the two definition VINTAGES are one
 // source rather than two, which codes each source is missing, and the arguments
 // at (44,x) and (61,2): docs/diagnostics-and-checks.md §2.
 
@@ -36,7 +36,7 @@ export interface DtcTableEntry {
   description: string;
   /**
    * "MIL" column — 1 ⇒ this code turns the malfunction indicator lamp on, null ⇒
-   * no source states it (only the six service-tool-only codes). See the header.
+   * no source states it (only the six dictionary-only codes). See the header.
    */
   illuminatesMil: boolean | null;
 }
@@ -57,7 +57,7 @@ export const DTC_TABLE: DtcTableEntry[] = [
   entry(4, 2, "P0514", "BATTERY TEMPERATURE SENSOR CIRCUIT RANGE/PERFORMANCE", "Error reading temperature", true),
   entry(4, 3, "P0516", "BATTERY TEMPERATURE SENSOR CIRCUIT LOW", "BMS temperature sensor short circuit fault", true),
   entry(4, 4, "P0517", "BATTERY TEMPERATURE SENSOR CIRCUIT HIGH", "BMS temperature sensor open circuit fault", true),
-  // KEPT 2026-08-15 as the one entry the 2021 service-tool data had no record
+  // KEPT 2026-08-15 as the one entry the 2021 diagnostic data had no record
   // of, on the argument that its silence there was a gap rather than evidence.
   // ✅ CONFIRMED 2026-08-16: the 2024 tool carries it, identical id and title.
   // The gap was the older extract's, not the PDF's.
@@ -285,7 +285,7 @@ export const DTC_TABLE: DtcTableEntry[] = [
   // heated-grip output, leaving the VCU's pump driver open. P0A05 here would mean
   // a SEIZED pump, on a bike whose pump is not connected to that driver.
   //
-  // 🟡 The service tool still says {P0A05: open, P0A06: short, P0A07: locked}, in
+  // 🟡 The dictionary still says {P0A05: open, P0A06: short, P0A07: locked}, in
   // both builds. That disagreement is recorded, weighed and rejected — with the
   // SAE-name argument the swap rested on, and the row that still looks wrong and is
   // not evidence — in docs/diagnostics-and-checks.md §2.2. Read it before round three.
@@ -300,11 +300,11 @@ export const DTC_TABLE: DtcTableEntry[] = [
   entry(49, 0, "P1046", "BATTERY PACK UNBALANCED", "Battery pack unbalanced alarm", false),
   entry(50, 0, "P1047", "BATTERY UNDER CHG TEMP", "Battery under charge temperature alarm", false),
 
-  // ADDED 2026-08-15 from the service-tool data; the type-approval PDF has no
+  // ADDED 2026-08-15 from the diagnostic data; the type-approval PDF has no
   // rows for these. Components 51, 52 and 60 are the battery's three statistics
   // records, and their existence is why this file no longer calls those
   // component numbers unused — it used to, on the strength of the PDF's gap
-  // alone. The names are the service tool's own titles: the PDF's "DTC NAME"
+  // alone. The names are the manufacturer's own titles: the PDF's "DTC NAME"
   // column is where the terser house names elsewhere in this table come from,
   // and it has nothing to say here.
   // MIL is unknown for all six additions, hence `null` — see the ⚠️ note at the top.
@@ -351,7 +351,7 @@ export const DTC_TABLE: DtcTableEntry[] = [
   entry(54, 10, "C1013", "AC LINE ERROR", "AC line error", false),
   entry(54, 11, "C1014", "UNCLASSIFIED CM ERROR", "Unclassified charge manager error", false),
   entry(54, 12, "C1015", "FAST CHARGE NOT PRESENT", "Fast charge not present", false),
-  // Added 2026-08-15 from the service-tool data (see the note at component 51). MIL unknown.
+  // Added 2026-08-15 from the diagnostic data (see the note at component 51). MIL unknown.
   entry(54, 13, "C1018", "CURRENT SET POINT EXCEEDED BY EVSE", "Current set point exceeded by EVSE", null),
 
   entry(55, 0, "P2637", "TORQUE MANAGEMENT FEEDBACK SIGNAL 'A'", "Torque feedback error", false),
@@ -363,7 +363,7 @@ export const DTC_TABLE: DtcTableEntry[] = [
   entry(58, 0, "P0605", "INTERNAL CONTROL MODULE READ ONLY MEMORY (ROM) ERROR", "Flash read/write error", false),
   entry(59, 0, "U0412", "INVALID DATA RECEIVED FROM BATTERY ENERGY CONTROL MODULE A", "BMS status error", false),
 
-  // Added 2026-08-15 from the service-tool data (see the note at component 51). MIL unknown.
+  // Added 2026-08-15 from the diagnostic data (see the note at component 51). MIL unknown.
   entry(60, 0, "P1052", "BATTERY STATISTICS INFO3", "Battery statistics info 3", null),
 
   entry(61, 0, "P0500", "VEHICLE SPEED SENSOR 'A'", "Front wheel speed sensor failure", false),
@@ -372,11 +372,11 @@ export const DTC_TABLE: DtcTableEntry[] = [
   // named "VEHICLE SPEED SENSOR 'A' + VEHICLE SPEED SENSOR 'B'". That was a
   // deliberate reading, not a slip — the PDF's cell does appear to name both
   // sensors' codes for the both-failed case, and the interface carried a special
-  // note for it. The service-tool data gives one ordinary code instead, C0065,
+  // note for it. The diagnostic data gives one ordinary code instead, C0065,
   // and that wins: it was the only "two codes at once" entry in either source,
   // and a scan tool has one code slot per fault to receive it in, so the dual
   // form could never have been transmitted as written. The name below is the
-  // service tool's title, since the PDF's name described the pair rather than
+  // manufacturer's title, since the PDF's name described the pair rather than
   // C0065.
   entry(
     61,
@@ -397,7 +397,7 @@ export const DTC_TABLE: DtcTableEntry[] = [
     false
   ),
 
-  // Added 2026-08-15 from the service-tool data (see the note at component 51). MIL unknown.
+  // Added 2026-08-15 from the diagnostic data (see the note at component 51). MIL unknown.
   // Component 63 is the rear position lights, and it is the reason the component
   // range above now reads 1…63: the PDF's table stops at 62.
   entry(63, 0, "B1019", "REAR POSITION LIGHTS OPEN CIRCUIT FAULT", "Rear position lights open circuit fault", null),

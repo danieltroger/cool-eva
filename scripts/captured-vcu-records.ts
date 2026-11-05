@@ -8,9 +8,8 @@ import type { VcuMicro } from "../src/vcu/param-table.ts";
 //
 // ⚠️ Two DIFFERENT kinds of evidence live here and they are kept apart on purpose.
 //
-//   CAPTURED_FRAMES  — whole CAN frames, quoted byte for byte from
-//                      obd-garage/DIAG_ADDRESSES.md §3, where they were written
-//                      down as they came off the bus on 2026-08-08. These are the
+//   CAPTURED_FRAMES  — whole CAN frames, quoted byte for byte as observed
+//                      on the bus on 2026-08-08. These are the
 //                      only things that prove the FRAMING.
 //
 //   LIVE_BANK1_READS — parameter values read live on 2026-08-08 (§4 and §5). The
@@ -21,7 +20,7 @@ import type { VcuMicro } from "../src/vcu/param-table.ts";
 //                      they do not independently prove the framing, and are not
 //                      presented as if they did.
 
-/** Whole frames, exactly as obd-garage/DIAG_ADDRESSES.md §3 recorded them on 2026-08-08. */
+/** Whole frames, exactly as observed on the bus on 2026-08-08. */
 export const CAPTURED_FRAMES = {
   /** A9 answering `02 10 81` StartDiagnosticSession. */
   sessionOpened: "F1 02 50 81",
@@ -47,9 +46,9 @@ export interface LiveBank1Read {
 
 /**
  * Every bank-1 parameter with a live value written down in
- * obd-garage/DIAG_ADDRESSES.md §4 and §5. Both micros, which matters: the A8 half
+ * bus observations. Both micros, which matters: the A8 half
  * of the table had never been checked against anything before that session, since
- * obd-garage/kwp_scan_raw.txt contains A9 records only.
+ * the A9 dump contains A9 records only.
  */
 export const LIVE_BANK1_READS: LiveBank1Read[] = [
   // §4, control reads
@@ -79,7 +78,7 @@ export const LIVE_BANK1_READS: LiveBank1Read[] = [
   { micro: "A9", index: 264, name: "CHARGER_TYPE", rawHex: "00 01", value: 1 },
   { micro: "A9", index: 265, name: "EVSE_DUMMY_WORD4", rawHex: "00 00", value: 0 },
   // ⚠️ Not from 2026-08-08 and not from DIAG_ADDRESSES.md — this one is line 233 of
-  // obd-garage/kwp_scan_raw.txt, the full A9 dump taken 2026-06-14:
+  // The full A9 dump taken 2026-06-14:
   //
   //     A9 B1 0114 2 4017
   //
@@ -96,7 +95,7 @@ export const LIVE_BANK1_READS: LiveBank1Read[] = [
  * Values that differ from the variant file — this bike's, and the reason the file's
  * column may never be shown as a reading. `MAX_DC_CHG_CURRENT` is the headline: 75 A
  * here against the file's 60, corroborated by the 75 A the bike advertises on
- * 0x120/0x121 (obd-garage/DIAG_ADDRESSES.md §5).
+ * 0x120/0x121.
  */
 export const KNOWN_VARIANT_DIFFERENCES: { index: number; name: string; thisBike: number; otherBike: number }[] = [
   { index: 258, name: "MAX_DC_CHG_CURRENT", thisBike: 75, otherBike: 60 },
@@ -111,9 +110,8 @@ export const KNOWN_VARIANT_DIFFERENCES: { index: number; name: string; thisBike:
  * Real SecurityAccess seed/key pairs, off THIS bike's A8, on 2026-08-08.
  *
  * ⚠️ The most valuable four rows in this file. They come from a passive candump taken
- * while ENERGICA'S OWN diagnostic software was connected (obd-garage/DIAG_ADDRESSES.md
- * §9.3) — nothing was transmitted to obtain them — and they are the only live ground
- * truth anywhere in the write path. Everything else about writing is decompiled,
+ * on the bus — nothing was transmitted to obtain them — and they are the only live ground
+ * truth anywhere in the write path. Other write evidence is from definitions,
  * inferred, or reasoned about.
  *
  * They matter beyond confirming the arithmetic. A wrong key costs one of about three
@@ -134,11 +132,10 @@ export const CAPTURED_SECURITY_PAIRS: [seed: string, key: string][] = [
  * From another Energica owner's tool, whose own log recorded the bytes and the local
  * time; the ISO instants here are those times converted to UTC (that machine runs at
  * UTC+9:30). 2026-08-16 was a Sunday, which is what makes the weekday nibble check
- * meaningful — .NET's `DayOfWeek` puts Sunday at 0, and so does JavaScript's
- * `getUTCDay()`.
+ * meaningful — Sunday is 0, matching JavaScript's `getUTCDay()`.
  *
  * They are the end-to-end evidence for the bit packing in src/vcu/service-actions.ts,
- * which is otherwise only a reading of a decompiled method.
+ * which is otherwise only a reading of a protocol definition.
  */
 export const CAPTURED_RTC_FRAMES: [hex: string, iso: string][] = [
   ["94 FF 04 02 20 10 1A 00", "2026-08-16T04:16:00Z"],

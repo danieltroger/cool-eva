@@ -116,7 +116,7 @@ import {
 // to be run directly as well — that is the only way to pass --dump.
 //
 //   node --experimental-strip-types scripts/check-vcu-params.ts
-//   node --experimental-strip-types scripts/check-vcu-params.ts --dump obd-garage/kwp_scan_raw.txt
+//   node --experimental-strip-types scripts/check-vcu-params.ts --dump /path/to/a9-dump.txt
 //
 // The checked-in fixtures (scripts/captured-vcu-records.ts) are enough on their own.
 // `--dump` additionally replays a full `kwp_scan.py` dump of the A9 if you have one
@@ -159,8 +159,8 @@ expect(parametersNamed("NO_SUCH_PARAMETER").length === 0, "an unknown name shoul
 
 // ── 1b. WHICH table this bike is on, out of the 28 this software carries ────
 // A parameter is addressed by index, and what an index means comes from the table the
-// VCU runs. src/vcu/table-catalog.ts carries all 28 Energica's 2024 service tool can
-// select; src/vcu/param-table.ts picks one and says so. See obd-garage/PARAM_TABLES.md.
+// VCU runs. src/vcu/table-catalog.ts carries all 28 manufacturer tables from 2024;
+// src/vcu/param-table.ts picks one and says so.
 expect(
   DEFAULT_TABLE_TYPE === 16407,
   `the default table (this repo's own Ribelle, measured 2026-06-14) should be 16407, the module says ${DEFAULT_TABLE_TYPE}`
@@ -557,13 +557,13 @@ expect(damaged.rows[0].value !== -366, "…and must not keep 16407's signed read
 // them belongs in the check, where it is a proof rather than a startup cost.
 //
 // ⚠️ The count is hardcoded so that a contributed table landing here is a DELIBERATE bump,
-// not a silent drift — 28 came from the 2024 service-tool build, and 4115 was imported from
-// the service-tool analysis (scripts/import-em-table.ts) because it is the table THIS bike reports and
-// that build did not carry it. Adding your own bike's table raises this number the same way.
+// not a silent drift — 28 came from the 2024 definitions, and 4115 was imported
+// (scripts/import-em-table.ts) because it is the table THIS bike reports and
+// that set did not carry it. Adding your own bike's table raises this number the same way.
 expect(
   KNOWN_TABLE_TYPES.length === 29,
-  `the catalogue should carry 29 tables — the 2024 service-tool build's 28 plus 4115 imported from ` +
-    `the service-tool analysis — but has ${KNOWN_TABLE_TYPES.length}`
+  `the catalogue should carry 29 tables — the 2024 definitions' 28 plus imported 4115 ` +
+    `— but has ${KNOWN_TABLE_TYPES.length}`
 );
 expect(
   new Set(KNOWN_TABLE_TYPES).size === KNOWN_TABLE_TYPES.length,
@@ -600,7 +600,7 @@ expect(
 );
 
 // ⚠️ The invariants the delta format DEPENDS on, re-measured over all 28 rather than
-// quoted from obd-garage/PARAM_TABLES.md. If `id → micro` or `id → datatype` ever
+// quoted from the manufacturer parameter definitions. If `id → micro` or `id → datatype` ever
 // varied, a wrong table would produce a malformed frame and be obvious — the fact that
 // they do not is exactly why a wrong table is silent, and why the gate exists.
 const catalogueRows = builtTables.flatMap(table => table?.parameters ?? []);
@@ -637,7 +637,7 @@ expect(
 // The RegenFade split, counted. 21 tables carry the fade curve at 70…94 and 8 carry the
 // battery cell block; nothing carries a mixture. The count is asserted rather than
 // described so that a contributed table landing on the wrong side of it is a red build.
-// 4115 (imported from the service-tool analysis) is a fade table, which is why this is 21 not 20.
+// 4115 (imported from manufacturer definitions) is a fade table, which is why this is 21 not 20.
 const fadeTables = builtTables.filter(table => table?.byIndex.get(70)?.name === "RegenFade_0");
 const cellTables = builtTables.filter(table => table?.byIndex.get(70)?.name === "CELL_COUNT");
 expect(
@@ -2206,8 +2206,8 @@ expect(
   "the mismatch remedy must say that reading will not help and name the script that fixes it"
 );
 expect(
-  mismatchedGate.remedy.includes("service-tool install") && mismatchedGate.remedy.includes("docs/vcu-parameters.md"),
-  "…and must say what the owner needs (their own service-tool install) and where the walkthrough is"
+  mismatchedGate.remedy.includes("parameter definitions") && mismatchedGate.remedy.includes("docs/vcu-parameters.md"),
+  "…and must say what the owner needs (their own parameter definitions) and where the walkthrough is"
 );
 expect(
   !mismatchedGate.remedy.includes("Probe one identifier"),
@@ -2379,8 +2379,7 @@ expect(
 // ⚠️ THE SERVICE ACTIONS ARE DELIBERATELY NOT GATED, and this is where that decision
 // is pinned down rather than left to a comment. `31 FC` addresses a routine local
 // identifier, which is not a bank-1 parameter index and appears in none of Energica's
-// 28 parameter tables — it comes from the service tool's shared library
-// (SERVICE_RESET.md §3). Mode 04 and the 0x120 clock broadcast carry no identifier at
+// 28 parameter tables — it is a separate protocol definition. Mode 04 and the 0x120 clock broadcast carry no identifier at
 // all. So the reasoning that motivates the gate does not reach them, and blocking them
 // would be a refusal resting on evidence with no bearing on the action. The type system
 // carries the argument: a routine request has nowhere to put a table type.
@@ -2577,7 +2576,7 @@ expect(
 );
 
 // ── 16. The service stamp, mode 04, the bus lease and the request parser ───
-// A8's last-service block, decoded the way the service tool's own GetMotorbikeService() does.
+// A8's last-service block, decoded per Energica's definitions.
 // ⚠️ Read on this bike on 2026-09-08: all four answered zero (docs/service-stamp.md). Still
 // outside params.ecf's 1…277, so no sweep has ever reached them — that read was the service
 // action's own KWP read on A8, not a sweep.

@@ -1,7 +1,6 @@
 // The VCU's own state machine, CAN 0x101 `VCU_VEHICLE_STS` at 100 Hz.
 //
-// Energica's frame database names all eight signals (the 2024 service-tool analysis in
-// obd-garage/, §`0x101` `VCU_VEHICLE_STS`), and until now every byte of it was discarded
+// Energica's own frame definitions name all eight signals; until now every byte was discarded
 // on arrival — 0x101 was not in STREAM_IDS, so the kernel filter never passed it.
 //
 // ⚠️ The two state words are ALREADY LOGGED, from the other transport: src/ble/protocol.ts

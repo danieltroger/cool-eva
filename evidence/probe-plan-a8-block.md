@@ -19,7 +19,7 @@ curl -s '<pi>/vcu-read' | head -c 400                             # watch
 Why the sweep rather than 25 separate `/vcu-probe` calls:
 
 - **A sweep holds the A8 session across the whole block.** Requests are paced 10 ms apart and the session idles out after ~2.5 s, so all 25 are asked inside one session. A probe opens a session, asks once and stops — and on 2026-09-14 one of the three probes came back `no-session`.
-- **It parks the 2 Hz OBD poller for each of the 25 block rows** — not only the three wide ones — because their widths come from a firmware image nobody has matched against what is flashed, and a park chosen off a width that might be wrong skips exactly the row it was needed for. The 44 named A8 parameters are read unparked, as they always have been. A hand-run probe parks unconditionally, which comes to the same thing for one read.
+- **It parks the 2 Hz OBD poller for each of the 25 block rows** — not only the three wide ones — because their widths come from the A8 firmware, not yet matched against what is flashed, and a park chosen off a width that might be wrong skips exactly the row it was needed for. The 44 named A8 parameters are read unparked, as they always have been. A hand-run probe parks unconditionally, which comes to the same thing for one read.
 - **It writes the answers down.** A probe's reply exists only in the HTTP response; a sweep's lands in `vcu-params/latest.json`, in the archive, in the diff against the previous snapshot, and in `journalctl -u cool-eva`. For this question — _which of these 25 answer, and with how many bytes_ — the snapshot is the artefact.
 
 Afterwards, keep the evidence the way `evidence/probes-20260914.txt` was kept:
@@ -31,7 +31,7 @@ curl -s '<pi>/vcu-params' > evidence/vcu-params-<date>.json
 
 ## 3. What each index is, and what its answer settles
 
-`CID = 0x1000 | index`, bank 1, micro **A8** — request `A8 03 22 <hi> <lo>`. Widths are what A8's own firmware parameter table types them (#219); a **width that disagrees is the most interesting outcome on this page**, because it is the first thing that would say the firmware image is not what is flashed.
+`CID = 0x1000 | index`, bank 1, micro **A8** — request `A8 03 22 <hi> <lo>`. Widths are what the A8 firmware specifies (#219); a **width that disagrees is the most interesting outcome on this page**, because it is the first thing that would say that firmware does not match what is flashed.
 
 | idx | CID | firmware width | expected reply | what an answer settles |
 | --- | --- | --- | --- | --- |
@@ -44,7 +44,7 @@ curl -s '<pi>/vcu-params' > evidence/vcu-params-<date>.json
 | 627 | `0x1273` | BYTE | **4 bytes**, one frame | The only BYTE in the block — a 4-byte reply is the confirmation, and a 5-byte one would say the width column is wrong. |
 | 1000–1003 | `0x13E8`–`0x13EB` | WORD | 5 bytes, one frame | The **last-service stamp**: date low/high, odometer low/high, `value = (high << 16) \| low`, date = seconds since 2000-01-01 UTC. All four answered **zero** on 2026-09-08 (`docs/service-stamp.md`). Zero again = still no service point. Non-zero = a service point exists, and the decode is already written (`src/vcu/service-actions.ts`). |
 | 1004, 1005 | `0x13EC`, `0x13ED` | WORD | 5 bytes, one frame | Nothing traced. Never asked. |
-| 1006, 1007 | `0x13EE`, `0x13EF` | WORD | 5 bytes, one frame | The **only two identifiers the manufacturer's service tool was ever captured writing** (2026-08-08, `obd-garage/DIAG_ADDRESSES.md` §9.2/§9.5). It read 1006 back as `0x93 80` and wrote the same value; it wrote `0x29 C2` to 1007. **Reading the same two values now would be strong evidence these are the same cells;** a different value is its own finding. |
+| 1006, 1007 | `0x13EE`, `0x13EF` | WORD | 5 bytes, one frame | The **only two identifiers the factory software was ever captured writing** (2026-08-08). It read 1006 back as `0x93 80` and wrote the same value; it wrote `0x29 C2` to 1007. **Reading the same two values now would be strong evidence these are the same cells;** a different value is its own finding. |
 
 ### 3a. Controls — do not skip these
 
@@ -82,7 +82,7 @@ It cannot be closed by arithmetic from here:
 **Nothing in the repo can send this today and this document does not change that.** `param-codec.ts`'s request union has three members — `10 81`, `3E`, `22` — and `READ_ONLY_SERVICES` has the matching three service bytes. Adding a fourth is a decision, not a detail, and it needs a **coordinator GO on the events log before any code**.
 
 - **What it would buy:** #219's own open caveat — _"whether the A8 in this bike runs this firmware build"_ is not established, and every width in §3 comes from that build. `0x1A` returns the ECU's identification block and would settle it in one frame.
-- ⚠️ **What is NOT established, and it is the load-bearing part: A8 has never been asked.** The manufacturer's service tool sent `0x1A` 7 times in the 2026-08-08 capture and got a positive `5A` every time — but all seven were to **A9** (`obd-garage/DIAG_ADDRESSES.md` §9.1), and A7 answers nothing to it at all. Nobody has ever sent it to A8. **If A8 refuses, the firmware-build question stays open and the change bought nothing.** Weigh the GO on that, not on the seven replies.
+- ⚠️ **What is NOT established, and it is the load-bearing part: A8 has never been asked.** The factory software sent `0x1A` 7 times in the 2026-08-08 capture and got a positive `5A` every time — but all seven were to **A9**, and A7 answers nothing to it at all. Nobody has ever sent it to A8. **If A8 refuses, the firmware-build question stays open and the change bought nothing.** Weigh the GO on that, not on the seven replies.
 - **The change, exactly:** a `{ kind: "read-ecu-identification"; identifier: number }` member on `VcuRequest`, `0x1A` added to `READ_ONLY_SERVICES`, one branch in `encodeRequestPayload`, and one entry point. It is a read — `0x1A` has no write semantics, takes no value, and cannot name one.
 - **Why it is still a decision:** three module headers cite the union's three-ness as the reason a write is unexpressible, and `scripts/check-vcu-params.ts` §2 asserts it. Widening it is a change to the sentence this repo's read-only claim is made of.
 

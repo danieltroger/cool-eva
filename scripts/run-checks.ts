@@ -1260,7 +1260,7 @@ const CHECKS: SelfCheck[] = [
   {
     script: "scripts/check-vendor-names.ts",
     covers:
-      "that no tracked file names the manufacturer's service-tool product, its executable, its libraries or the " +
+      "that no tracked file names private product, executable or library names, or the " +
       "tables extracted from it — in its contents or in its own path. The gitignored obd-garage/ notes use those " +
       "names legitimately and are where they keep being copied from, so this is the check that stops a fact " +
       "arriving with a product name still attached to it",
