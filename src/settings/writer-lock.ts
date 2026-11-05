@@ -64,7 +64,12 @@ export function assertSettingsWriterLock(lock: SettingsWriterLock): void {
   lock.assertHeld();
 }
 
-function childEnded(child: ChildProcessWithoutNullStreams): Promise<void> {
+interface HolderExit {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+}
+
+function childEnded(child: ChildProcessWithoutNullStreams): Promise<HolderExit> {
   return new Promise((resolve, reject) => {
     child.once("error", error => {
       const code = readErrorCode(error);
@@ -72,17 +77,11 @@ function childEnded(child: ChildProcessWithoutNullStreams): Promise<void> {
         Object.assign(new Error(`The settings writer-lock utility could not start (${code ?? "unknown"}).`), { code })
       );
     });
-    child.once("close", code => {
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(new Error("The settings writer lock is busy or could not be acquired."));
-      }
-    });
+    child.once("close", (code, signal) => resolve({ code, signal }));
   });
 }
 
-async function waitUntilHeld(child: ChildProcessWithoutNullStreams, ended: Promise<void>): Promise<void> {
+async function waitUntilHeld(child: ChildProcessWithoutNullStreams, ended: Promise<HolderExit>): Promise<void> {
   let output = "";
   let timer: ReturnType<typeof setTimeout> | undefined;
   const ready = new Promise<void>((resolve, reject) => {
@@ -101,7 +100,7 @@ async function waitUntilHeld(child: ChildProcessWithoutNullStreams, ended: Promi
     await Promise.race([
       ready,
       ended.then(() => {
-        throw new Error("The settings writer-lock holder ended before becoming ready.");
+        throw new Error("The settings writer lock is busy or the holder ended before becoming ready.");
       }),
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => reject(new Error("Timed out acquiring the settings writer lock.")), HOLDER_TIMEOUT_MS);
@@ -118,10 +117,10 @@ async function waitUntilHeld(child: ChildProcessWithoutNullStreams, ended: Promi
   }
 }
 
-async function finishHolder(child: ChildProcessWithoutNullStreams, ended: Promise<void>): Promise<void> {
+async function finishHolder(child: ChildProcessWithoutNullStreams, ended: Promise<HolderExit>): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await Promise.race([
+    const status = await Promise.race([
       ended,
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => {
@@ -130,6 +129,13 @@ async function finishHolder(child: ChildProcessWithoutNullStreams, ended: Promis
         }, HOLDER_TIMEOUT_MS);
       }),
     ]);
+    // systemd also signals the flock/cat holder on a normal service stop. Once
+    // release has fenced writes, an exited holder has already released its lock.
+    if (status.code !== 0) {
+      console.warn(
+        `settings: writer-lock holder stopped during release (exit ${status.code}, signal ${status.signal}).`
+      );
+    }
   } finally {
     clearTimeout(timer);
   }

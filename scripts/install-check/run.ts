@@ -20,6 +20,8 @@ import { hashFile } from "../release/files.ts";
 import { interruptSshDuringApt } from "./interrupt.ts";
 import { verifyUpdaterRecovery } from "./recovery.ts";
 import { verifyLegacyMigration } from "./legacy.ts";
+import { captureGuestInspection, verifyGuestDiagnostics } from "./inspection.ts";
+import { setTimeout as delay } from "node:timers/promises";
 
 export async function checkInstallerInQemu(
   bundle: string,
@@ -50,6 +52,7 @@ export async function checkInstallerInQemu(
   const publicSsh = await readFile(join(directory, "ssh-key.pub"), "utf8");
   const port = await freePort();
   const guest = { key: join(directory, "ssh-key"), knownHosts: join(directory, "known-hosts"), port };
+  await writeFile(join(directory, "guest-ssh.json"), JSON.stringify(guest), { mode: 0o600 });
   const assets = await serveBundle(bundle);
   let console_: GuestConsole | null = null;
   try {
@@ -59,6 +62,7 @@ export async function checkInstallerInQemu(
     console_ = bootGuest(executable, directory, port, "seed");
     await seedGuest(console_, guestSeed(publicSsh, assets.port, `cool-eva-${metadata.release}`));
     await waitForSsh(guest);
+    await verifyGuestDiagnostics(guest, "first SSH login", sshCommand);
     const pair = await promisify(generateKeyPair)("x25519");
     const publicKey = pair.publicKey.export({ type: "spki", format: "pem" }).toString();
     console.log(
@@ -78,7 +82,10 @@ export async function checkInstallerInQemu(
     const packageList = await sshCommand(guest, "dpkg-query -W '-f=${binary:Package}\\t${Version}\\n'");
     await writeFile(join(directory, "installed-os-packages.txt"), packageList);
     console.log("Rerunning the same line; existing network profiles and public key must survive.");
+    await verifyGuestDiagnostics(guest, "before rerun", sshCommand);
+    await captureGuestInspection(guest, join(directory, "before-rerun.inspection.log"), sshCommand);
     await runInstaller(guest, publicKey, join(directory, "rerun.log"), "rerun");
+    await verifyGuestDiagnostics(guest, "after rerun", sshCommand);
     await verifyNoRuntimeFaults(guest);
     await verifyEncryptedFixture(guest, pair.privateKey, pair.publicKey);
     await sshCommand(guest, "sudo sync");
@@ -119,6 +126,14 @@ export async function checkInstallerInQemu(
       }) + "\n"
     );
     console.log("QEMU installer check passed (fresh, rerun, reboot). Receipt:", join(directory, "qemu-receipt.txt"));
+  } catch (error) {
+    await captureGuestInspection(guest, join(directory, "failure.inspection.log"), sshCommand);
+    const pause = Number(process.env.COOL_EVA_QEMU_PAUSE_ON_FAILURE_SECONDS ?? "0");
+    if (Number.isInteger(pause) && pause > 0 && pause <= 900) {
+      console.error(`Local inspection pause: guest remains live for ${pause} seconds; see guest-ssh.json.`);
+      await delay(pause * 1000);
+    }
+    throw error;
   } finally {
     await console_?.stop();
     await assets.close();
