@@ -72,21 +72,7 @@ export async function prepareExistingService(
   }
 }
 
-export async function installBundleUnits(directory: string, channel: string): Promise<void> {
-  await installFile(join(directory, "scripts/update/dispatch.sh"), "/usr/local/libexec/cool-eva-update", 0o755);
-  await installFile(join(directory, "scripts/update/launch.sh"), "/usr/local/libexec/cool-eva-launch", 0o755);
-  await writeRootFile(
-    "/etc/cool-eva/update.json",
-    JSON.stringify({
-      format: 1,
-      releaseRoot: "/opt/cool-eva",
-      dataRoot: settingsPaths().dataRoot,
-      settingsLock: "/run/cool-eva/settings.lock",
-      service: "cool-eva.service",
-      channel,
-      healthUrl: "http://127.0.0.1/release-health",
-    }) + "\n"
-  );
+export async function installBundleUnits(directory: string): Promise<void> {
   for (const name of ["cool-eva", "cool-eva-update", "cool-eva-rollback", "cool-eva-update-repair"]) {
     await installFile(join(directory, `scripts/update/${name}.service`), `/etc/systemd/system/${name}.service`, 0o644);
   }

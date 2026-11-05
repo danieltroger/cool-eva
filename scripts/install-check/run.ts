@@ -19,6 +19,8 @@ import { verifyEncryptedFixture } from "./encryption.ts";
 import { hashFile } from "../release/files.ts";
 import { interruptSshDuringApt } from "./interrupt.ts";
 import { verifyUpdaterRecovery } from "./recovery.ts";
+import { verifyPostInstall } from "./verification.ts";
+import { startupCursor, verifySupervisedStartup } from "./startup.ts";
 import { verifyLegacyMigration } from "./legacy.ts";
 import { captureGuestInspection, verifyGuestDiagnostics } from "./inspection.ts";
 import { setTimeout as delay } from "node:timers/promises";
@@ -69,15 +71,13 @@ export async function checkInstallerInQemu(
       "Running the actual released installer over SSH: bench confirmation, apt catch-up, networks, public key, units and health checks."
     );
     await interruptSshDuringApt(guest, join(directory, "interrupted-ssh.log"));
+    const cursor = await startupCursor(guest);
     const result = await runInstaller(guest, publicKey, join(directory, "install.log"));
     assert.match(result, /Encrypted ride recording ready/);
     await verifyNoRuntimeFaults(guest);
+    await verifySupervisedStartup(guest, cursor);
     console.log("Fresh install passed. Verifying permissions, updater, real NetworkManager and security policy.");
-    await sshCommand(
-      guest,
-      'sudo sh -eu -c \'test -e /etc/cool-eva-qemu-fixture; apt-mark showmanual | grep -qx jq; systemctl is-active --quiet cool-eva; grep -azq -- --no-wasm-lazy-compilation /proc/"$(systemctl show cool-eva --property=MainPID --value)"/cmdline; systemctl is-enabled --quiet cool-eva; test -x /usr/local/libexec/cool-eva-update; test ! -e /etc/systemd/system/can-capture.service; test "$(stat -c %a /var/lib/cool-eva/state/settings.json)" = 600; test "$(stat -c %a /var/lib/cool-eva/updater/state.json)" = 600; test "$(stat -c %a /etc/NetworkManager/system-connections/cool-eva-hotspot.nmconnection)" = 600; /usr/bin/curl -fsS http://127.0.0.1/os-update-ready | jq -e .ok==false; nmcli connection show\'',
-      90_000
-    );
+    await verifyPostInstall(guest, directory);
     await verifyUpdaterRecovery(guest);
     const packageList = await sshCommand(guest, "dpkg-query -W '-f=${binary:Package}\\t${Version}\\n'");
     await writeFile(join(directory, "installed-os-packages.txt"), packageList);

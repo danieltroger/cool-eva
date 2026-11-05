@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { sshCommand, runInstaller, type GuestSsh } from "./ssh.ts";
+import { startupCursor, verifySupervisedStartup } from "./startup.ts";
 
 export async function verifyLegacyMigration(guest: GuestSsh, directory: string, publicKey: string): Promise<void> {
   const seed = `#!/bin/sh
@@ -60,7 +61,9 @@ systemctl start cool-eva.service
   console.log(
     "Migrating the synthetic legacy service through its original systemd environment; installer never moves the data."
   );
+  const cursor = await startupCursor(guest);
   await runInstaller(guest, publicKey, join(directory, "legacy-install.log"), "legacy");
+  await verifySupervisedStartup(guest, cursor);
   const verification = `set -eu
 test -e /etc/cool-eva-qemu-fixture
 jq -e '.migration.complete and .migration.source=="legacy" and .values.customBmsConfigurationFlashed and (.values.automaticDcChargingEnabled|not) and .values.dashboardBluetoothSecret=="synthetic-legacy-secret"' /var/lib/cool-eva/state/settings.json

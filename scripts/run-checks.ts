@@ -778,6 +778,11 @@ const CHECKS: SelfCheck[] = [
       'step\'s "nothing to commit" no-op depends on, which nothing held it to before',
   },
   {
+    script: "scripts/check-installer-bootstrap.ts",
+    covers:
+      "helpers and state before the first fresh/legacy start, interrupted bootstrap, older-helper repair, trial-directory rerun, real Linux lock handoff and a once-only guest verification result",
+  },
+  {
     script: "scripts/check-installer-service.ts",
     covers:
       "manager operations longer than 30 seconds, nonblocking activation, safe command failure evidence, verified service restoration and explicit stopped-app recovery advice",

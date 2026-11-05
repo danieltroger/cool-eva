@@ -5,14 +5,15 @@ export async function runInTerminal(
   executable: string,
   arguments_: string[],
   answers: [string, string][],
-  environment = process.env
+  environment = process.env,
+  timeout = 20_000
 ): Promise<{ code: number | null; output: string }> {
   const child = spawn(
     "python3",
     [fileURLToPath(new URL("./pty-driver.py", import.meta.url)), executable, ...arguments_],
     {
       stdio: ["pipe", "pipe", "pipe"],
-      timeout: 20_000,
+      timeout,
       env: environment,
     }
   );

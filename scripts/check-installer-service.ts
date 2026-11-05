@@ -35,7 +35,7 @@ export async function checkInstallerService(): Promise<void> {
       await writeFile(join(directory, "slow-reload"), "");
       await writeFile(join(directory, "slow-enable"), "");
       const started = monotonicNow();
-      await fixture.service.installBundleUnits("/synthetic/release", "main");
+      await fixture.service.installBundleUnits("/synthetic/release");
       await waitForRunningService("cool-eva.service");
       assert(since(started) >= 62_000, "Both synchronous manager operations really exceeded 30 seconds");
       const calls = await readFile(join(directory, "calls"), "utf8");
@@ -83,7 +83,7 @@ export async function checkInstallerService(): Promise<void> {
       }
       let activationFailure: unknown;
       try {
-        await fixture.service.installBundleUnits("/synthetic/release", "main");
+        await fixture.service.installBundleUnits("/synthetic/release");
       } catch (error) {
         activationFailure = error;
       }
