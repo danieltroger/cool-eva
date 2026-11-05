@@ -5,6 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { monotonicNow, since } from "../../src/monotonic.ts";
 import { installerRemoteCommand } from "../release/installer.ts";
 import { validatePublicKey } from "../../src/settings/public-key.ts";
+import { captureGuestInspection } from "./inspection.ts";
 
 export async function sshCommand(guest: GuestSsh, command: string, timeout = 60_000): Promise<string> {
   const { stdout } = await promisify(execFile)("ssh", [...sshArguments(guest), command], {
@@ -91,6 +92,7 @@ export async function runInstaller(
     throw new Error(`Installer echoed a password; see private ${log}`);
   }
   if (status !== 0 || answerIndex !== answers.length || !output.includes("Dashboard ready:")) {
+    await captureGuestInspection(guest, log + ".inspection.log", sshCommand);
     try {
       const kernel = await sshCommand(guest, "sudo dmesg | tail -100");
       await appendFile(log, "\nKernel diagnostics after installer failure:\n" + kernel);

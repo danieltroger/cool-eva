@@ -24,6 +24,7 @@ import { installationFailureAdvice, MigrationNeedsHelpError } from "../src/insta
 import { checkMigrationFailures } from "./install-check/migration-check.ts";
 import { checkBundleLauncher } from "./install-check/launch-check.ts";
 import { checkQemuSlirp } from "./install-check/tools-check.ts";
+import { checkQemuDiagnostics } from "./install-check/diagnostics-check.ts";
 
 export async function checkBundleInstall(): Promise<void> {
   const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -82,6 +83,7 @@ export async function checkBundleInstall(): Promise<void> {
     assert.match(installationFailureAdvice(new Error("network")), /paste the same/);
     await checkRecoveryAssertion(directory);
     await checkQemuSlirp(directory, root);
+    await checkQemuDiagnostics(directory);
     await checkMigrationFailures(directory, root);
     checkPowerGate();
     checkLoopbackRoute();

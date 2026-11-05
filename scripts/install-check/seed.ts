@@ -1,3 +1,5 @@
+import { guestDiagnosticsSeed } from "./diagnostics.ts";
+
 export function guestSeed(publicKey: string, assetPort: number, tag: string): string {
   if (
     !/^ssh-ed25519 [A-Za-z0-9+/=]+(?: [a-zA-Z0-9.-]+)?$/.test(publicKey.trim()) ||
@@ -75,6 +77,7 @@ fi
 exec /usr/bin/curl "\${transport_arguments[@]}"
 CURL_FIXTURE
 chmod 755 /usr/local/bin/curl
+${guestDiagnosticsSeed()}
 systemctl enable ssh.service
 sync
 echo COOL_EVA_SEED_COMPLETE

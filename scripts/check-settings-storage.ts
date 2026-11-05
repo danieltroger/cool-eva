@@ -12,10 +12,12 @@ import { effectiveHubAddress, freshSettings, parseSettingsDocument, pendingSetti
 import { openSettingsStore } from "../src/settings/store.ts";
 import { acquireSettingsWriterLock } from "../src/settings/writer-lock.ts";
 import { closeSettingsFixture, settingsFixture } from "./settings-check-fixtures.ts";
+import { checkSettingsLockShutdown } from "./settings-lock-check.ts";
 
 await checkLegacyLiterals();
 await checkStore();
 await checkStoreLockRefusals();
+await checkSettingsLockShutdown();
 await checkDegradedAndUnknownFields();
 await checkReplacement();
 console.log("settings storage checks passed");

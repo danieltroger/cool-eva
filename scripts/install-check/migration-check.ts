@@ -10,6 +10,7 @@ export async function checkMigrationFailures(directory: string, repository: stri
     ["fresh-failure", "Fresh release selection failed", false],
     ["completed-storage", "Storage verification failed", false],
     ["completed-stop", "Service stop timed out", false],
+    ["completed-corrupt", "Stored configuration could not be read.", false],
     ["legacy-checkout", "checkout could not be identified", true],
     ["legacy-conflict", "Destination conflict; preserve both folders", true],
     ["legacy-corrupt", "Stored configuration could not be read.", true],
@@ -49,10 +50,10 @@ export async function checkMigrationFailures(directory: string, repository: stri
     const messages: string[] = [];
     printInstallationFailure(failure, (...values) => messages.push(values.join(" ")));
     const output = messages.join("\n");
-    if (mode === "legacy-corrupt") {
-      assert(failure instanceof MigrationNeedsHelpError);
-      assert(failure.cause instanceof SyntaxError);
-      assert.match(failure.cause.message, /SYNTHETIC/, "The parser excerpt must contain the synthetic secret");
+    if (mode === "legacy-corrupt" || mode === "completed-corrupt") {
+      const cause = failure instanceof MigrationNeedsHelpError ? failure.cause : failure;
+      assert(cause instanceof SyntaxError);
+      assert.match(cause.message, /SYNTHETIC/, "The parser excerpt must contain the synthetic secret");
       assert(!output.includes("SYNTHETIC"), "Migration parse errors must hide synthetic secret fragments");
     }
     assert(output.includes(reason), output);
@@ -66,7 +67,7 @@ export async function checkMigrationFailures(directory: string, repository: stri
 
 function preparationAdapter(mode: string): string {
   return `const mode=${JSON.stringify(mode)};
-export async function readFile(){return '{}';}
+export async function readFile(){return mode==='completed-corrupt'?'{"dashboardBluetoothSecret":SYNTHETIC-SECRET}':'{}';}
 export function settingsPaths(){return {settingsFile:'/synthetic/settings.json'};}
 export function parseSettingsDocument(){return {document:{migration:{complete:true}}};}
 export async function exists(path){return path.endsWith('settings.json') ? mode.startsWith('completed') : path.endsWith('src/index.ts') && (mode==='legacy-conflict'||mode==='legacy-corrupt');}
