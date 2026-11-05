@@ -6,12 +6,17 @@ It is developed on a **2021 Eva Ribelle**. Other models need checking: some disp
 
 ## What it looks like
 
-Current dashboard with sample data; coolant readings use the optional probes. Tap a screenshot to enlarge it.
+Current dashboard with synthetic sample data; coolant readings use the optional probes. Tap a screenshot to enlarge it.
 
 | Ride | Charge | Faults |
 | :-: | :-: | :-: |
-| [<img src="docs/images/dashboard-ride-dark.png" width="180" alt="Ride screen for speed, power, battery and coolant temperatures">](docs/images/dashboard-ride-dark.png) | [<img src="docs/images/dashboard-charge-dark.png" width="180" alt="Charge screen for battery percentage, charging power, current and automatic current control">](docs/images/dashboard-charge-dark.png) | [<img src="docs/images/dashboard-faults-dark.png" width="180" alt="Faults screen for named active trouble codes and diagnostic counters">](docs/images/dashboard-faults-dark.png) |
-| Speed, power, cooling. | Charge and current. | Named trouble codes. |
+| [<img src="docs/images/dashboard-ride-dark.png" width="180" alt="Ride screen showing speed, drive power, available power and coolant readings">](docs/images/dashboard-ride-dark.png) | [<img src="docs/images/dashboard-charge-dark.png" width="180" alt="Charge screen showing delivered power, estimated arrival, current request and observed temperature limits">](docs/images/dashboard-charge-dark.png) | [<img src="docs/images/dashboard-faults-dark.png" width="180" alt="Faults summary with the whole count, expected split and two named previews">](docs/images/dashboard-faults-dark.png) |
+| Speed, power and power limits. | Charging, temperature curve and current request. | Counts and named trouble codes; full report one tap away. |
+
+| Cooling | Range | Cells | All |
+| :-: | :-: | :-: | :-: |
+| [<img src="docs/images/dashboard-cooling-dark.png" width="180" alt="Cooling screen with coolant, battery, motor and ambient temperatures plus fan status">](docs/images/dashboard-cooling-dark.png) | [<img src="docs/images/dashboard-range-dark.png" width="180" alt="Range screen with weakest-cell margin, cut-off timer and drive and regen current allowances">](docs/images/dashboard-range-dark.png) | [<img src="docs/images/dashboard-cells-dark.png" width="180" alt="Cells sub-tab with the complete 81-cell strip, voltage spread and cell positions">](docs/images/dashboard-cells-dark.png) | [<img src="docs/images/dashboard-all-dark.png" width="180" alt="All screen with six live readings above the filter and raw signal grid">](docs/images/dashboard-all-dark.png) |
+| Temperatures and fan status. | Weak-cell margin and current allowances. | All 81 cell voltages. | Live snapshot; raw signals below. |
 
 ## What to buy
 
