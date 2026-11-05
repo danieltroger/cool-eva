@@ -35,9 +35,9 @@ if [ "$mode" = fetch ]; then
         base="http://snapshot.debian.org/archive/debian/$APT_SNAPSHOT/"
         case "$uri" in "$base"pool/*) ;; *) echo 'Unexpected package origin' >&2; exit 1 ;; esac
         if [ ! -f "$cache/archives/$filename" ]; then
-            if ! /usr/lib/apt/apt-helper -o Acquire::Retries=0 download-file "$uri" "$cache/archives/$filename.part" "$digest"; then
+            if ! /usr/lib/apt/apt-helper -o Acquire::Retries=5 download-file "$uri" "$cache/archives/$filename.part" "$digest"; then
                 echo "Snapshot fetch failed; requesting the identical authenticated bytes from Debian's official pool: $filename"
-                /usr/lib/apt/apt-helper -o Acquire::Retries=0 download-file "http://deb.debian.org/debian/${uri#"$base"}" "$cache/archives/$filename.part" "$digest"
+                /usr/lib/apt/apt-helper -o Acquire::Retries=5 download-file "http://deb.debian.org/debian/${uri#"$base"}" "$cache/archives/$filename.part" "$digest"
             fi
             mv "$cache/archives/$filename.part" "$cache/archives/$filename"
         fi

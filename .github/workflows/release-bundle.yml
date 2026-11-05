@@ -54,8 +54,8 @@ jobs:
         id: sources
         with:
           path: |
-            dist/qemu-tools/*.tar.xz
-            dist/qemu-tools/*.tar.gz
+            dist/qemu-tools/qemu-11.1.3.tar.xz
+            dist/qemu-tools/libslirp-v4.9.7.tar.gz
           key: ${{ steps.keys.outputs.sources-key }}
       - name: Fetch missing QEMU sources and verify pinned hashes
         run: sh scripts/install-check/setup-tools.sh dist/qemu-tools fetch-only
@@ -63,8 +63,8 @@ jobs:
         if: steps.sources.outputs.cache-hit != 'true'
         with:
           path: |
-            dist/qemu-tools/*.tar.xz
-            dist/qemu-tools/*.tar.gz
+            dist/qemu-tools/qemu-11.1.3.tar.xz
+            dist/qemu-tools/libslirp-v4.9.7.tar.gz
           key: ${{ steps.keys.outputs.sources-key }}
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: builder
@@ -113,8 +113,8 @@ jobs:
         id: sources
         with:
           path: |
-            dist/qemu-tools/*.tar.xz
-            dist/qemu-tools/*.tar.gz
+            dist/qemu-tools/qemu-11.1.3.tar.xz
+            dist/qemu-tools/libslirp-v4.9.7.tar.gz
           key: ${{ needs.inputs.outputs.sources-key }}
           fail-on-cache-miss: true
       - name: Prove offline builder, cache tamper rejection and source hashes
@@ -187,8 +187,8 @@ jobs:
         id: sources
         with:
           path: |
-            dist/qemu-tools/*.tar.xz
-            dist/qemu-tools/*.tar.gz
+            dist/qemu-tools/qemu-11.1.3.tar.xz
+            dist/qemu-tools/libslirp-v4.9.7.tar.gz
           key: ${{ needs.inputs.outputs.sources-key }}
           fail-on-cache-miss: true
       - name: Build pinned QEMU (test host only)

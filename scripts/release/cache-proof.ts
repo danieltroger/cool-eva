@@ -4,11 +4,36 @@ import { promisify } from "node:util";
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildBuilderImage } from "./cache.ts";
+import { buildBuilderImage, OFFLINE_NETWORK_ARGUMENTS } from "./cache.ts";
 import { readBundleInputs } from "./inputs.ts";
 
 export async function proveBuilderCache(repository: string, cache: string, sources: string): Promise<void> {
   await buildBuilderImage(repository, cache, "cool-eva-builder:offline-proof");
+  await assert.rejects(
+    promisify(execFile)("docker", [
+      "run",
+      "--rm",
+      "--platform=linux/arm64",
+      ...OFFLINE_NETWORK_ARGUMENTS,
+      "cool-eva-builder:offline-proof",
+      "curl",
+      "--fail",
+      "--show-error",
+      "--silent",
+      "--noproxy",
+      "*",
+      "--connect-timeout",
+      "3",
+      "--max-time",
+      "5",
+      "--output",
+      "/dev/null",
+      "https://deb.debian.org/debian/README",
+    ]),
+    /curl: \((6|7|28)\)/,
+    "Offline container must refuse an attempted fetch"
+  );
+  console.log("Offline positive control: attempted fetch refused inside network=none container.");
   const inputs = await readBundleInputs(repository);
   for (const [name, mutation, expected] of [
     [
@@ -42,7 +67,7 @@ export async function proveBuilderCache(repository: string, cache: string, sourc
           "run",
           "--rm",
           "--platform=linux/arm64",
-          "--network=none",
+          ...OFFLINE_NETWORK_ARGUMENTS,
           "--volume",
           `${join(cache, "apt")}:/cache:ro`,
           "--volume",

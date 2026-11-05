@@ -44,7 +44,7 @@ export async function prepareBuilderInputs(
       "run",
       "--rm",
       "--platform=linux/arm64",
-      ...(mode === "verify" ? ["--network=none"] : []),
+      ...(mode === "verify" ? OFFLINE_NETWORK_ARGUMENTS : []),
       "--volume",
       `${join(sourceDirectory, "scripts/release")}:/recipe:ro`,
       "--volume",
@@ -96,7 +96,7 @@ export async function buildBuilderImage(sourceDirectory: string, cacheDirectory:
       [
         "build",
         "--no-cache",
-        "--network=none",
+        ...OFFLINE_NETWORK_ARGUMENTS,
         "--platform=linux/arm64",
         "--tag",
         tag,
@@ -120,6 +120,8 @@ export const BUILDER_RECIPE = [
   "builder-repositories.sha256",
   "cache.ts",
 ];
+
+export const OFFLINE_NETWORK_ARGUMENTS = ["--network=none"] as const;
 
 async function assertRegularTree(directory: string): Promise<void> {
   if (!(await lstat(directory)).isDirectory()) {
