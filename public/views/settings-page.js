@@ -18,6 +18,7 @@ import { SettingsRestart } from "./settings-restart.js";
 import { DashboardBluetooth } from "./settings-bluetooth.js";
 import { MotorcycleConnection } from "./settings-hub.js";
 import { CanRestartButton, UpdateButton } from "./pi-actions.js";
+import { ScreenGeometry } from "./screen-geometry.js";
 
 const { a, button, div, h2 } = van.tags;
 import { SETTINGS_MAP } from "../lib/settings-map.js";
@@ -161,7 +162,8 @@ function SettingsContent(section) {
           "",
           () => div({ class: "settings-note" }, settings.val?.version ?? "Unconfirmed"),
           UpdateButton()
-        )
+        ),
+        SettingsCard("Screen geometry", "", ScreenGeometry())
       );
     case "advanced":
       return div(

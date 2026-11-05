@@ -1,5 +1,6 @@
 import assert from "assert/strict";
 import { evaluateOnPage, gotoPage, waitOnPage, type HeadlessPage } from "./headless-page.ts";
+import { checkScreenGeometry } from "./screen-geometry-browser.ts";
 
 export async function checkSettingsBrowser(page: HeadlessPage, previewFile: string): Promise<void> {
   await gotoPage(page, `file://${previewFile}?scene=parked&panel=settings&section=bike&settings=unconfirmed`);
@@ -105,6 +106,7 @@ export async function checkSettingsBrowser(page: HeadlessPage, previewFile: stri
   );
   assert.deepEqual(dimensions, [390, 390, 44]);
   await checkConnectionLayouts(page, previewFile);
+  await checkScreenGeometry(page, previewFile);
   console.log(
     "  ✓ settings: unread choices, fault/CSRF distinction, zero-height dismissal, full-width connection fields, compact actions and the actual Siri repair route"
   );
