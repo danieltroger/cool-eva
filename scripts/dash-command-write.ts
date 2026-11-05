@@ -35,7 +35,7 @@ const WRITE_SETTLE_MS = 40; // let the VCU apply a write before the confirming r
 const DEFAULT_HOLD_SECONDS = 8; // time to eyeball the beam with the value set, before restoring
 
 // Only these two ids may be written without --force-id: the light-labelled dash commands
-// (Energica's dash-command definitions). Everything else on this channel is charge/map/fan config we do
+// (another owner's tool). Everything else on this channel is charge/map/fan config we do
 // not want to fat-finger onto a live bus. --force-id lifts the guard deliberately.
 const WRITE_ALLOWLIST: Record<number, string> = {
   0x15: "LPR mode (0=off / 1=on)",
