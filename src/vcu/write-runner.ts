@@ -619,17 +619,12 @@ export function serviceActionPolicy(kind: ServiceWriteRequest["kind"]): ServiceA
     case "charge-stop":
       return { bikeStateGateApplies: false, refusedWhileCharging: false, tableGateApplies: false };
 
-    // ⚠️ THE GATE APPLIES, unlike the two charge commands above, and the difference is argued
-    // rather than inherited. The exemption above exists because an AUTOMATIC controller issues
-    // charge-current mid-charge and a flapping refusal breaks its loop; the SOC limit is a one-off
-    // human press, where a transient refusal costs a second press. And the gate is exactly the
-    // coverage this needs: scripts/check-service-gate-charging.ts has it passing
-    // stationary-DRIVE-DOWN-unplugged and stationary-AC-charging, and refusing while the bike moves
-    // — and refusing a stationary ENERGIZED bike with the drive up, which "unplugged" overstates —
-    // `bikeStateGateApplies: false` would not. It is the read-service-stamp row for that reason.
+    // Daniel allows the stored SOC limit in drive: it only changes when charging stops.
+    // The write's own answered pre-read establishes liveness; other gates still apply.
+    // Superseded stationary-only rationale: docs/dash-command-0x2c-charge-limit.md.
     case "charge-soc-limit":
     case "charge-soc-limit-read":
-      return { bikeStateGateApplies: true, refusedWhileCharging: false, tableGateApplies: false };
+      return { bikeStateGateApplies: false, refusedWhileCharging: false, tableGateApplies: false };
 
     // ⚠️ Reversible, so not on the irreversible tier — but `11 02` is also the charge manager's
     // bootloader-entry service and a live charge is managed by these very controllers.

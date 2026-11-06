@@ -3,10 +3,7 @@ import { readFile, readdir } from "fs/promises";
 import { blockAt, declarationBody } from "./source-blocks.ts";
 import { ARM_DWELL_MS, arm, armDwellElapsed, armed, refuseKeyRepeat } from "../public/lib/arming.js";
 import { ARMED_KEY as CHARGE_CURRENT_KEY } from "../public/views/charge-current.js";
-import {
-  ARMED_KEY as CHARGE_SOC_LIMIT_KEY,
-  READ_ARMED_KEY as CHARGE_SOC_LIMIT_READ_KEY,
-} from "../public/views/charge-soc-limit.js";
+import { ARMED_KEY as CHARGE_SOC_LIMIT_KEY } from "../public/views/charge-soc-limit.js";
 import { ARMED_KEY as CHARGE_STOP_KEY } from "../public/views/charge-stop.js";
 import { ARMED_KEY as FREEZE_FRAME_READ_KEY } from "../public/views/freeze-frame-read.js";
 import { ARMED_KEY as LIFETIME_READ_KEY } from "../public/views/lifetime-read.js";
@@ -23,7 +20,7 @@ import { fetchChargeWriteStatus, writeStatus } from "../public/lib/charge-write.
 // views/vcu-write.js (a parameter write, `31 FC`, Mode 04 and the bike's own clock),
 // views/charge-current.js, views/charge-stop.js, views/service-mode.js, views/lifetime-read.js
 // and views/pi-actions.js — each spell the gate out again at their own `onclick`, so half of
-// what is asserted here is that all eleven firing sites still spell it the same way (§7). A gate
+// what is asserted here is that all confirmed firing sites still spell it the same way (§7). A gate
 // one site forgot is exactly as absent as one that was deleted.
 //
 // The dwell is time-based, so `arm()` and `armDwellElapsed()` take an optional reading and this
@@ -36,7 +33,7 @@ import { fetchChargeWriteStatus, writeStatus } from "../public/lib/charge-write.
 //
 // Same shape as scripts/check-irreversible-actions.ts, and for the same reason: public/ is ES
 // modules with no build step, so a browser file imports straight into Node. What needs a DOM is
-// the eleven `onclick` bodies, which is why §7 and §8 read them rather than running them.
+// the confirmed `onclick` bodies, which is why §7 and §8 read them rather than running them.
 
 let failures = 0;
 
@@ -176,10 +173,6 @@ check(
 const ALL_KEYS = [
   CHARGE_CURRENT_KEY,
   CHARGE_SOC_LIMIT_KEY,
-  // The SOC control's READ button is a second control in the same file, so §5 counts it. Imported
-  // rather than re-typed: a rename of the view's key would otherwise leave a stale-but-unique
-  // literal here and §5 would stay green.
-  CHARGE_SOC_LIMIT_READ_KEY,
   CHARGE_STOP_KEY,
   ...literalKeys,
   // The read-only action, spelled out because nothing exports it — it is the one ActionButton
@@ -276,7 +269,7 @@ check(
 // src/http/vcu-write.ts rather than trusting a sentence about it. An eighth firing site, or one
 // that drops a line of the rule, is what this section exists to make loud.
 
-console.log("\n7. the eleven firing sites, and the rule each of them repeats");
+console.log("\n7. the confirmed firing sites, and the rule each of them repeats");
 
 const SITES = ARMING_CONSUMERS.flatMap(path => firingSites(path, sourceOf(path)));
 console.log(`   found: ${SITES.map(site => shortName(site)).join(", ")}`);
@@ -286,10 +279,8 @@ console.log(`   found: ${SITES.map(site => shortName(site)).join(", ")}`);
 // four keyed controls, which is why this is a list of firing sites and §5's is a list of keys.
 const EXPECTED_SITES = [
   "charge-current.js → performChargeCurrent",
-  // The SOC charge limit's two buttons. The READ takes two taps as well — read-only or not it
-  // puts a frame on the bike's bus, which is the same argument service-mode.js's sweep settled.
+  // The SOC read loads on entry; its single Set control retains confirmation.
   "charge-soc-limit.js → performSocLimit",
-  "charge-soc-limit.js → performSocLimitRead",
   "charge-stop.js → performChargeStop",
   // Both arrived with the in-service lifetime read. `performSweep` is the OLDER control:
   // it had two taps of its own with no dwell and no key-repeat refusal, and §3's scan
@@ -543,7 +534,7 @@ if (failures > 0) {
 } else {
   console.log("✓ two taps 400 ms apart, the second ignored rather than disarmed inside the dwell, one key for the");
   console.log("  whole dashboard with no two controls sharing it, every refresh disarming what it lands under, and");
-  console.log("  all eleven firing sites still spelling the same rule — on the injected clock and on the real one");
+  console.log("  all confirmed firing sites still spelling the same rule — on the injected clock and on the real one");
 }
 
 /**
@@ -614,7 +605,7 @@ function firingSites(file: string, source: string): FiringSite[] {
 
 /**
  * The key one firing site refuses a tap on. Spelled once: §7 asks it per site and §7b asks it of
- * all eleven, and a regex that lived in both places would be widened in one of them.
+ * all firing sites, and a regex that lived in both places would be widened in one of them.
  */
 function refusedKeyOf(site: FiringSite): string {
   return keyOf(site.file, site.body.match(/armed\.val !== (\w+|"[^"]*")/)?.[1]);

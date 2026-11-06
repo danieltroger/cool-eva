@@ -40,6 +40,8 @@ These source comments record constraints and observations from the retired layou
     // when those are not arriving there is nothing honest to put in them.
 ```
 
+**Historical policy before Daniel’s 2026-11-06 ruling:** the preserved block below describes the former SOC stationary gate. Controls now reads automatically on entry; SOC read/Set are allowed in drive, while Set requires an answered pre-read and retains permission, header/JSON, lease and confirmation. See [the current protocol policy](dash-command-0x2c-charge-limit.md#gating).
+
 ```text
 // Render nothing unless this Pi has writes enabled — on an ordinary phone these are invisible
     // and Charge stays read-only. The first three also need a LIVE charge; the SOC limit does not

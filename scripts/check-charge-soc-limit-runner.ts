@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RawChannel } from "socketcan";
-import { record, recordArrival } from "../src/can/signals.ts";
+import { recordArrival } from "../src/can/signals.ts";
 import { monotonicNow } from "../src/monotonic.ts";
 import { performChargeSocLimit, performChargeSocLimitRead } from "../src/vcu/charge-soc-limit.ts";
 import { MAX_SOC_LIMIT_PCT } from "../src/can/charge-soc-limit.ts";
@@ -56,29 +56,34 @@ console.log(
   "\n✓ the read-back accepts only a reply that arrived AFTER its own request — the bike's answer to the " +
     "write does not satisfy it — a matching reply reads `written`, a different one `read-back-mismatch`, " +
     "no reply at all `unverified` rather than a false claim that nothing changed, both actions are " +
-    "protected by the bike-state gate rather than by a private liveness read, and the dashboard's " +
+    "allowed in drive with an answered pre-read required before any limit write, and the dashboard's " +
     "percentage ceiling equals the Pi's"
 );
 
 async function runSections(): Promise<void> {
-  console.log("\n1. ⚠️  this module has NO liveness check of its own, and must not grow one");
-  // It used to: a private read of `fast_dc_limit_max_a` at 5 s. Both actions take the bike-state
-  // gate, which `checkPreconditions` runs first over seven broadcasts fresh within 1 s, fail-closed
-  // — so the private one could only ever refuse something the gate had already refused, or refuse
-  // FALSELY when that one signal went quiet and the gate's did not. It is gone; this is the line
-  // that says why it may stay gone. Flip either policy to `false` and this goes red, which is the
-  // moment a liveness check would be needed again. The per-scenario refusals live where the bytes
-  // are, in scripts/check-service-gate-charging.ts §3.
+  console.log("\n1. pre-read liveness replaces the SOC-only stationary gate");
   for (const kind of ["charge-soc-limit", "charge-soc-limit-read"] as const) {
+    check(`${kind} is permitted in drive`, !serviceActionPolicy(kind).bikeStateGateApplies);
+  }
+  for (const cached of [false, true]) {
+    staleEverything();
+    if (cached) answer(80);
+    const noReply = makeChannel({ readAnswers: [null], writeEcho: null });
+    const result = await performChargeSocLimit({ directory }, 90, noReply.channel);
+    check(`unanswered pre-read refuses with cached=${cached}`, !result.ok);
+    check("no limit was sent, though a read was attempted", noReply.sent.length === 1 && noReply.sent[0][0] === 0x2c);
     check(
-      `${kind} is protected by the bike-state gate, not by a private read`,
-      serviceActionPolicy(kind).bikeStateGateApplies
+      "the refusal describes the limit, not all traffic",
+      !result.ok && result.reason.includes("no limit was sent")
     );
   }
+  staleEverything();
+  const zeroBefore = makeChannel({ readAnswers: [0, 90], writeEcho: null });
+  const zeroResult = await performChargeSocLimit({ directory }, 90, zeroBefore.channel);
+  check("an answered zero is valid liveness", zeroResult.ok && zeroResult.result.status === "written");
 
   console.log("\n2. ⚠️  the mark: the bike's answer to the WRITE must not satisfy the READ-back");
   staleEverything();
-  wakeBike();
   // The bike answers the write with a 0x121 carrying the value we asked for — the 2026-09-09
   // behaviour — and then never answers the read that follows. If the mark were taken before the
   // write, that echo would be read as the read-back and this would come back `written`.
@@ -97,7 +102,6 @@ async function runSections(): Promise<void> {
 
   console.log("\n3. a reply that really does arrive after the read");
   staleEverything();
-  wakeBike();
   const good = makeChannel({ readAnswers: [80, 90], writeEcho: null });
   const goodResult = await performChargeSocLimit({ directory }, 90, good.channel);
   check('a matching read-back reads "written"', goodResult.ok && goodResult.result.status === "written");
@@ -110,7 +114,6 @@ async function runSections(): Promise<void> {
 
   console.log("\n4. a reply that disagrees");
   staleEverything();
-  wakeBike();
   const wrong = makeChannel({ readAnswers: [80, 85], writeEcho: null });
   const wrongResult = await performChargeSocLimit({ directory }, 90, wrong.channel);
   check(
@@ -121,13 +124,11 @@ async function runSections(): Promise<void> {
 
   console.log("\n5. the read action on its own");
   staleEverything();
-  wakeBike();
   const reader = makeChannel({ readAnswers: [90], writeEcho: null });
   const readResult = await performChargeSocLimitRead({ directory }, reader.channel);
   check("a read returns the stored value", readResult.ok && readResult.result.message.includes("90 %"));
   check("…having sent ONE frame, bit 7 CLEAR", reader.sent.length === 1 && reader.sent[0][0] === 0x2c);
   staleEverything();
-  wakeBike();
   const silent = makeChannel({ readAnswers: [null], writeEcho: null });
   const silentResult = await performChargeSocLimitRead({ directory }, silent.channel);
   check("a read nobody answers is refused rather than reported as a value", !silentResult.ok);
@@ -138,20 +139,14 @@ async function runSections(): Promise<void> {
   check(`MAX_PCT (${MAX_PCT}) === MAX_SOC_LIMIT_PCT (${MAX_SOC_LIMIT_PCT})`, MAX_PCT === MAX_SOC_LIMIT_PCT);
 }
 
-/** The awake evidence the actions gate on — 0x625 b2, broadcast whenever the bike is awake. */
-function wakeBike(): void {
-  record("fast_dc_limit_max_a", 80);
-}
-
 /**
- * Ages both signals out, so every section starts from the same bike regardless of the order they
+ * Ages stored SOC evidence out, so every section starts from the same bike regardless of the order they
  * run in. ⚠️ `recordArrival` with a mark in the past rather than a `resetSignals()` added to
  * production for a check's convenience — it is the documented bypass, and sleeping instead would
  * make this file's verdict a measured ratio that load inflates (src/can/signals.ts).
  */
 function staleEverything(): void {
   const longAgo = monotonicNow() - 60_000;
-  recordArrival("fast_dc_limit_max_a", 80, Date.now(), longAgo);
   recordArrival("charge_soc_limit_pct", 0, Date.now(), longAgo);
 }
 

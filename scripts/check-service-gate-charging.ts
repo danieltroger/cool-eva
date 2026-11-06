@@ -176,9 +176,9 @@ const CHARGING_AC: [number, string][] = [
   [0x305, AC_305],
 ];
 
-// {bike state} × {read, parameter write, reset-vcu, charge-current, charge-stop}. Reads and
-// parameter writes are the gate; the other three are serviceActionPolicy plus the session
-// predicates, called rather than restated.
+// Bike state × service read, parameter write, reset and charging/SOC commands. Service reads
+// and parameter writes retain the gate; SOC is exempt. The shipped policy/session composition
+// is called rather than restated.
 const TABLE: { state: string; frames: [number, string, number?][]; gate: boolean; reset: boolean; charge: boolean }[] =
   [
     {
@@ -276,7 +276,10 @@ for (const row of TABLE) {
 
   // Reads and parameter writes both ride the bike-state gate — that they do is §6's job, so
   // this row asserts the verdict once rather than twice with a constant `&&`ed onto it.
-  check(`${row.state} · read and parameter write ${row.gate ? "allowed" : "refused"}`, verdict.safe === row.gate);
+  check(
+    `${row.state} · service read and parameter write ${row.gate ? "allowed" : "refused"}`,
+    verdict.safe === row.gate
+  );
   // ⚠️ reset-vcu is NOT gate-exempt, so it refuses wherever the gate does AND wherever a
   // session is live — the two reasons compose, and a row that is unsafe for a read is
   // unsafe for a reset whether or not anything is plugged in.
@@ -296,15 +299,10 @@ for (const row of TABLE) {
     serviceActionPolicy("charge-stop").bikeStateGateApplies ===
       serviceActionPolicy("charge-current").bikeStateGateApplies
   );
-  // ⚠️ The SOC charge limit tracks `row.gate` exactly — the opposite of charge-current on the two
-  // rows where they differ, which a policy-triple restatement cannot show. Why it takes the gate:
-  // serviceActionPolicy in src/vcu/write-runner.ts.
+  // The stored SOC limit is independent of drive/motion, while all other policies remain pinned below.
   for (const kind of ["charge-soc-limit", "charge-soc-limit-read"] as const) {
     const allowed = serviceActionRefusal(serviceActionPolicy(kind), verdict, read, kind) === null;
-    check(
-      `${row.state} · ${kind} ${row.gate ? "allowed" : "refused"} — follows the gate, not the session`,
-      allowed === row.gate
-    );
+    check(`${row.state} · ${kind} allowed independently of bike state`, allowed);
   }
 }
 
@@ -507,10 +505,8 @@ const EXPECTED: Record<ServiceWriteRequest["kind"], [boolean, boolean, boolean]>
   "clear-dtcs": [true, false, false],
   "charge-current": [false, false, false],
   "charge-stop": [false, false, false],
-  // ⚠️ TAKE the bike-state gate, unlike the two charge commands above — argued at the decision
-  // site, serviceActionPolicy in src/vcu/write-runner.ts. §3's rows are where it is exercised.
-  "charge-soc-limit": [true, false, false],
-  "charge-soc-limit-read": [true, false, false],
+  "charge-soc-limit": [false, false, false],
+  "charge-soc-limit-read": [false, false, false],
   "reset-vcu": [true, true, false],
 };
 const KINDS = Object.keys(EXPECTED) as ServiceWriteRequest["kind"][];
@@ -525,8 +521,9 @@ for (const kind of KINDS) {
   );
 }
 check(
-  "exactly two actions are exempt from the bike-state gate",
-  KINDS.filter(kind => !serviceActionPolicy(kind).bikeStateGateApplies).length === 2
+  "exactly the four charging/SOC actions are exempt from the bike-state gate",
+  JSON.stringify(KINDS.filter(kind => !serviceActionPolicy(kind).bikeStateGateApplies).sort()) ===
+    JSON.stringify(["charge-current", "charge-stop", "charge-soc-limit", "charge-soc-limit-read"].sort())
 );
 check(
   "exactly one action is refused while charging",

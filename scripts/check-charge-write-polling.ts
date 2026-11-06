@@ -436,10 +436,9 @@ check(
 
 // ── §7 the mount fetch: one request, and only when there is nothing to show ───────────
 //
-// ⚠️ The SOC-limit control does not ride the charge-session edge — the Pi gates it on the
-// bike-state gate, which passes a parked unplugged bike — so it asks for the status itself when
-// the Charge tab mounts. That is the one call in this module allowed to fetch off a session edge,
-// and it must stay a fetch rather than becoming a poll: this section is the whole specification.
+// The stored SOC limit is available outside a charge session, including in drive. Its opening
+// read reuses held permission, joins a pending GET or fetches once when neither exists. Mounting
+// must not become polling or disarm another gesture; these assertions keep that contract.
 const { ensureWriteStatus, applyWriteStatus } = await import("../public/lib/charge-write.js");
 const { armed } = await import("../public/lib/arming.js");
 

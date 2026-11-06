@@ -70,7 +70,6 @@ export async function checkChargeActions(page: HeadlessPage, file: string) {
       "input[name=charge-soc-limit-pct]",
       "[data-charge-action=current]",
       "[data-charge-action=limit-set]",
-      "[data-charge-action=limit-read]",
       "[data-charge-action=automatic]",
     ]);
     await assertControlsFit(page);
@@ -136,35 +135,17 @@ export async function checkChargeActions(page: HeadlessPage, file: string) {
     await openPreview(page, file, "#charge/controls", `controls-read-${theme}`, "&charge-scene=warm");
     await typeInput(page, "charge-soc-limit-pct", "90");
     await evaluateOnPage(page, "document.querySelector('[data-charge-action=limit-set]').click()");
+    await evaluateOnPage(page, FRAME);
+    assert.equal(await posts(page, "charge-soc-limit"), 0, "The first Set tap only confirms intent.");
     await waitOnPage(page, "ridingPreview('lib/arming.js').armed.rawVal==='charge-soc-limit'", "SOC limit arm");
+    await evaluateOnPage(page, "document.querySelector('[data-charge-action=limit-set]').click()");
+    assert.equal(await posts(page, "charge-soc-limit"), 0, "An immediate second Set tap retains the dwell.");
     await dwell(page);
     await evaluateOnPage(page, "document.querySelector('[data-charge-action=limit-set]').click()");
     await waitOnPage(page, "ridingPreview('lib/arming.js').armed.rawVal===''", "SOC limit result");
-    await evaluateOnPage(page, "document.querySelector('[data-charge-action=limit-read]').click()");
-    assert.equal(await posts(page), 1, "Read also needs its own second tap.");
-    await dwell(page);
-    await evaluateOnPage(
-      page,
-      "window.chargePreviewReplyMode='pending';document.querySelector('[data-charge-action=limit-read]').click()"
-    );
-    await waitOnPage(page, "!!window.releaseChargePreview", "pending read fixture");
-    assert.equal(
-      await evaluateOnPage(
-        page,
-        "document.querySelector('[data-charge-action=limit-read]').textContent.includes('Reading')"
-      ),
-      true
-    );
-    assert.equal(
-      await evaluateOnPage(
-        page,
-        "document.querySelector('[data-charge-action=limit-set]').textContent.includes('Sending')"
-      ),
-      false,
-      "A pending read cannot claim a write is sending."
-    );
-    await evaluateOnPage(page, "window.releaseChargePreview();window.chargePreviewReplyMode='success'");
-    await waitOnPage(page, "!document.querySelector('[data-charge-action=limit-read]').disabled", "read completes");
+    assert.equal(await posts(page, "charge-soc-limit"), 1, "Set remains a single confirmed write.");
+    assert.equal(await posts(page, "charge-soc-limit-read"), 1, "The opening read needs no button or arming.");
+    assert.equal(await evaluateOnPage(page, "document.querySelector('[data-charge-action=limit-read]')"), null);
     await evaluateOnPage(page, "document.querySelector('[data-charge-action=automatic]').click()");
     await waitOnPage(
       page,
@@ -180,7 +161,7 @@ export async function checkChargeActions(page: HeadlessPage, file: string) {
     await evaluateOnPage(page, "document.querySelector('[data-charge-action=stop]').click()");
     await waitOnPage(page, "ridingPreview('lib/arming.js').armed.rawVal==='charge-stop'", "Stop arm");
     await evaluateOnPage(page, "document.querySelector('[data-charge-action=stop]').click()");
-    assert.equal(await posts(page), 0, "Stop retains its dwell.");
+    assert.equal(await posts(page, "charge-stop"), 0, "Stop retains its dwell.");
     await dwell(page);
     await evaluateOnPage(page, "document.querySelector('[data-charge-action=stop]').click()");
     await waitOnPage(
@@ -188,7 +169,7 @@ export async function checkChargeActions(page: HeadlessPage, file: string) {
       "document.querySelector('.stop-result-summary').textContent.includes('Sent')",
       "Stop sent summary"
     );
-    assert.equal(await posts(page), 1);
+    assert.equal(await posts(page, "charge-stop"), 1);
     await assertFixedLayout(page);
     await evaluateOnPage(page, "document.querySelector('.charge-controller-summary').click()");
     await waitOnPage(page, "!!document.querySelector('.stop-operation-result')", "complete Stop result on Controls");
@@ -246,10 +227,10 @@ async function typeInput(page: HeadlessPage, name: string, value: string) {
 async function dwell(page: HeadlessPage) {
   await evaluateOnPage(page, `new Promise(resolve=>setTimeout(resolve,${ARM_DWELL_MS + 50}))`);
 }
-async function posts(page: HeadlessPage) {
+async function posts(page: HeadlessPage, action = "charge-current") {
   return await evaluateOnPage(
     page,
-    "window.chargePreviewRequests.filter(entry=>entry.method==='POST'&&entry.action!=='automatic').length"
+    `window.chargePreviewRequests.filter(entry=>entry.method==='POST'&&entry.action===${JSON.stringify(action)}).length`
   );
 }
 async function assertControlsFit(page: HeadlessPage) {

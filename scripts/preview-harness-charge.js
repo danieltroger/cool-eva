@@ -1,7 +1,16 @@
 // Synthetic Charge cases extend only the complete riding fixture; normal Settings/network fixtures remain intact.
 const chargeScene = new URLSearchParams(location.search).get("charge-scene");
 window.chargePreviewRequests = [];
-window.chargePreviewReplyMode = "success";
+window.chargePreviewReplyMode = new URLSearchParams(location.search).get("soc-reply") ?? "success";
+window.chargePreviewStatusMode = new URLSearchParams(location.search).get("write-status") ?? "success";
+window.chargePreviewStatusWaiters = [];
+window.releaseChargeStatus = (enabled = true) => {
+  WRITE_STATUS.enabled = enabled;
+  window.chargePreviewStatusMode = "success";
+  for (const resolve of window.chargePreviewStatusWaiters.splice(0)) {
+    resolve();
+  }
+};
 window.chargePreviewAutoReason = 4;
 if (ridingFixture.get("fixture") === "all-installed" && chargeScene) {
   const cold = chargeScene === "cold";
@@ -113,6 +122,15 @@ if (ridingFixture.get("fixture") === "all-installed" && chargeScene) {
         response.reasonText = "Waiting for the next controller tick.";
       }
       return json(response);
+    }
+    if (url.pathname.endsWith("/vcu-write") && method === "GET") {
+      window.chargePreviewRequests.push({ action: "status", method, query: url.search });
+      if (window.chargePreviewStatusMode === "pending") {
+        await new Promise(resolve => window.chargePreviewStatusWaiters.push(resolve));
+      }
+      if (window.chargePreviewStatusMode === "failed") {
+        throw new Error("Synthetic permission status unavailable");
+      }
     }
     if (url.pathname.endsWith("/vcu-write") && method === "POST") {
       const action = url.searchParams.get("action");

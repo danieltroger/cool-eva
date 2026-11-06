@@ -6,6 +6,8 @@ import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 
 import { readingStatus, statusWord, freshValue } from "../lib/reading-status.js";
 import { valueOf } from "../lib/store.js";
+import { peekView } from "../lib/router.js";
+import { destination } from "../lib/destination.js";
 import {
   applyWriteStatus,
   ensureWriteStatus,
@@ -22,8 +24,7 @@ import { request } from "../lib/transport.js";
  * controls beside it: an ordinary phone sees a read-only Charge tab.
  */
 export function ChargeSocLimitControl() {
-  // Once per mount of the Charge tab, and only when no status is held. The gate is not a
-  // WebSocket signal, so without this the control could never appear on an unplugged bike.
+  // Standalone control mounts share permission; only the route constructor starts a CAN read.
   void ensureWriteStatus();
   return div(() => {
     // ⚠️ The VALUE is a read-only signal, arriving over the WebSocket whenever the rider sets the
@@ -51,19 +52,8 @@ export function ChargeSocLimitControl() {
 
 const { button, div, input, span } = van.tags;
 
-// The bike's own "stop charging at N %" setting, from the charge tab — dash command 0x2C on the
-// 0x120 command channel (docs/dash-command-0x2c-charge-limit.md). Same gated /vcu-write path and
-// two-tap dwell as the controls beside it, and it renders nothing unless the Pi says writes are on.
-//
-// ⚠️ Unlike set-current and stop, this does NOT need a live charge. The limit is a stored setting
-// and the Pi gates it on the ordinary bike-state gate, which passes a parked, unplugged bike —
-// which is when you are most likely to be setting it. That is why this control mounts its own
-// one-shot status fetch instead of riding the charge-session edge (../lib/charge-write.js).
-//
-// ⚠️ It is the one write on this dashboard with a REAL read-back: the VCU answers a bit-7-clear
-// read with its stored value, so "written" here means the bike holds it, not that a frame left.
-// What it still does NOT mean is that the bike stops there — nobody has watched the limit be
-// reached — and the note under the button says so rather than implying a guarantee.
+// Stored SOC limit: confirmed Set, automatic opening read, and real read-back.
+// Current policy and superseded stationary/read-arming rationale: docs/dash-command-0x2c-charge-limit.md.
 
 /** @typedef {import("../../src/http/vcu-write.ts").VcuWriteResponse} VcuWriteResponse */
 
@@ -71,14 +61,8 @@ const { button, div, input, span } = van.tags;
 const wanted = van.state("");
 const socKnown = van.derive(() => valueOf("charge_soc_limit_pct") !== null);
 const busy = van.state(false);
-/**
- * Which POST is in flight, so one button's label never speaks for the other.
- *
- * ⚠️ It was a single boolean shared by both, which made the SET button read "⏳ Sending…" while a
- * READ was in flight — a write claim during a read, in the one control on this tab that is
- * otherwise careful not to overclaim.
- * @type {import("../vendor/van-1.6.1.js").State<"" | "write" | "read">}
- */
+/** Keeps opening-read progress separate from Set's send/verification state.
+ * @type {import("../vendor/van-1.6.1.js").State<"" | "write" | "read">} */
 const sending = van.state("");
 const message = van.state("");
 /** Whether the last command was accepted AND read back. Null when nothing has been tried. */
@@ -100,17 +84,6 @@ onChargeSessionEnd(() => {
 export const ARMED_KEY = "charge-soc-limit";
 
 /**
- * The READ's own key, so the two buttons cannot fire on each other's first tap.
- *
- * ⚠️ A read takes two taps as well, and that is the repo's convention rather than caution for its
- * own sake: service-mode.js's parameter sweep is read-only and has taken two taps since #130,
- * because read-only or not it puts frames on the bike's bus. A one-tap button beside a two-tap one
- * would also teach the thumb that buttons here act immediately, which is the habit the dwell exists
- * to prevent. Exported so check-arming.ts counts it as a control rather than re-typing the string.
- */
-export const READ_ARMED_KEY = "charge-soc-limit-read";
-
-/**
  * The highest percentage the command byte carries.
  *
  * ⚠️ It must equal `MAX_SOC_LIMIT_PCT` in src/can/charge-soc-command.ts, which is the number the
@@ -119,9 +92,22 @@ export const READ_ARMED_KEY = "charge-soc-limit-read";
  */
 export const MAX_PCT = 100;
 
+let openingEntryNumber = 0;
+
+/** Called only by the route constructor; raw reads before await avoid subscribing that binding. */
+export async function readChargeSocLimitOnEntry() {
+  if (peekView() !== "charge-controls" || destination.rawVal !== "") return;
+  const entryNumber = ++openingEntryNumber;
+  const answered = await ensureWriteStatus();
+  if (entryNumber !== openingEntryNumber || peekView() !== "charge-controls" || destination.rawVal !== "") return;
+  if (!answered || !writesEnabled() || busy.rawVal || armed.rawVal !== "") return;
+  await performSocLimitRead();
+}
+
 /** What the bike says its limit is, or that nobody has asked yet. */
 function CurrentValue() {
   return div({ class: "value", "data-saved-charge-limit": "" }, () => {
+    if (sending.val === "read") return "Reading…";
     const limit = freshValue("charge_soc_limit_pct");
     return limit === null
       ? statusWord(readingStatus("charge_soc_limit_pct"), "Unknown")
@@ -196,41 +182,6 @@ function SetRow() {
   );
 }
 
-function ReadButton() {
-  return button(
-    {
-      class: "action",
-      "data-charge-action": "limit-read",
-      onkeydown: refuseKeyRepeat,
-      disabled: () => busy.val,
-      onclick: () => {
-        if (armed.val !== READ_ARMED_KEY) {
-          arm(READ_ARMED_KEY);
-          return;
-        }
-        if (!armDwellElapsed()) {
-          return;
-        }
-        armed.val = "";
-        void performSocLimitRead();
-      },
-    },
-    () => {
-      if (sending.val === "read") {
-        return "⏳  Reading…";
-      }
-      if (busy.val) {
-        return "…";
-      }
-      return armed.val === READ_ARMED_KEY ? "Confirm read limit" : "Read limit";
-    }
-  );
-}
-
-export function ChargeLimitReadControl() {
-  return div(() => (writesEnabled() ? ReadButton() : div()));
-}
-
 function Outcome() {
   return div({ class: "action-note" }, () => {
     const result = lastResult.val;
@@ -289,7 +240,7 @@ async function performSocLimitRead() {
 /**
  * POSTs one action and records what came back.
  * @param {URLSearchParams} query
- * @param {"write" | "read"} kind which button is waiting, so only its own label says so
+ * @param {"write" | "read"} kind keeps read progress separate from Set verification
  */
 async function post(query, kind) {
   message.val = "";
@@ -304,18 +255,21 @@ async function post(query, kind) {
     });
     payload = /** @type {VcuWriteResponse} */ (await response.json());
     applyWriteStatus(payload);
-    message.val = payload.result?.message ?? payload.message ?? "";
+    message.val =
+      kind === "read" && payload.result?.succeeded ? "" : (payload.result?.message ?? payload.message ?? "");
   } catch (error) {
     // ⚠️ A request that did not come back may still have reached the bike — the frame goes out
     // before the response — so this is NOT "nothing happened". Read it back before retrying.
     message.val =
       `Could not reach the Pi — ${error instanceof Error ? error.message : String(error)}. ` +
-      "This does NOT guarantee nothing was sent — read the limit before trying again.";
+      (kind === "read"
+        ? "Reopen Controls to try reading it again."
+        : "This does NOT guarantee nothing was sent — reopen Controls to read it again before retrying.");
     console.warn("charge-soc-limit: request failed", error);
   } finally {
     sending.val = "";
     busy.val = false;
   }
   armed.val = "";
-  lastResult.val = payload?.result ? payload.result.succeeded : null;
+  lastResult.val = kind === "write" && payload?.result ? payload.result.succeeded : null;
 }

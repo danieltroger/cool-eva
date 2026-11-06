@@ -12,8 +12,8 @@ import { request } from "./transport.js";
 // offered, and so each stays under the file-size line.
 //
 // ⚠️ They do NOT all need the same answers, which is newer than the rest of this file: the first
-// two are session-scoped, while the SOC limit takes the bike-state gate and is offered on a
-// parked, unplugged bike. `ensureWriteStatus` below is the seam for that.
+// two are session-scoped, while the stored SOC limit is available in drive as well.
+// `ensureWriteStatus` below shares permission evidence for the opening read.
 //
 // ⚠️ Session presence and the AC/DC label ride on charge_manager_state (0x610 b7), NOT charge_type:
 // charge_type flaps 1↔0 within one plug-in as the charger pauses delivery (docs/charge-manager.md),
@@ -131,8 +131,9 @@ let statusAskedAt = /** @type {number | null} */ (null);
 /** ⚠️ Paced from the START of a request, so without this a request that HANGS stacks another every
  * STATUS_RETRY_MS — twelve a minute at the far end of a garage. `fetch` has no timeout of its own. */
 let statusInFlight = false;
-/** The mount fetch's own in-flight flag. ⚠️ Deliberately NOT the derive's — see ensureWriteStatus. */
-let mountFetchInFlight = false;
+/** Explicit settle/arm refreshes keep their ownership; mounting joins a real pending request. */
+const pendingStatusRequests = new Set(/** @type {Promise<boolean>[]} */ ([]));
+let statusGeneration = 0;
 van.derive(() => {
   const type = liveChargeType();
   const live = type !== null;
@@ -147,6 +148,8 @@ van.derive(() => {
       // A request still in flight belongs to the session that just ended; the next one must not
       // wait behind it. Its own `finally` is a no-op after this.
       statusInFlight = false;
+      statusGeneration++;
+      pendingStatusRequests.clear();
       applyWriteStatus(null);
       for (const listener of sessionEndListeners) {
         listener();
@@ -239,30 +242,16 @@ export function applyWriteStatus(payload) {
   chargeAck.val = payload?.status?.chargeAck ?? null;
 }
 
-/**
- * Fetches the gate ONCE when a control mounts that is not tied to a charge session.
- *
- * ⚠️ NOT a poll, and it must not become one: at most one request per Charge-tab mount and per
- * charge ending, only when no status is held, and never while anything is ARMED — a fetch clears
- * `armed` and would disarm another control's primed button mid-gesture.
- *
- * ⚠️ It READS the derive's `statusInFlight` and never writes it, which is why it keeps a flag of
- * its own: a session ending force-clears that flag, so a mount fetch settling afterwards would
- * clear it out from under the derive's next live request.
- *
- * Why the SOC limit needs this at all, and the pacing it deliberately lacks:
- * docs/dashboard-decisions.md.
- */
+/** Reuses held permission or awaits either owner's real GET, never fetching mid-gesture.
+ * Request/session ownership and the former separate mount flag: docs/dash-command-0x2c-charge-limit.md. */
 export async function ensureWriteStatus() {
-  if (writeStatus.rawVal !== null || statusInFlight || mountFetchInFlight || armed.rawVal !== "") {
-    return;
+  if (writeStatus.rawVal !== null) {
+    return true;
   }
-  mountFetchInFlight = true;
-  try {
-    await fetchChargeWriteStatus();
-  } finally {
-    mountFetchInFlight = false;
+  if (armed.rawVal !== "") {
+    return false;
   }
+  return pendingStatusRequests.values().next().value ?? fetchChargeWriteStatus();
 }
 
 /**
@@ -275,10 +264,23 @@ export async function ensureWriteStatus() {
  * @returns whether an answer landed. The caller's guard must be forgotten when it did not, or a
  *   single dropped request costs the verdict this was fetched to phrase.
  */
-export async function fetchChargeWriteStatus() {
+export function fetchChargeWriteStatus() {
+  const pending = requestChargeWriteStatus(statusGeneration);
+  pendingStatusRequests.add(pending);
+  void pending.finally(() => {
+    pendingStatusRequests.delete(pending);
+  });
+  return pending;
+}
+
+/** @param {number} generation */
+async function requestChargeWriteStatus(generation) {
   try {
     const response = await request("/vcu-write?list=0", { cache: "no-store" });
     const payload = /** @type {VcuWriteResponse} */ (await response.json());
+    if (generation !== statusGeneration) {
+      return false;
+    }
     // Disarmed before the new status lands: writes switched off across the refresh must not
     // leave a primed button behind.
     armed.val = "";

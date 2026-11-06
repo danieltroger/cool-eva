@@ -63,14 +63,17 @@ async function checkSocLimitTransmits(): Promise<void> {
           }
         );
         const result = await performChargeSocLimit({ directory }, 80, fixture.channel);
-        if (failOnAttempt === 2) {
+        if (failOnAttempt === 1) {
+          assert.equal(result.ok, false, "A rejected pre-read must refuse before the SOC write");
+          assert.equal(fixture.attempted.length, 1, "No mutating frame follows an unanswered pre-read");
+        } else if (failOnAttempt === 2) {
           assert.equal(result.ok, false, "A rejected SOC write must not be reported as sent or written");
           assert.equal(fixture.attempted.length, 2, "A rejected SOC write must not start a read-back");
         } else {
           assert(result.ok);
           assert.equal(
             result.result.status,
-            failOnAttempt === 3 ? "unverified" : "written",
+            "unverified",
             "Failed read-back cannot turn a sent write into verified success"
           );
         }
