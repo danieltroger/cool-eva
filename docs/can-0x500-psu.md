@@ -1,6 +1,6 @@
-# Keep PSU on — CAN 0x500 findings
+# Keep PSU on — did not retain power through an A8 reset (CAN 0x500)
 
-The experimental **Keep PSU on** feature was removed on 2026-11-06. Repeating the correct CAN request did not retain power after key-off or an A8 reset, even at the normal vehicle repeat rate. A CAN-only hold cannot maintain MAIN through these transitions on this bike; the independent hardware enable path remains decisive. This document preserves the protocol findings and failed tests rather than offering a control to repeat them.
+The experimental **Keep PSU on** feature was removed on 2026-11-06. Repeating the correct CAN request did not retain power through an A8 reset, even at the normal 20 ms rate, while an independent transmitter was still sending. A key-off test with the application's repeat also lost power, though it did not prove that transmission continued. The analyzed A8 firmware clears a separate hardware DCDC enable in its sleep path regardless of `0x500`, which points to a non-CAN enable condition; the wiring and the reset-time waveform were not measured. This document preserves the protocol findings and failed tests rather than offering a control to repeat them.
 
 ## Request format and timeout
 
