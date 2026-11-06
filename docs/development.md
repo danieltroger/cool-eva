@@ -69,7 +69,11 @@ Open the printed file URL. This whole-dashboard page supplies deterministic miss
 
 `src/can/receive.ts` is the live SocketCAN handler and the replay consumer. Service read/write replies get first refusal in the OBD range; the sweep only consumes frames addressed to the tester, and the bus lease permits only one runner. Live kernel arrival stamps remain the only evidence of dispatch latency; replay deliberately supplies none. The 0x410 multiplex feeds both hub diagnostics and GPS/drive decoding: returning after its diagnostic reader would silently drop GPS. Pack-temperature arbitration remains outside the pure decoder because one frame cannot identify whether VCU temperatures are shifted.
 
+The sweep consumes only frames addressed to `0xF1` — which no OBD-II reply is, since byte 0 there is an ISO-TP length nibble. Its first refusal therefore takes nothing away from the OBD poller.
+
 Satellite time reaches the clock gate over both CAN and BLE. On the Pi, drift/corroboration guards limit clock changes; CAN itself has no authentication. Historical frames must therefore retain the decoder's fix, satellite-count, range and UTC round-trip checks. In replay the existing external-clock switch suppresses that I/O before the gate. It reports satellite-backed trust, but recording is off and waypoint saves are refused, so that ownership flag cannot manufacture a saved observation.
+
+The step is guarded by a drift threshold and one step per five minutes, so both transports calling it at ~2 Hz is harmless. Over BLE the frames came from a session the hub had authorised, whereas anything on can0 with id 0x410 reaches here unauthenticated, and the clock stamps rows in an append-only log we can't correct in place. The decoder guards stand in for authentication; injecting on the VDB bus is a level of access with far better targets than our timestamps.
 
 ## Checking it without the bike
 

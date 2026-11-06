@@ -31,7 +31,7 @@ export function captureLine(elapsedMs: number, id = 0x104, data = [0, 0, 0, 0, 0
 }
 
 // Constructed position, never copied from a journey. GPS time advances at the replay's 1x rate.
-function syntheticGpsFrames(seconds: number): number[][] {
+export function syntheticGpsFrames(seconds: number): number[][] {
   const date = new Date(Date.UTC(2030, 0, 1, 12) + seconds * 1_000);
   const year = date.getUTCFullYear() - 2000;
   const hour = date.getUTCHours();

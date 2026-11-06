@@ -11,6 +11,7 @@ import { syncSystemClockFromGps } from "../gps/clock.ts";
 import type { VcuReadRunner } from "../vcu/read-runner.ts";
 import type { VcuWriteRunner } from "../vcu/write-runner.ts";
 
+// Dispatch, clock and trust constraints: docs/development.md §Shared receive path constraints.
 export function receiveCanFrame(message: CanMessage, context: ReceiveContext): void {
   const data = message.data;
   if (

@@ -45,7 +45,7 @@ export async function replaySettings(options: ReplayOptions, codeDirectory: stri
     arguments: ["--input-type=module", "--eval", LOCK_HOLDER, "--"],
   });
   try {
-    const store = await openSettingsStore(paths, lock, (await stat(codeDirectory)).gid);
+    const store = await openSettingsStore(paths, lock, process.getgid?.() ?? (await stat(options.root)).gid);
     if (store.read().kind === "missing") {
       const settings = freshSettings(paths);
       settings.values.customBmsConfigurationFlashed = true;

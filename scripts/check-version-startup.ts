@@ -17,11 +17,25 @@ export async function checkVersionStartup(): Promise<void> {
     const entrypoint = await readFile(new URL("../src/index.ts", import.meta.url), "utf8");
     assert.match(
       entrypoint,
+      /const replay = replayOptions\(process\.argv\.slice\(2\)\);\s*const canSocket = replay \? null : await import\("\.\/can\/socket\.ts"\);\s*const coolantSensors = replay \? null : await import\("\.\/sensors\/max31865\.ts"\);/,
+      "Live native imports must fail immediately after source selection, before any startup side effect or catch"
+    );
+    assert(
+      entrypoint.indexOf('await import("./sensors/max31865.ts")') < entrypoint.indexOf("await readReleaseMetadata("),
+      "Native dependencies must be loaded before release metadata and settings"
+    );
+    assert.match(
+      entrypoint,
+      /const HOST = replay \? "127\.0\.0\.1" : "0\.0\.0\.0";/,
+      "The phone must reach the live server on every IPv4 interface; only replay is loopback-only"
+    );
+    assert.match(
+      entrypoint,
       /server\.listen\(PORT, HOST, \(\) => \{\s*console\.log\([^\n]+\);\s*beginRunningVersionChecks\(\);/,
       "Background verification must start inside the HTTP listening callback"
     );
     console.log(
-      "version startup: pending identity, nonblocking HTTP during hash/OS checks, priorities and honest labels passed"
+      "version startup: fatal early native imports, live/replay listen addresses, pending identity, nonblocking HTTP during hash/OS checks, priorities and honest labels passed"
     );
   } finally {
     for (const name of ["PATH", "VERSION_STARTUP_FIXTURE"] as const) {

@@ -90,6 +90,8 @@ import { refuseSimulatorAction } from "./replay/http.ts";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
 const replay = replayOptions(process.argv.slice(2));
+const canSocket = replay ? null : await import("./can/socket.ts");
+const coolantSensors = replay ? null : await import("./sensors/max31865.ts");
 const PORT = replay?.port ?? 80;
 const HOST = replay ? "127.0.0.1" : "0.0.0.0";
 const CAN_IFACE = "can0";
@@ -184,9 +186,8 @@ if (!rideLogEnabled) {
 
 // --- Coolant probes (MAX31865) ---
 try {
-  if (!replay) {
-    const { startCoolantSensors } = await import("./sensors/max31865.ts");
-    await startCoolantSensors(startup.coolantProbesEnabled);
+  if (coolantSensors) {
+    await coolantSensors.startCoolantSensors(startup.coolantProbesEnabled);
   }
 } catch (err) {
   console.error("coolant: init failed — continuing without coolant probes:", err);
@@ -345,11 +346,10 @@ const receiveContext = {
     canTrafficAt = monotonicNow();
   },
 };
-if (!replay) {
+if (canSocket) {
   try {
-    const { bringUpCan, openChannel } = await import("./can/socket.ts");
-    await bringUpCan(CAN_IFACE, true);
-    channel = openChannel(CAN_IFACE);
+    await canSocket.bringUpCan(CAN_IFACE, true);
+    channel = canSocket.openChannel(CAN_IFACE);
     try {
       channel.setRxFilters(CAN_RX_FILTERS);
     } catch (error) {

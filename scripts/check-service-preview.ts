@@ -11,53 +11,47 @@ import { promisify } from "node:util";
 const run = promisify(execFile);
 const out = join(tmpdir(), "cool-eva-preview-check.html");
 const failures: string[] = [];
-const built = new Map<string, string>();
 
 console.log("\n──── scripts/check-service-preview.ts ──────────────────────────────────────────");
-console.log("     that the generated dashboard fixture are syntactically valid JavaScript");
+console.log("     that the generated dashboard fixture is syntactically valid JavaScript");
 
-for (const flags of [[]]) {
-  const label = "whole dashboard";
-  await run("node", ["--experimental-strip-types", "scripts/build-service-preview.ts", out, ...flags]);
-  const html = await readFile(out, "utf8");
-  await unlink(out);
+const label = "whole dashboard";
+await run("node", ["--experimental-strip-types", "scripts/build-service-preview.ts", out]);
+const html = await readFile(out, "utf8");
+await unlink(out);
 
-  // ⚠️ A pattern, not a list. This named two of what are now four placeholders — it never covered
-  // __TABLES__ and would not have covered __SERVER_FACTS__ — and `String.replace` substitutes only
-  // the FIRST occurrence, so a template that grew a second copy of one (the two are copy-edited)
-  // ships a bare identifier that parses fine here and throws a ReferenceError at load.
-  for (const [placeholder] of html.matchAll(/__[A-Z][A-Z_]*__/g)) {
-    failures.push(`${label}: ${placeholder} survived into the output — a substitution did not happen`);
-  }
+// ⚠️ A pattern, not a list. This named two of what are now four placeholders — it never covered
+// __TABLES__ and would not have covered __SERVER_FACTS__ — and `String.replace` substitutes only
+// the FIRST occurrence, so a template that grew a second copy of one (the two are copy-edited)
+// ships a bare identifier that parses fine here and throws a ReferenceError at load.
+for (const [placeholder] of html.matchAll(/__[A-Z][A-Z_]*__/g)) {
+  failures.push(`${label}: ${placeholder} survived into the output — a substitution did not happen`);
+}
 
-  const blocks = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]);
-  if (blocks.length === 0) {
-    failures.push(`${label}: no <script> block in the generated file`);
-  }
-  for (const [index, source] of blocks.entries()) {
-    try {
-      new Script(source);
-    } catch (error) {
-      failures.push(`${label}: script block ${index}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  // The registry is what the `},,` bug emptied WITHOUT making the file invalid, so its
-  // size is checked separately from whether the file parses.
-  const modules = [...html.matchAll(/"[^"]+": function \(__exports, __imp\)/g)].length;
-  if (modules < 20) {
-    failures.push(`${label}: only ${modules} modules in the bundle — the registry did not fill`);
-  }
-  built.set(label, html);
-  // ⚠️ Logged AFTER the failures are recorded, not before: an earlier version printed
-  // "1 script block(s) parse" directly above "script block 0: Unexpected token ','".
-  if (!failures.some(failure => failure.startsWith(label))) {
-    console.log(`  ${label}: ${blocks.length} script block(s) parse, ${modules} modules`);
+const blocks = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]);
+if (blocks.length === 0) {
+  failures.push(`${label}: no <script> block in the generated file`);
+}
+for (const [index, source] of blocks.entries()) {
+  try {
+    new Script(source);
+  } catch (error) {
+    failures.push(`${label}: script block ${index}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
-const whole = built.get("whole dashboard") ?? "";
-if (!/__imp\("app\.js"\)|imp\("app\.js"\)/.test(whole)) {
+// The registry is what the `},,` bug emptied WITHOUT making the file invalid, so its
+// size is checked separately from whether the file parses.
+const modules = [...html.matchAll(/"[^"]+": function \(__exports, __imp\)/g)].length;
+if (modules < 20) {
+  failures.push(`${label}: only ${modules} modules in the bundle — the registry did not fill`);
+}
+// ⚠️ Logged AFTER the failures are recorded, not before: an earlier version printed
+// "1 script block(s) parse" directly above "script block 0: Unexpected token ','".
+if (!failures.some(failure => failure.startsWith(label))) {
+  console.log(`  ${label}: ${blocks.length} script block(s) parse, ${modules} modules`);
+}
+if (!/__imp\("app\.js"\)|imp\("app\.js"\)/.test(html)) {
   failures.push('the whole-app preview never calls imp("app.js"), so it mounts nothing');
 }
 

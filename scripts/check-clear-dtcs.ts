@@ -31,7 +31,7 @@ import { join } from "path";
 // counters are read either side of the frame, and PID 31 returning zero is the verdict.
 // docs/clear-dtcs.md has the captures and the numbers.
 //
-// No bike and no can0: a fake channel answers the frames, dispatched exactly as src/index.ts
+// No bike and no can0: a fake channel answers the frames, dispatched exactly as src/can/receive.ts
 // dispatches real ones, so the transport, the ISO-TP reassembly and the runner all run for real.
 
 let failures = 0;

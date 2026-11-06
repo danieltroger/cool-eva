@@ -253,6 +253,11 @@ const CHECKS: SelfCheck[] = [
       "the broadcast frame decoders against frames captured 2026-08-02, plus three properties of the decoder set as a whole: that every id which decodes is in the kernel RX filter, that every emitted key is declared in the registry, and that no 1/0 flag carries a deadband big enough to swallow its own transitions",
   },
   {
+    script: "scripts/check-can-receive.ts",
+    covers:
+      "the shared live RX dispatch: read/write consumption order, OBD fallback, kernel arrival stamps, ELOCK replies, both hub-mirror and broadcast decoding on 0x410, GPS clock delivery through a no-I/O spy, traffic qualification and the exact live filter list",
+  },
+  {
     script: "scripts/check-can-transmit.ts",
     covers:
       "the main channel is nonblocking, native sends accept only 16 bytes, refused commands fail, polling stays paced with bounded logs, DTC flow-control retries remain capped, partial KWP transfers abandon and sessions release their pending state",
