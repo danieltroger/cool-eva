@@ -2,9 +2,9 @@ import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { fileURLToPath } from "url";
-import { captureCodecFor, isTruncationError, openCaptureLines } from "./capture-lines.ts";
+import { captureCodecFor, isTruncationError, openCaptureLines } from "../src/can/capture-lines.ts";
 
-// Guards scripts/capture-lines.ts, the one thing that opens a compressed capture.
+// Guards src/can/capture-lines.ts, the one thing that opens a compressed capture.
 //
 //     node --experimental-strip-types scripts/check-capture-reader.ts
 //

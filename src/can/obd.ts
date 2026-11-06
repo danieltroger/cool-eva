@@ -123,6 +123,22 @@ export function isObdResponse(id: number): boolean {
   return id >= OBD_RESP_LO && id <= OBD_RESP_HI;
 }
 
+export function recordObservedMode01(id: number, data: Buffer): void {
+  if (
+    !isObdResponse(id) ||
+    data.length < 4 ||
+    data[0] >> 4 !== 0 ||
+    data[0] < 3 ||
+    data[0] + 1 > data.length ||
+    data[1] !== 0x41
+  )
+    return;
+  const definition = PIDS.find(definition => definition.pid === data[2]);
+  if (definition) {
+    fileResponse(definition, data);
+  }
+}
+
 export function handleResponse(id: number, data: Buffer): void {
   // A trouble-code transfer, when one is running, gets first refusal: its
   // Consecutive Frames carry no service byte and would fall straight through the

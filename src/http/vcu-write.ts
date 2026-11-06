@@ -382,12 +382,7 @@ async function respond(
   message: string | null,
   chargeCurrentAttempt?: VcuWriteResponse["chargeCurrentAttempt"]
 ): Promise<void> {
-  const payload: VcuWriteResponse = {
-    status: await options.runner.status(parseStatusRequest(url.searchParams)),
-    result,
-    message,
-    ...(chargeCurrentAttempt ? { chargeCurrentAttempt } : {}),
-  };
+  const payload = await vcuWriteReply(options, url, result, message, chargeCurrentAttempt);
   const body = Buffer.from(JSON.stringify(payload), "utf-8");
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
@@ -398,4 +393,19 @@ async function respond(
     "Cache-Control": "no-store",
   });
   res.end(body);
+}
+
+export async function vcuWriteReply(
+  options: VcuWriteEndpointOptions,
+  url: URL,
+  result: ServiceWriteResult | null,
+  message: string | null,
+  chargeCurrentAttempt?: VcuWriteResponse["chargeCurrentAttempt"]
+): Promise<VcuWriteResponse> {
+  return {
+    status: await options.runner.status(parseStatusRequest(url.searchParams)),
+    result,
+    message,
+    ...(chargeCurrentAttempt ? { chargeCurrentAttempt } : {}),
+  };
 }

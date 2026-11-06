@@ -137,13 +137,7 @@ async function respond(
   options: VcuReadEndpointOptions,
   message: string | null
 ): Promise<void> {
-  const payload: VcuReadResponse = {
-    run: options.runner.state(),
-    gate: options.runner.gate(),
-    enabled: options.enabled,
-    export: await summariseExport(options.directory),
-    message,
-  };
+  const payload = await vcuReadReply(options, message);
   const body = Buffer.from(JSON.stringify(payload), "utf-8");
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
@@ -172,5 +166,15 @@ async function summariseExport(directory: string): Promise<VcuReadExportSummary>
     rows: exportableRowCount(latest.snapshot),
     readAt: latest.snapshot.readAt,
     complete: latest.snapshot.complete,
+  };
+}
+
+export async function vcuReadReply(options: VcuReadEndpointOptions, message: string | null): Promise<VcuReadResponse> {
+  return {
+    run: options.runner.state(),
+    gate: options.runner.gate(),
+    enabled: options.enabled,
+    export: await summariseExport(options.directory),
+    message,
   };
 }

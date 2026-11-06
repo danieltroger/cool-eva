@@ -37,7 +37,7 @@ WantedBy=multi-user.target
  * Where the capture unit writes, and the one spelling of it in this repo's TypeScript.
  *
  * ⚠️ Not re-typed in scripts/free-pi-captures.ts, which `rm -f`s inside it: scripts/
- * replay-capture.ts carried a stale `/tmp/ride-captures` for months (check-can-capture.ts
+ * the former replay script carried a stale `/tmp/ride-captures` for months (check-can-capture.ts
  * records it), and that was a path that only READ. scripts/check-can-capture.ts asserts
  * capture.sh's own `DIRECTORY=` against this value, so the shell and the TypeScript cannot
  * drift apart silently.

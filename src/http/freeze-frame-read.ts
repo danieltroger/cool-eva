@@ -98,12 +98,7 @@ function respond(
   options: FreezeFrameReadEndpointOptions,
   fields: Partial<FreezeFrameReadResponse>
 ): void {
-  const payload: FreezeFrameReadResponse = {
-    summary: null,
-    message: null,
-    gate: options.runner.gate(),
-    ...fields,
-  };
+  const payload = freezeFrameReadReply(options, fields);
   const body = Buffer.from(JSON.stringify(payload), "utf-8");
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
@@ -111,4 +106,16 @@ function respond(
     "Cache-Control": "no-store",
   });
   res.end(body);
+}
+
+export function freezeFrameReadReply(
+  options: FreezeFrameReadEndpointOptions,
+  fields: Partial<FreezeFrameReadResponse>
+): FreezeFrameReadResponse {
+  return {
+    summary: null,
+    message: null,
+    gate: options.runner.gate(),
+    ...fields,
+  };
 }

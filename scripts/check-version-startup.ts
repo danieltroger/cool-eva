@@ -17,7 +17,7 @@ export async function checkVersionStartup(): Promise<void> {
     const entrypoint = await readFile(new URL("../src/index.ts", import.meta.url), "utf8");
     assert.match(
       entrypoint,
-      /server\.listen\(PORT, "0\.0\.0\.0", \(\) => \{[^}]*?\$\{PORT\}[^;]*;\s*beginRunningVersionChecks\(\);/,
+      /server\.listen\(PORT, HOST, \(\) => \{\s*console\.log\([^\n]+\);\s*beginRunningVersionChecks\(\);/,
       "Background verification must start inside the HTTP listening callback"
     );
     console.log(

@@ -40,7 +40,7 @@ export const FRAME_SIZE = 8;
  *
  * ⚠️ Set to the start of 2026, NOT to the day this was written. This module also runs
  * over history — scripts/decrypt-log.ts rebuilds segments sealed weeks ago and
- * scripts/replay-capture.ts replays old candumps — so a floor at "today" would silently
+ * scripts/simulate.ts replays old candumps — so a floor at "today" would silently
  * drop gps_epoch_s out of every one. It has to sit below the oldest data the repo can be
  * handed, April 2026 (the legacy coolant history in public/lib/bounds.js), and
  * scripts/check-gps-clock.ts fails if it is ever raised past the sequences it replays.

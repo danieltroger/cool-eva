@@ -155,11 +155,11 @@ if (/set -o pipefail/.test(code)) {
   );
 }
 
-// -tA is the wire format every reader of these files assumes: scripts/replay-capture.ts
+// -tA is the wire format every reader of these files assumes: scripts/simulate.ts
 // parses it, and so does every awk recipe in docs/. -td would parse as garbage silently.
 if (candumpLine && !/\s-tA(\s|$)/.test(candumpLine)) {
   failures.push(
-    `the candump invocation is not -tA — replay-capture.ts and the awk recipes in docs/ all assume absolute timestamps: ${candumpLine.trim()}`
+    `the candump invocation is not -tA — simulate.ts and the awk recipes in docs/ all assume absolute timestamps: ${candumpLine.trim()}`
   );
 }
 
@@ -184,7 +184,7 @@ if (candumpIndex >= 0 && pipeIndex >= 0) {
 
 // ⚠️ The boot id and the uptime go INSIDE the file as well as into its name. The archive
 // travels to the laptop; the journal stays on a card that gets reflashed, so anything not in
-// the file is lost — the same argument that keeps 2>&1. replay-capture.ts counts a line it
+// the file is lost — the same argument that keeps 2>&1. simulate.ts counts a line it
 // cannot parse as framesSkipped, so it costs a reader nothing.
 if (!/^\s*echo "# boot \$BOOT_ID uptime \$UPTIME"/m.test(script)) {
   failures.push("capture.sh no longer writes the boot id and uptime into the capture file itself");
@@ -252,7 +252,7 @@ if (!floorMatch) {
 
 // ⚠️ Never a tmpfs. `docs/pi-agent-brief.md` states the rail — "never capture to /tmp, it
 // is tmpfs and the Pi loses power with the bike" — and this is not hypothetical drift:
-// scripts/replay-capture.ts carried a stale "/tmp/ride-captures" for months, which is
+// the former replay script carried a stale "/tmp/ride-captures" for months, which is
 // exactly the wrong path waiting to be copied back into the script it describes.
 // Quotes stripped first: `DIRECTORY="/tmp/…"` would otherwise sail straight past the test.
 const directory = /^DIRECTORY=(\S+)/m.exec(script)?.[1]?.replace(/^["']|["']$/g, "");
@@ -265,7 +265,7 @@ if (!directory) {
 }
 
 // The shell and the TypeScript must name the same directory: scripts/free-pi-captures.ts
-// deletes inside it, and replay-capture.ts carried a stale copy of this very path for months.
+// deletes inside it, and the former replay script carried a stale copy of this very path for months.
 if (directory && directory !== CAPTURE_DIRECTORY) {
   failures.push(`capture.sh writes to ${directory} but scripts/can-capture/unit.ts says ${CAPTURE_DIRECTORY}`);
 }

@@ -59,48 +59,55 @@ import { handleChargeAutoEndpoint } from "./http/charge-auto.ts";
 import { startChargeAutomatic } from "./charge/auto.ts";
 import { defineSignals, record } from "./can/signals.ts";
 import { SIGNALS } from "./can/registry.ts";
-import { startCoolantSensors } from "./sensors/max31865.ts";
 import { startFanControl } from "./fan/control.ts";
 import { startFanAutomatic } from "./fan/auto.ts";
 import { startFanCycleGesture } from "./fan/gesture-runner.ts";
 import { startHoldGestures } from "./gestures/runner.ts";
 import { startWaypointFixTracking, waypointHoldGesture } from "./gps/waypoint.ts";
-import { bringUpCan, openChannel } from "./can/socket.ts";
 import { startCanLinkMonitor } from "./can/link-status.ts";
 import { startWifiMonitor } from "./wifi/status.ts";
 import { WIFI_DIAG_DIRNAME } from "./wifi/dump.ts";
 import { RECOVER_TRIGGER } from "./wifi/ladder.ts";
 import { recoverWifi, wifiHoldGesture, type RecoverContext } from "./wifi/recover.ts";
-import { decodeFrame, STREAM_IDS } from "./can/decode.ts";
-import { frameArrival } from "./can/frame-arrival.ts";
-import { configurePackTemperature, resolvePackTemperatures } from "./can/pack-temperature.ts";
-import { holdObdPoller, initObd, isObdResponse, handleResponse, startObdPoller } from "./can/obd.ts";
-import { ELOCK_RESP_ID, isElockResponse, handleElockResponse, readKeysPairedOnce } from "./can/elock.ts";
-import { syncSystemClockFromGps, systemClockTrust } from "./gps/clock.ts";
-import { GPS_CAN_ID } from "./can/gps.ts";
-import { handleHubMirrorFrame } from "./can/hub-mirror.ts";
+import { configurePackTemperature } from "./can/pack-temperature.ts";
+import { holdObdPoller, initObd, handleResponse, recordObservedMode01, startObdPoller } from "./can/obd.ts";
+import { readKeysPairedOnce } from "./can/elock.ts";
+import { configureGpsClock, systemClockTrust } from "./gps/clock.ts";
 import { setupWs } from "./ws.ts";
 import { closeEncryptedLog, flushEncryptedLog, initEncryptedLog } from "./storage/encrypted-log.ts";
 import { startSealOnPark } from "./storage/seal-on-park.ts";
 import { startBleClient, type BleClient } from "./ble/client.ts";
 import { startBleServer, type BleServer } from "./ble-server/server.ts";
 import type { RawChannel } from "socketcan";
+import { receiveCanFrame, CAN_RX_FILTERS } from "./can/receive.ts";
+import { replayOptions, replaySettings, replayMessage, waitForReplayStart } from "./replay/runtime.ts";
+import { replayCapture } from "./replay/source.ts";
+import { refuseSimulatorAction } from "./replay/http.ts";
 
 // Thin orchestrator: wire DB + coolant probes + CAN decode/OBD + HTTP/WS together.
 // See obd-garage/INTEGRATION_PLAN.md.
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
-const PORT = 80;
+const replay = replayOptions(process.argv.slice(2));
+const PORT = replay?.port ?? 80;
+const HOST = replay ? "127.0.0.1" : "0.0.0.0";
 const CAN_IFACE = "can0";
 
 // Missing bundle metadata must fail startup so the retained shell helper can roll back.
 const bundleMetadata = await readReleaseMetadata(ROOT);
-const settingsRuntime = await startSettings({
-  codeDirectory: ROOT,
-  workingDirectory: process.cwd(),
-  environment: process.env,
-});
+const settingsRuntime = await startSettings(
+  replay
+    ? await replaySettings(replay, ROOT)
+    : {
+        codeDirectory: ROOT,
+        workingDirectory: process.cwd(),
+        environment: process.env,
+      }
+);
+if (replay) {
+  configureGpsClock({ externalClock: true });
+}
 configureArchiveAccess(settingsRuntime.paths);
 const startup = settingsRuntime.active;
 const UPDATE_DIR = ROOT;
@@ -109,7 +116,7 @@ const CUSTOM_BMS_CONFIG = startup.customBmsConfigurationFlashed;
 const VCU_PARAM_DIR = startup.vcuParameterDirectory;
 const SERVICE_MODE_ENABLED = settingsRuntime.dataWritable;
 const SERVICE_WRITE_ENABLED = settingsRuntime.dataWritable;
-const CHARGE_AUTO_ENABLED = startup.automaticDcChargingEnabled;
+const CHARGE_AUTO_ENABLED = !replay && startup.automaticDcChargingEnabled;
 const BLE_SECRET = startup.dashboardBluetoothSecret;
 const WIFI_IFACE = "wlan0";
 const WIFI_HOTSPOT_SSID = startup.phoneHotspotSsid;
@@ -177,7 +184,10 @@ if (!rideLogEnabled) {
 
 // --- Coolant probes (MAX31865) ---
 try {
-  await startCoolantSensors(startup.coolantProbesEnabled);
+  if (!replay) {
+    const { startCoolantSensors } = await import("./sensors/max31865.ts");
+    await startCoolantSensors(startup.coolantProbesEnabled);
+  }
 } catch (err) {
   console.error("coolant: init failed — continuing without coolant probes:", err);
 }
@@ -190,7 +200,7 @@ try {
 // temperature; the slider takes it over until the bike is switched off, which is what
 // not persisting the mode already means on a Pi with no standby power.
 // docs/fan-control.md.
-const fanController = await startFanControl({ enabled: startup.radiatorFanEnabled });
+const fanController = await startFanControl({ enabled: !replay && startup.radiatorFanEnabled });
 const fanAutomatic = startFanAutomatic(fanController);
 
 // --- Handlebar gestures, recognised here rather than on the phone ---
@@ -201,7 +211,7 @@ const fanAutomatic = startFanAutomatic(fanController);
 //
 // The fan's entry is only registered when there IS a fan: the same `configured` flag the
 // /fan route is behind, so a Pi with no fan wired up watches one button instead of two.
-const waypointFixes = startWaypointFixTracking();
+const waypointFixes = replay ? null : startWaypointFixTracking();
 const fanCycle = fanController.configured ? startFanCycleGesture(fanAutomatic) : null;
 // ⚠️ The wifi hold is only offered when the poller is running: without it
 // `wifi_link_state` is never recorded, and the gesture reads that signal to decide
@@ -211,7 +221,7 @@ const holdGestures = [
   waypointHoldGesture(),
   wifiHoldGesture(wifiContext),
 ];
-const handlebarGestures = startHoldGestures(holdGestures);
+const handlebarGestures = replay ? null : startHoldGestures(holdGestures);
 
 // --- CAN: broadcast decode + OBD-II polling ---
 let channel: RawChannel | undefined;
@@ -327,121 +337,64 @@ console.warn(
   "service-write: reachable devices may request motorcycle changes. Existing gates and audit history apply. See Settings → Who can control my bike?"
 );
 
-try {
-  await bringUpCan(CAN_IFACE, true); // ACTIVE only when we intend to TX OBD reads
-  channel = openChannel(CAN_IFACE);
-
+const receiveContext = {
+  readRunner: vcuReadRunner,
+  writeRunner: vcuWriteRunner,
+  obdResponse: replay ? recordObservedMode01 : handleResponse,
+  noteTraffic: () => {
+    canTrafficAt = monotonicNow();
+  },
+};
+if (!replay) {
   try {
-    channel.setRxFilters([
-      ...STREAM_IDS.map(id => ({ id, mask: 0x7ff })),
-      { id: 0x7e0, mask: 0x7f0 }, // OBD responses 0x7E0–0x7EF
-      { id: ELOCK_RESP_ID, mask: 0x7ff }, // E-LOCK diagnostic reply (one-shot read at startup)
-    ]);
-  } catch (err) {
-    console.warn("can: setRxFilters failed, accepting all frames:", err);
+    const { bringUpCan, openChannel } = await import("./can/socket.ts");
+    await bringUpCan(CAN_IFACE, true);
+    channel = openChannel(CAN_IFACE);
+    try {
+      channel.setRxFilters(CAN_RX_FILTERS);
+    } catch (error) {
+      console.warn("can: setRxFilters failed, accepting all frames:", error);
+    }
+    channel.addListener("onMessage", message => receiveCanFrame(message, receiveContext));
+    channel.start();
+    console.log("can: channel started, decoding broadcasts");
+    initObd(channel);
+    stopObd = startObdPoller(500);
+    console.log("obd: polling @2Hz (speed/rpm/temps/load/distance)");
+    void readKeysPairedOnce(channel);
+  } catch (error) {
+    canStartupError = error instanceof Error ? error.message : "CAN adapter could not start";
+    console.error("can: adapter/interface unavailable — dashboard remains available:", error);
   }
-
-  channel.addListener("onMessage", msg => {
-    const data = msg.data;
-    if (data.length === 8 && (STREAM_IDS.includes(msg.id) || isObdResponse(msg.id) || isElockResponse(msg.id))) {
-      canTrafficAt = monotonicNow();
-    }
-    if (isObdResponse(msg.id)) {
-      // ⚠️ The KERNEL's arrival stamp, taken before any of our code ran. It is the
-      // only way to see how late this dispatch was, which is the question
-      // docs/lifetime-battery-statistics.md exists to answer — a timestamp taken
-      // inside the handler starts after libuv already delayed it.
-      const arrival = frameArrival(msg);
-      // Service mode's KWP replies land in this same 0x7E0–0x7EF range (the VCU
-      // micros answer on 0x7E0 under EXTENDED addressing, so byte 0 is the
-      // tester's own address 0xF1). Offered to the sweep first, and it consumes
-      // only frames addressed to 0xF1 — which no OBD-II reply is, since byte 0
-      // there is an ISO-TP length nibble — so this takes nothing away from the
-      // poller. It is also a no-op unless a sweep is actually running.
-      if (vcuReadRunner.handleCanFrame(msg.id, data, arrival)) {
-        return;
-      }
-      // Same for a write in flight, and it needs the OBD range too: the KWP legs
-      // answer on 0x7E0 and Mode 04 answers somewhere in 0x7E0–0x7EF. Only one of
-      // the two runners can be busy at a time (src/vcu/bus-lease.ts), so this is
-      // one extra null check per frame in the range and nothing at all otherwise.
-      if (vcuWriteRunner.handleCanFrame(msg.id, data)) {
-        return;
-      }
-      handleResponse(msg.id, data);
-      return;
-    }
-    if (isElockResponse(msg.id)) {
-      handleElockResponse(data);
-      return;
-    }
-    // 0x410 is a whole message stream on one id, so it has three readers and must NOT
-    // return here: the diagnostics list is picked off below, and the frame then carries
-    // on to decodeFrame, which is where the GPS multiplex (~1.8 Hz) and sub-type 3's
-    // drive triple are decoded. Returning early would silently take CAN GPS out.
-    if (msg.id === GPS_CAN_ID) {
-      handleHubMirrorFrame(data);
-    }
-    // resolvePackTemperatures decides whether 0x200's temperature bytes are the true
-    // pack temperature or the VCU-shifted view — it depends on which BMS config is
-    // on the bus, which no single frame can tell you. Until it can tell, it emits
-    // nothing under batt_temp_lo/batt_temp_hi rather than guess.
-    for (const { key, value } of resolvePackTemperatures(msg.id, data, decodeFrame(msg.id, data))) {
-      record(key, value);
-      // Satellite UTC arrives on CAN 0x410 as well as over BLE, and the Pi has no
-      // RTC — so stepping the clock must not depend on the Bluetooth link being
-      // up. The step itself is guarded (drift threshold, one step per 5 min), so
-      // both transports calling it at ~2 Hz is harmless.
-      //
-      // This does widen what can move the clock: over BLE the frames came from a
-      // session the hub had authorised, whereas anything on can0 with id 0x410
-      // reaches here unauthenticated, and the clock stamps rows in an append-only
-      // log we can't correct in place. The guards in gps/decode.ts are what stands
-      // in for the authentication — fix != 0, >= 4 satellites, every field range
-      // checked and a Date.UTC round trip — and injecting on the VDB bus is a
-      // level of access with far better targets than our timestamps.
-      if (key === "gps_epoch_s") {
-        void syncSystemClockFromGps(value);
-      }
-    }
-  });
-  channel.start();
-  console.log("can: channel started, decoding broadcasts");
-
-  initObd(channel);
-  stopObd = startObdPoller(500);
-  console.log("obd: polling @2Hz (speed/rpm/temps/load/distance)");
-  void readKeysPairedOnce(channel);
-} catch (error) {
-  canStartupError = error instanceof Error ? error.message : "CAN adapter could not start";
-  console.error("can: adapter/interface unavailable — dashboard remains available:", error);
 }
 
 // Polled regardless of CAN_ENABLED: the dashboard's CAN dot should show the interface's
 // real state, and a bike running coolant-only still answers `ip link` (as down, or with
 // no such device — both surface as red).
-const canLinkMonitor = startCanLinkMonitor(CAN_IFACE);
+const canLinkMonitor = replay ? null : startCanLinkMonitor(CAN_IFACE);
 
 // Polled for the same reason can0 is, and for one this project paid for on 2026-09-19:
 // the Pi can only be asked what its wifi is doing while its wifi is working. Started
 // HERE rather than at module scope in src/wifi/status.ts, exactly as the line above is,
 // so importing that module in a check on a laptop does not shell out to an nmcli that
 // is not there. docs/wifi.md.
-const wifiMonitor = startWifiMonitor(WIFI_IFACE, WIFI_HOTSPOT_SSID, () => {
-  // Deliberately not awaited by the poll — see startWifiMonitor. The rejection arm is
-  // here because an escaped one ends the process and takes the CAN logging with it.
-  // ⚠️ The outcome is NOT captured here. runLadder owns it and publishes it; a
-  // refused-because-running call answers NONE, and writing that over a live outcome
-  // would make the signal disagree with the counter beside it.
-  void recoverWifi(wifiContext, RECOVER_TRIGGER.WATCHDOG).catch(error =>
-    console.warn("wifi-recover: the watchdog ladder threw:", error)
-  );
-});
+const wifiMonitor = replay
+  ? null
+  : startWifiMonitor(WIFI_IFACE, WIFI_HOTSPOT_SSID, () => {
+      // Deliberately not awaited by the poll — see startWifiMonitor. The rejection arm is
+      // here because an escaped one ends the process and takes the CAN logging with it.
+      // ⚠️ The outcome is NOT captured here. runLadder owns it and publishes it; a
+      // refused-because-running call answers NONE, and writing that over a live outcome
+      // would make the signal disagree with the counter beside it.
+      void recoverWifi(wifiContext, RECOVER_TRIGGER.WATCHDOG).catch(error =>
+        console.warn("wifi-recover: the watchdog ladder threw:", error)
+      );
+    });
 
 // --- Bluetooth: Connectivity Hub (torque/power, odometer, vehicle state, GPS) ---
 let bleClient: BleClient | undefined;
 
-if (BLE_MAC || startup.discoverHubOnce) {
+if (!replay && (BLE_MAC || startup.discoverHubOnce)) {
   bleClient = startBleClient({
     macAddress: BLE_MAC,
     onState: state => {
@@ -486,6 +439,13 @@ const settingsHttp = {
   },
   activeHubAddress: () => activeHubAddress,
   readiness: () => {
+    if (replay) {
+      for (const key of ["coolant", "fan", "recording", "bluetooth", "hub"] as const) {
+        settingsRuntime.readiness[key] = "Off in simulator";
+      }
+      settingsRuntime.readiness.can = systemStatus().can.message;
+      return settingsRuntime.readiness;
+    }
     settingsRuntime.readiness.coolant = !startup.coolantProbesEnabled
       ? "Off"
       : ["coolant_in", "coolant_out"].every(
@@ -517,7 +477,7 @@ const settingsHttp = {
 };
 
 function systemStatus(): DashboardSystemStatus {
-  const link = latestValue("can_link");
+  const link = replay ? 1 : latestValue("can_link");
   const heardBike = canTrafficAt !== null && since(canTrafficAt) < 15_000;
   const state =
     canStartupError || link === 0
@@ -532,11 +492,13 @@ function systemStatus(): DashboardSystemStatus {
       settingsRuntime.fault ?? (settingsRestart.status().state === "failed" ? settingsRestart.status().message : null),
     can: {
       state,
-      message: canStartupError
-        ? "CAN adapter/interface could not start. Check the USB adapter and wiring."
-        : heardBike && link === 1
-          ? "Receiving motorcycle traffic"
-          : "No recent recognised motorcycle traffic. The bike may be asleep; check the adapter and wiring if it is awake.",
+      message: replay
+        ? replayMessage(replay)
+        : canStartupError
+          ? "CAN adapter/interface could not start. Check the USB adapter and wiring."
+          : heardBike && link === 1
+            ? "Receiving motorcycle traffic"
+            : "No recent recognised motorcycle traffic. The bike may be asleep; check the adapter and wiring if it is awake.",
     },
   };
 }
@@ -555,6 +517,15 @@ const server = createServer(async (req, res) => {
     res.end("Restarting. Reconnect shortly.");
     return;
   }
+  if (
+    replay &&
+    (await refuseSimulatorAction(req, res, url, {
+      read: { runner: vcuReadRunner, directory: VCU_PARAM_DIR, enabled: SERVICE_MODE_ENABLED },
+      write: { runner: vcuWriteRunner },
+      automatic: chargeAutomatic,
+    }))
+  )
+    return;
   if (url.pathname === "/settings" || url.pathname.startsWith("/settings/")) {
     await handleSettingsEndpoint(req, res, url.pathname, settingsHttp);
     return;
@@ -589,7 +560,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   if (url.pathname === "/release-health") {
-    await handleReleaseHealth(res, ROOT);
+    await handleReleaseHealth(res, ROOT, settingsRuntime.paths);
     return;
   }
   if (url.pathname === "/os-update-ready") {
@@ -601,7 +572,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   if (url.pathname === "/update-status") {
-    await handleUpdateStatus(res);
+    await handleUpdateStatus(res, settingsRuntime.paths.updaterDirectory);
     return;
   }
   // Duty and mode for the cooling fan. The Pi's own GPIO and PWM; it cannot reach the
@@ -731,8 +702,8 @@ const ws = setupWs(server, undefined, systemStatus);
 // `0.0.0.0:80`) — so the phone, which reaches the bike by its IPv4 wifi address, gets
 // no route in. IPv4 is the whole reachability story here (garage wifi, Grafana), so
 // bind it directly rather than relying on dual-stack, which is what left it tcp6-only.
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`HTTP + WebSocket server on http://0.0.0.0:${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`HTTP + WebSocket server on http://${HOST}:${PORT}`);
   beginRunningVersionChecks();
 });
 
@@ -741,7 +712,7 @@ server.listen(PORT, "0.0.0.0", () => {
 // failure here is logged and survived: the wifi dashboard and the ride log must not go
 // down because bluetoothd refused an advertisement.
 let bleServer: BleServer | null = null;
-if (BLE_SECRET) {
+if (!replay && BLE_SECRET) {
   server.once("listening", () => {
     startBleServer({ secret: BLE_SECRET, httpPort: PORT, system: systemStatus }).then(
       started => {
@@ -789,7 +760,7 @@ const isShutdownRequested = installRequestedShutdown([
   { name: "close the OS-update gate", run: () => osUpdateGate.close() },
   { name: "consume the restart reservation", run: () => settingsRestart.consume() },
   { name: "stop OBD polling", run: () => stopObd?.() },
-  { name: "stop CAN link monitoring", run: () => canLinkMonitor.stop() },
+  { name: "stop CAN link monitoring", run: () => canLinkMonitor?.stop() },
   { name: "stop Wi-Fi monitoring", run: () => wifiMonitor?.stop() },
   { name: "stop the BLE client", run: () => bleClient?.stop(), background: true },
   { name: "stop the BLE server", run: () => bleServer?.stop(), background: true },
@@ -797,9 +768,9 @@ const isShutdownRequested = installRequestedShutdown([
   { name: "finish the VCU read archive", run: () => vcuReadRunner.stop() },
   { name: "stop sealing on park", run: () => stopSealOnPark() },
   { name: "seal the encrypted ride log", run: () => closeEncryptedLog() },
-  { name: "stop handlebar gestures", run: () => handlebarGestures.stop() },
+  { name: "stop handlebar gestures", run: () => handlebarGestures?.stop() },
   { name: "stop fan gestures", run: () => fanCycle?.stop() },
-  { name: "stop waypoint tracking", run: () => waypointFixes.stop() },
+  { name: "stop waypoint tracking", run: () => waypointFixes?.stop() },
   { name: "stop automatic fan control", run: () => fanAutomatic.stop() },
   { name: "stop automatic charging", run: () => chargeAutomatic.stop() },
   { name: "idle the fan bridge", run: () => fanController.stop() },
@@ -809,3 +780,32 @@ const isShutdownRequested = installRequestedShutdown([
   { name: "finish settings writes", run: () => settingsRuntime.store.settled() },
   { name: "release the settings writer lock", run: () => settingsRuntime.lock.release() },
 ]);
+
+if (replay) {
+  const cancellation = new AbortController();
+  process.once("SIGINT", () => cancellation.abort());
+  process.once("SIGTERM", () => cancellation.abort());
+  await waitForReplayStart(server);
+  void replayCapture({
+    path: replay.path,
+    signal: cancellation.signal,
+    receive: message => receiveCanFrame(message, receiveContext),
+    progress: captureTime => {
+      replay.captureTime = captureTime;
+    },
+  }).then(
+    () =>
+      process.send?.({ type: "eof" }, error => {
+        if (error) {
+          console.error("simulator: EOF handshake failed", error);
+          process.exit(1);
+        }
+        process.kill(process.pid, "SIGTERM");
+      }),
+    error => {
+      if (cancellation.signal.aborted) return;
+      console.error("simulator: playback failed", error);
+      process.exit(1);
+    }
+  );
+}

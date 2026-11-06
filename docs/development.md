@@ -36,14 +36,40 @@ Bad readings are filtered rather than drawn. Across 7.6 M logged rows the bike h
 
 ## Developing it without the bike
 
-```bash
-node --experimental-strip-types scripts/replay-capture.ts <capture.log> --speed 4 --skip 60
-# → dashboard on http://localhost:8080, fed by the real decoders
+On the Mac, with the repository's dependencies installed:
+
+```sh
+npm run simulate -- /absolute/path/to/capture.log
+# Open http://127.0.0.1:8080
 ```
 
-Replays a `candump -tA` capture through the actual decode path, so what's on screen has taken the same route it does on the Pi.
+Use Safari Responsive Design Mode or Chrome's Device Toolbar at **390×844**. Resizing the Mac's Chrome window alone cannot reach phone width. Add `--port 8081` if 8080 is occupied. Ctrl-C stops playback. Select another capture by stopping and running the command with that file.
 
-The captures this was developed against are one motorcycle's ride history and aren't in the repo, so you'll need your own: `candump -tA can0 > capture.log` on the Pi while the bike is awake, and anything from a few seconds up will do. `scripts/decode-dtc-response.ts` does run standalone — it replays a real, committed trouble-code transfer and needs no capture at all.
+This runs the real server, HTTP/WebSocket, decoders and dashboard at 1× recorded time, looping. Inputs are absolute/date `candump -tA` text, plain or gzip. A `.zst` input is refused before startup: decompress it into a temporary directory first, for example `zstd -dc /absolute/path/capture.log.zst > "$TMPDIR/cool-eva-replay.log"`, then give that absolute output path to the command. The simulator itself never starts zstd. Raw captures remain private and read-only; none are shipped in this repository.
+
+Every action is refused with **Disabled in the simulator: nothing is sent to a bike**. No CAN socket, OBD poller, BLE link, coolant probes, fan hardware, Wi-Fi monitoring/recovery or handlebar actions start. GPS from the recording cannot set the Mac's clock. Missing sensors remain unavailable, hardware readiness says **Off in simulator**, and recording and automatic charging are off. The recording button therefore opens Settings; a forced download attempt reports the existing generic seal failure. Replay files observed single-frame Mode-01 replies; it does not reconstruct stored diagnostic lists or service replies. Missing service reads remain not read rather than being filled with unrelated faults.
+
+Each pass is a fresh server process. One new temporary directory per **command run** holds only simulator settings/state; it never loads personal app settings, keys or old archives. Its contents are hashed before playback and after each pass; any difference stops the loop. The next child retains the same settings instance, so unsaved Settings drafts survive. The directory is removed after shutdown. Git identity reads use `GIT_OPTIONAL_LOCKS=0` to avoid refreshing the checkout index.
+
+At a loop boundary the WebSocket reconnects (normally a two-second delay). Settings may say **Reconnected. Active settings confirmed below.** Navigation, charts and page-session top speed persist. Trip distance may reset or become negative when the recorded odometer goes backwards; reload the page to reset those page-session counters. These are replay artefacts, not bike behaviour. Settings → Connections identifies the file, pass and original capture clock. The CAN dot uses the same 15-second traffic timeout as live operation, including recorded silences.
+
+The source streams bounded memory, retains the full date across midnight and paces absolute capture offsets with a monotonic clock. Sub-millisecond timestamp jitter does not change the anchor; a backwards step over one second or forward step over 30 seconds re-anchors with a warning. Ordinary gaps remain. Unparsed/partial tail lines are counted; gzip truncation warns, corruption fails. The live RX filter is also applied to replay. Directionless recordings can include the Pi's own requests on 0x7E0–0x7E7; origin cannot be recovered, and Mode-01 validation rejects request/flow-control/KWP payloads.
+
+### Constructed dashboard states
+
+The fixture builder remains for phone-width CI and visual review of states a recording cannot supply:
+
+```sh
+node --experimental-strip-types scripts/build-service-preview.ts /tmp/cool-eva-dashboard.html
+```
+
+Open the printed file URL. This whole-dashboard page supplies deterministic missing/rejected readings and command outcomes; it is not another recorded-data server. The former reduced replay server and annotated design sheet have been removed. Keep looking at both-theme phone-width screenshots; [the check contracts and their history](diagnostics-and-checks.md#116-the-design-preview-and-the-one-thing-its-check-cannot-see) explain what automated checks cannot judge.
+
+### Shared receive path constraints
+
+`src/can/receive.ts` is the live SocketCAN handler and the replay consumer. Service read/write replies get first refusal in the OBD range; the sweep only consumes frames addressed to the tester, and the bus lease permits only one runner. Live kernel arrival stamps remain the only evidence of dispatch latency; replay deliberately supplies none. The 0x410 multiplex feeds both hub diagnostics and GPS/drive decoding: returning after its diagnostic reader would silently drop GPS. Pack-temperature arbitration remains outside the pure decoder because one frame cannot identify whether VCU temperatures are shifted.
+
+Satellite time reaches the clock gate over both CAN and BLE. On the Pi, drift/corroboration guards limit clock changes; CAN itself has no authentication. Historical frames must therefore retain the decoder's fix, satellite-count, range and UTC round-trip checks. In replay the existing external-clock switch suppresses that I/O before the gate. It reports satellite-backed trust, but recording is off and waypoint saves are refused, so that ownership flag cannot manufacture a saved observation.
 
 ## Checking it without the bike
 

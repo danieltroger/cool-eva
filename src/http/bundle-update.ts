@@ -96,9 +96,9 @@ export async function handleBundleUpdate(
   }
 }
 
-export async function handleUpdateStatus(res: ServerResponse): Promise<void> {
+export async function handleUpdateStatus(res: ServerResponse, directory?: string): Promise<void> {
   try {
-    const status = await readUpdateStatus();
+    const status = await readUpdateStatus(directory);
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify(status));
   } catch (error) {
