@@ -4,7 +4,7 @@ import { evaluateOnPage, reloadPage, waitOnPage, type HeadlessPage } from "./hea
 import { openPreview, FRAME } from "./riding-preview-page.ts";
 import { gesture } from "./riding-navigation-browser.ts";
 
-export async function assertCellsContent(page: HeadlessPage) {
+export async function assertCellsContent(page: HeadlessPage, weakest = 1) {
   await waitOnPage(
     page,
     "document.querySelector('[data-cell-count]')?.textContent==='81 of 81 fresh'",
@@ -27,8 +27,8 @@ export async function assertCellsContent(page: HeadlessPage) {
   const keys = cellVoltageLayout().map(slot => slot.key);
   assert.deepEqual(data.keys, keys, "The full cell list is in physical pack/module order.");
   assert.deepEqual(data.bars, keys, "The strip preserves every physical slot.");
-  assert.equal(data.weakest, "Weakest position 1");
-  assert.equal(data.strongest, "Strongest position 81");
+  assert.equal(data.weakest, `Weakest BMS index ${weakest}`);
+  assert.equal(data.strongest, "Strongest BMS index 81");
   assert.ok(
     data.overviewBottom <= data.tabs && data.barHeight === 76,
     "The complete strip, identities and explanation fit in the first viewport."
@@ -256,11 +256,11 @@ async function checkRangeFollowups(page: HeadlessPage, file: string, capture?: (
       )
     );
     await evaluateOnPage(page, "document.querySelector('[data-view=cells]').click()");
-    await assertCellsContent(page);
+    await assertCellsContent(page, 7);
     assert.equal(await evaluateOnPage(page, "document.querySelector('.cells-back')"), null);
     assert.equal(
       await evaluateOnPage(page, "document.querySelector('[data-weakest]').textContent"),
-      "Weakest position 1",
+      "Weakest BMS index 7",
       "A BMS index must not become a physical position."
     );
     assert.ok(

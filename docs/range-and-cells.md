@@ -54,6 +54,6 @@ Regen headroom. It derates at high SOC and at temperature extremes, so a full ba
 
 ## Follow-ups decided after PR 3
 
-Range now names the reported value as BMS index without translating it. Cells labels physical positions 1–81, retaining each module-local cell number separately. Cells has a Back control only for an explicitly recorded menu origin, preserved through reload; normal riding entries and direct links return through the adjacent Range sub-tab or browser history.
+Range and Cells name the reported weakest/strongest values as BMS indices without translating them. Cells labels individual readings with physical positions 1–81, retaining each module-local cell number separately. Pack extrema and spread use the current 0x203 summary; held per-cell values only fit the bar geometry. The shared [reading-status policy](reading-status.md#bms-multiplex-holds) bounds holds and colour eligibility. Cells has a Back control only for an explicitly recorded menu origin, preserved through reload; normal riding entries and direct links return through the adjacent Range sub-tab or browser history.
 
 Drive allowed and Regen available retain the same exact values, shares, bars and 648 px budget. The duplicate drive sentence is deliberately removed. Regen inspection hints live on Battery & cooling and are checks rather than asserted diagnoses. Cells restores the accepted cell_spread_mv ten-minute history before Module 1. A stale or rejected spread has an explicit state and no live trace.

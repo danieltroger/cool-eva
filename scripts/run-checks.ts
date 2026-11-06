@@ -160,6 +160,11 @@ const CHECKS: SelfCheck[] = [
       "one flipped bit, and compression still shrinks a telemetry snapshot",
   },
   {
+    script: "scripts/check-bms-freshness.ts",
+    covers:
+      "registry-generated LMU hold classes, real decoded arrivals through unchanged heartbeat snapshots, bounded per-class ages and carrier liveness, current 0x203 summaries and provisional colour eligibility",
+  },
+  {
     script: "scripts/check-brake-lane.ts",
     covers:
       "the ride-summary dashboard's Brake lane, run out of the dashboard JSON against a database built by the real " +

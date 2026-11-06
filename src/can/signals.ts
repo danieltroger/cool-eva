@@ -20,6 +20,8 @@ export interface SignalDef {
   group: string;
   source: SignalSource;
   deadband?: number;
+  /** Display holds for the BMS multiplex; arrival timestamps and logging stay unchanged. */
+  displayFreshness?: "lmu-cells-1-to-3" | "lmu-cells-4-to-8" | "module-temperature";
   /**
    * Written only when something asks for it, so silence is its resting state and
    * says nothing about health. A group of nothing but these is left out of the
