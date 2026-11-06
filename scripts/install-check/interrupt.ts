@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { installerRemoteCommand } from "../release/installer.ts";
 import { sshArguments, sshCommand, type GuestSsh } from "./ssh.ts";
+import { observeOsCatchUp } from "./os-observer.ts";
 
 export async function interruptSshDuringApt(guest: GuestSsh, log: string): Promise<void> {
   const child = spawn("ssh", ["-tt", ...sshArguments(guest), installerRemoteCommand()], {
@@ -49,21 +50,7 @@ exit 1'`,
     await exited;
     output += `\nSSH client killed while detached apt PID ${pid.trim()} was running.\n`;
     await writeFile(log, output, { mode: 0o600 });
-    const result = await sshCommand(
-      guest,
-      `sudo sh -eu -c '
-for attempt in $(seq 1 1200); do
-  state=$(systemctl show cool-eva-install-os.service --property=ActiveState --value)
-  case "$state" in
-    active) test "$(systemctl show cool-eva-install-os.service --property=ExecMainStatus --value)" = 0; echo OS_JOB_SURVIVED_SSH; exit 0 ;;
-    activating) sleep 2 ;;
-    *) journalctl -u cool-eva-install-os.service --no-pager -n 30; exit 1 ;;
-  esac
-done
-exit 1'`,
-      2450_000
-    );
-    assert.match(result, /OS_JOB_SURVIVED_SSH/);
+    await observeOsCatchUp(guest);
     console.log("Killed SSH during real apt; the independent OS job finished successfully. Resuming the same line.");
   } finally {
     await writeFile(log, output, { mode: 0o600 });

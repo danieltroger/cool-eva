@@ -25,6 +25,7 @@ import { checkMigrationFailures } from "./install-check/migration-check.ts";
 import { checkBundleLauncher } from "./install-check/launch-check.ts";
 import { checkQemuSlirp } from "./install-check/tools-check.ts";
 import { checkQemuDiagnostics } from "./install-check/diagnostics-check.ts";
+import { checkOsObservation } from "./install-check/os-observer-check.ts";
 
 export async function checkBundleInstall(): Promise<void> {
   const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -94,6 +95,7 @@ export async function checkBundleInstall(): Promise<void> {
     await checkRecoveryAssertion(directory);
     await checkQemuSlirp(directory, root);
     await checkQemuDiagnostics(directory);
+    await checkOsObservation(directory);
     await checkMigrationFailures(directory, root);
     checkPowerGate();
     checkLoopbackRoute();

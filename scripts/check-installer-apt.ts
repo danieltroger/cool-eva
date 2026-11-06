@@ -7,6 +7,7 @@ import { REPOSITORY } from "./update-check/fixture.ts";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { checkPeriodicAptSystemd } from "./install-check/apt-systemd-check.ts";
+import { checkOsObservation } from "./install-check/os-observer-check.ts";
 
 await mkdir(join(REPOSITORY, ".preview-shots"), { recursive: true });
 const directory = await mkdtemp(join(REPOSITORY, ".preview-shots/installer-apt-"));
@@ -20,6 +21,9 @@ try {
       break;
     case "entry":
       await checkBootstrap(directory, REPOSITORY, "periodic-admitted");
+      break;
+    case "observer":
+      await checkOsObservation(directory);
       break;
     case "native":
       await checkPeriodicAptSystemd(
