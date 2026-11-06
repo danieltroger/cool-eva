@@ -933,19 +933,6 @@ const CHECKS: SelfCheck[] = [
       "weeks. It reads source and never runs a page; docs/diagnostics-and-checks.md §11.10",
   },
   {
-    script: "scripts/check-psu-hold-http.ts",
-    covers: "PSU hold permission, service-write/JSON guards, explicit action/revision and authoritative replies",
-  },
-  {
-    script: "scripts/check-psu-hold.ts",
-    covers: "exact PSU requests, monotonic cadence and hour limit, gates, lease and stop paths",
-  },
-  {
-    script: "scripts/check-psu-reset-vcu.ts",
-    covers:
-      "PSU repeats during held Reset VCU exchanges only; parameter, sweep and charge leases stop; later-holder isolation, Start/Extend refusal and Off/timeout during reset",
-  },
-  {
     script: "scripts/check-range-cells.ts",
     covers:
       "Range zero/fault reading guards and all 81 physical cell slots, module order, missing/stale/fault masking, true extrema and a balanced pack",

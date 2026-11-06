@@ -736,7 +736,7 @@ async function checkPreconditions(
   }
   // Taken LAST, so a refusal for any other reason does not hold the bus while it is
   // reported. Released in the `finally` of every path below.
-  const lease = acquireBus("a service write", { allowPsuHold: request.kind === "reset-vcu" });
+  const lease = acquireBus("a service write");
   if (!lease.ok) {
     return { ok: false, reason: `${lease.heldBy} is using the bus — one thing at a time` };
   }

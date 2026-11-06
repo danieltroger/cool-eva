@@ -29,11 +29,7 @@ export async function checkShutdown(): Promise<void> {
       assert.match(result.stdout, /BEFORE_REQUESTED=false/);
       assert.match(result.stdout, /DURING_REQUESTED=true/);
       assert.equal(result.stdout.match(/Shutting down/g)?.length, 1, "Repeated signals must not repeat cleanup");
-      assert.equal(
-        result.stdout.match(/PSU_STOPPED=true/g)?.length,
-        1,
-        "Every requested stop cancels PSU repeats once"
-      );
+      assert.equal(result.stdout.match(/RESOURCE_CLOSED/g)?.length, 1, "Every requested stop closes a resource once");
       if (!["exit", "fatal", "unhandled-rejection"].includes(mode)) {
         assert.match(result.stdout, /FINAL_CLEANUP/, `${mode}: later cleanup must run`);
       }
@@ -78,15 +74,11 @@ export async function checkShutdown(): Promise<void> {
 
 function fixtureSource(): string {
   const shutdownUrl = new URL("../src/shutdown.ts", import.meta.url).href;
-  const psuUrl = new URL("./psu-hold-fixture.ts", import.meta.url).href;
   return `import { installRequestedShutdown } from ${JSON.stringify(shutdownUrl)};
-import { psuFixture } from ${JSON.stringify(psuUrl)};
-const psu = psuFixture();
-psu.act('start');
 const mode = process.argv[2];
 setInterval(() => {}, 1000);
 const isShutdownRequested = installRequestedShutdown([
-  { name: 'stop PSU hold', run: () => { psu.hold.close(); console.log('PSU_STOPPED=' + (!psu.hold.status().on && psu.channels[0].stops === 1)); } },
+  { name: 'close resource', run: () => console.log('RESOURCE_CLOSED') },
   { name: 'shutdown state', run: () => console.log('DURING_REQUESTED=' + isShutdownRequested()) },
   { name: 'injected cleanup', background: mode.startsWith('background-'), run: () => {
     if (mode === 'throw') { throw new Error('synthetic cleanup failure'); }

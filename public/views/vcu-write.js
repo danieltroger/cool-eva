@@ -7,7 +7,6 @@ import { ageInWords, hexWord } from "../lib/format.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 import { describeStampEvidence } from "../lib/service-stamp.js";
 import { request } from "../lib/transport.js";
-import { PsuHoldCard } from "./psu-hold.js";
 
 const { button, div, h2, h3, input, option, select, span } = van.tags;
 
@@ -241,7 +240,6 @@ export function VcuWrite() {
           )
         : div(),
     Availability(),
-    PsuHoldCard(),
     // ⚠️ The one thing that MUST render when there are no controls: why there are none.
     // `message`'s only other home is Outcome(), inside the branch hasControls() has just
     // switched off, so the loudest failure this section has was being written to a node
@@ -913,7 +911,6 @@ function HeadlightSection() {
 function ResetVcuSection() {
   return div(
     h3({ class: "sheet-title" }, "Reset VCU"),
-    div({ class: "action-note" }, "An active PSU hold keeps running during this reset."),
     ActionButton("reset-vcu", () => "🔄  Reset the VCU (restart both processors)", {
       confirm: "RESTART both VCU processors now",
       does:
