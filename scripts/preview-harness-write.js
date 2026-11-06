@@ -152,6 +152,7 @@ function serviceWrite(query) {
     };
   }
   if (action === "charge-soc-limit-read") {
+    pushPatch({ charge_soc_limit_pct: [SOC_LIMIT.pct, "%", "charge"] });
     record({ action: "charge-soc-limit-read", status: "read", after: SOC_LIMIT.pct });
     return {
       action: "charge-soc-limit-read",

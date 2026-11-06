@@ -51,7 +51,7 @@ async function checkRefusedTarget(
   assert.deepEqual(
     await evaluateOnPage(
       page,
-      `({request:document.querySelector('[data-last-charge-request]').textContent,reply:document.querySelector('[data-charge-reply]').textContent,draft:document.querySelector('input[name=charge-current-amps]').value,success:document.querySelector('.charge-current-control').textContent.includes('✅'),oldAcknowledgement:document.querySelector('.charge-current-control').textContent.includes('settled at the last commanded current'),posts:chargePreviewRequests.filter(request=>request.method==='POST').length})`
+      `({request:document.querySelector('[data-last-charge-request]').textContent,reply:document.querySelector('[data-charge-reply]').textContent,draft:document.querySelector('input[name=charge-current-amps]').value,success:document.querySelector('.charge-current-control').textContent.includes('✅'),oldAcknowledgement:document.querySelector('.charge-current-control').textContent.includes('settled at the last commanded current'),posts:chargePreviewRequests.filter(request=>request.method==='POST'&&request.action==='charge-current').length})`
     ),
     { request: "32 A", reply: "32 A", draft: "40", success: false, oldAcknowledgement: false, posts: 1 },
     "A refused different target must not inherit an unqualified earlier success."

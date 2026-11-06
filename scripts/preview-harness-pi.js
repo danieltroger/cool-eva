@@ -334,7 +334,8 @@ window.fetch = function previewFetch(input, init) {
     // The full-sheet panel renders the answer under the button, the way the bike would.
     // The close-ups below it do not — they are one block of the section — so the answer
     // is also said here, marked as the preview talking rather than the motorcycle.
-    if (result) {
+    // Opening Controls reads automatically; that read stays as quiet as the real page.
+    if (result && url.searchParams.get("action") !== "charge-soc-limit-read") {
       const said = result.message.length > 150 ? `${result.message.slice(0, 147)}…` : result.message;
       toast(`Preview — nothing was sent. A Pi would have answered: ${said}`);
     }

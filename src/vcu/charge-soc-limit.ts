@@ -61,6 +61,19 @@ export async function performChargeSocLimit(
   channel: RawChannel
 ): Promise<ServiceWriteAnswer> {
   const before = await readSocLimit(channel);
+  if (before === null) {
+    const reason =
+      "The VCU did not answer the charge-limit pre-read; no limit was sent. Reopen Controls to read it again.";
+    await recordAttempt(context, {
+      action: "charge-soc-limit",
+      status: "failed",
+      requested: percent,
+      before,
+      after: null,
+      note: reason,
+    });
+    return { ok: false, reason };
+  }
   console.warn(`vcu-write: about to set the SOC charge limit to ${percent} % (it reads ${describe(before)})`);
   const sent = sendSocLimit(channel, percent);
   if (sent.status === "failed") {
@@ -169,7 +182,7 @@ function describeOutcome(
         note: `${percent} % on 0x120 (${hex}); the write went out and the read-back got NO answer within ${READ_TIMEOUT_MS} ms — unknown, not failed`,
         message:
           `The ${percent} % command went out, but the read-back got no answer. ⚠️ This does NOT mean it failed — ` +
-          "the write and the read are separate frames and only the read went unanswered. Read it again, or check the bike's own screen.",
+          "the write and the read are separate frames and only the read went unanswered. Reopen Controls to read it again, or check the bike's own screen.",
       };
   }
 }

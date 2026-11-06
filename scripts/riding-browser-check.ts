@@ -3,6 +3,7 @@ import { assertFixedLayout, resetLayoutClearance, layoutClearance } from "./ridi
 import { assertChargeContent, checkChargeCases } from "./riding-charge-browser.ts";
 import { checkChargeNavigation } from "./riding-charge-navigation.ts";
 import { checkChargeActions } from "./riding-charge-actions.ts";
+import { checkSocEntryBrowser } from "./riding-soc-entry-browser.ts";
 import { assertRangeContent, checkRangeCases } from "./riding-range-browser.ts";
 import { assertCellsContent, checkCellsNavigation } from "./riding-cells-browser.ts";
 import { checkBmsBrowser } from "./riding-bms-browser.ts";
@@ -135,6 +136,7 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
   await checkChargeNavigation(page, previewFile);
   await checkFaultReportNavigation(page, previewFile);
   await checkChargeActions(page, previewFile);
+  await checkSocEntryBrowser(page, previewFile);
   await checkCoolingFailures(page, previewFile);
   await checkCoolingFan(page, previewFile, assertFixedLayout);
   for (const theme of ["dark", "light"]) {

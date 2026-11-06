@@ -414,6 +414,11 @@ const CHECKS: SelfCheck[] = [
       "percentage, with 0 needing a word of its own",
   },
   {
+    script: "scripts/check-charge-soc-policy.ts",
+    covers:
+      "SOC-only drive/motion exemption through the real HTTP runner, paired unsafe parameter/reset refusals, and unchanged permission, active CAN, JSON/header, lease and value-bound confirmation gates",
+  },
+  {
     script: "scripts/check-charge-write-polling.ts",
     covers:
       "what wakes the charge tab, and how often (#207). The charge view's derive read charge_cmd_ack " +
