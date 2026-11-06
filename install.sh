@@ -20,6 +20,7 @@ main() {
     [ "$(realpath /var/cache/cool-eva-install)" = /var/cache/cool-eva-install ] || fail 'Unsafe installer cache.'
     exec 9>>/var/cache/cool-eva-install/install.lock
     flock -xn 9 || fail 'Another setup is already running. Let it finish.'
+    install_periodic_apt_guard
     find -P /var/cache/cool-eva-install -xdev -mindepth 1 -maxdepth 1 -type d -name 'download.*' -exec find -P '{}' -xdev -depth -delete \;
     note "Installing $INSTALL_TAG. Tested image: $INSTALL_IMAGE."
     if ! grep -qs '^VERSION_CODENAME=trixie$' /etc/os-release; then
@@ -28,6 +29,7 @@ main() {
     note 'Catching up OS packages outside SSH. DO NOT UNPLUG the Pi while this runs.'
     note 'If the connection closes, keep power on. Pasting the same line again resumes setup and waits for the OS job.'
     catch_up_os
+    drain_periodic_apt
     note 'OS catch-up complete. Downloading the prebuilt software; no Node, Git, Python or compiler installation is needed.'
     install -d -m 755 /opt/cool-eva /opt/cool-eva/releases
     [ "$(realpath /opt/cool-eva/releases)" = /opt/cool-eva/releases ] || fail 'Unsafe release storage.'
@@ -90,6 +92,75 @@ main() {
     "$TARGET/runtime/bin/node" --no-wasm-lazy-compilation --experimental-strip-types "$TARGET/src/release/preflight.ts" native || fail 'This bundle cannot load its native modules on the installed OS. No service was replaced.'
     note 'Starting the bundled Node installer.'
     "$TARGET/runtime/bin/node" --no-wasm-lazy-compilation --experimental-strip-types "$TARGET/src/install/main.ts" "$TARGET"
+}
+
+install_periodic_apt_guard() {
+    guard_command='[ -e "/var/cache/cool-eva-install/install.lock" ] || exit 0; if /usr/bin/flock --exclusive --nonblock --conflict-exit-code 75 "/var/cache/cool-eva-install/install.lock" /bin/true; then exit 0; else probe_status=$?; fi; [ "${probe_status}" -ne 75 ]'
+    guard_command=$(printf '%s\n' "$guard_command" | sed 's/%/%%/g; s/\$/$$/g')
+    for periodic_unit in apt-daily.service apt-daily-upgrade.service; do
+        guard_directory="/etc/systemd/system/$periodic_unit.d"
+        install -d -m 755 "$guard_directory"
+        printf "[Service]\nExecCondition=/bin/sh -c '%s'\n" "$guard_command" > "$guard_directory/40-cool-eva-install.conf.next"
+        chmod 644 "$guard_directory/40-cool-eva-install.conf.next"
+        sync
+        mv -f "$guard_directory/40-cool-eva-install.conf.next" "$guard_directory/40-cool-eva-install.conf"
+    done
+    systemctl daemon-reload || fail 'Cannot prepare the scheduled-package guard.'
+}
+
+drain_periodic_apt() {
+    read drain_started drain_idle < /proc/uptime
+    drain_started=${drain_started%%.*}
+    drain_reported=0
+    drain_daily=unknown
+    drain_upgrade=unknown
+    drain_summary='apt-daily.service=unknown apt-daily-upgrade.service=unknown'
+    drain_previous=$drain_summary
+    note "Waiting for scheduled package jobs (0s): $drain_summary"
+    while :; do
+        read drain_now drain_idle < /proc/uptime
+        drain_elapsed=$((${drain_now%%.*} - drain_started))
+        [ "$drain_elapsed" -lt 300 ] || break
+        drain_busy=0
+        for periodic_unit in apt-daily.service apt-daily-upgrade.service; do
+            read drain_now drain_idle < /proc/uptime
+            drain_remaining=$((300 - (${drain_now%%.*} - drain_started)))
+            [ "$drain_remaining" -gt 0 ] || { drain_busy=1; break; }
+            query_seconds=5
+            [ "$drain_remaining" -ge 5 ] || query_seconds=$drain_remaining
+            if periodic_state=$(timeout "$query_seconds" systemctl show "$periodic_unit" --property=LoadState --property=ActiveState --property=Job 2>/dev/null); then
+                periodic_load=$(printf '%s\n' "$periodic_state" | sed -n 's/^LoadState=//p')
+                periodic_active=$(printf '%s\n' "$periodic_state" | sed -n 's/^ActiveState=//p')
+                periodic_job=$(printf '%s\n' "$periodic_state" | sed -n 's/^Job=//p')
+                periodic_job=${periodic_job%% *}
+                case "$periodic_active:$periodic_job" in
+                    inactive:|inactive:0|failed:|failed:0) : ;;
+                    *) [ "$periodic_load" = not-found ] || drain_busy=1 ;;
+                esac
+                periodic_summary="$periodic_active/job=${periodic_job:-none}"
+            else
+                query_status=$?
+                drain_busy=1
+                periodic_summary="unknown/query-exit=$query_status"
+            fi
+            case "$periodic_unit" in
+                apt-daily.service) drain_daily=$periodic_summary ;;
+                apt-daily-upgrade.service) drain_upgrade=$periodic_summary ;;
+            esac
+        done
+        drain_summary="apt-daily.service=$drain_daily apt-daily-upgrade.service=$drain_upgrade"
+        read drain_now drain_idle < /proc/uptime
+        drain_elapsed=$((${drain_now%%.*} - drain_started))
+        [ "$drain_elapsed" -lt 300 ] || break
+        if [ "$drain_summary" != "$drain_previous" ] || [ "$((drain_elapsed - drain_reported))" -ge 15 ]; then
+            note "Waiting for scheduled package jobs (${drain_elapsed}s): $drain_summary"
+            drain_previous=$drain_summary
+            drain_reported=$drain_elapsed
+        fi
+        [ "$drain_busy" = 1 ] || return 0
+        sleep 2
+    done
+    note "A scheduled package job is still running or could not be checked (${drain_elapsed}s): $drain_summary. Continuing setup. If the health check then fails, keep power on and paste the same line again."
 }
 
 repair_existing_helpers() {

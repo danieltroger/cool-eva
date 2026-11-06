@@ -3,6 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { monotonicNow, since } from "../monotonic.ts";
 import type { SettingsReply } from "../settings/view.ts";
 import { command, exists } from "./commands.ts";
+import { reportHealth, type HealthObservation } from "./health-diagnostics.ts";
 
 export async function checkInstalledApp(
   release: string,
@@ -12,8 +13,13 @@ export async function checkInstalledApp(
   let healthySince: number | null = null;
   let generation: string | null = null;
   while (probe.since(started) < 180_000) {
+    let phase: HealthObservation["phase"] = "release-health request";
+    let requestStarted = probe.now();
+    let status: number | null = null;
     try {
       const response = await probe.request("http://127.0.0.1/release-health");
+      status = response.status;
+      phase = "release-health body";
       const body: unknown = await response.json();
       if (
         response.ok &&
@@ -24,7 +30,12 @@ export async function checkInstalledApp(
         "release" in body &&
         body.release === release
       ) {
+        phase = "settings request";
+        requestStarted = probe.now();
+        status = null;
         const settings = await probe.request("http://127.0.0.1/settings");
+        status = settings.status;
+        phase = "settings body";
         if (!settings.ok) {
           throw new Error("Settings readback is unavailable");
         }
@@ -33,22 +44,68 @@ export async function checkInstalledApp(
           throw new Error("Settings or migration is not ready");
         }
         if (generation !== view.processGeneration) {
+          if (healthySince !== null) {
+            reportHealth({
+              event: "reset",
+              phase: "healthy interval",
+              elapsedMs: probe.since(healthySince),
+              totalMs: probe.since(started),
+              status,
+            });
+          }
           generation = view.processGeneration;
           healthySince = null;
         }
         healthySince ??= probe.now();
         if (probe.since(healthySince) >= 60_000) {
+          reportHealth({
+            event: "complete",
+            phase: "healthy interval",
+            elapsedMs: probe.since(healthySince),
+            totalMs: probe.since(started),
+            status,
+          });
           return view;
         }
       } else {
+        if (healthySince !== null) {
+          reportHealth({
+            event: "reset",
+            phase: "healthy interval",
+            elapsedMs: probe.since(healthySince),
+            totalMs: probe.since(started),
+            status,
+          });
+        }
+        reportHealth({
+          event: "failure",
+          phase,
+          elapsedMs: probe.since(requestStarted),
+          totalMs: probe.since(started),
+          status,
+        });
         healthySince = null;
       }
     } catch (error) {
+      if (healthySince !== null) {
+        reportHealth({
+          event: "reset",
+          phase: "healthy interval",
+          elapsedMs: probe.since(healthySince),
+          totalMs: probe.since(started),
+          status,
+          error,
+        });
+      }
       healthySince = null;
-      console.log(
-        "Waiting for the dashboard and service-owned settings checks:",
-        error instanceof Error ? error.name : "unavailable"
-      );
+      reportHealth({
+        event: "failure",
+        phase,
+        elapsedMs: probe.since(requestStarted),
+        totalMs: probe.since(started),
+        status,
+        error,
+      });
     }
     await probe.sleep(2_000);
   }
@@ -62,7 +119,7 @@ export interface HealthProbe {
   request: (url: string) => Promise<Response>;
 }
 
-function requestHealth(url: string): Promise<Response> {
+export function requestHealth(url: string): Promise<Response> {
   return fetch(url, { signal: AbortSignal.timeout(3_000) });
 }
 

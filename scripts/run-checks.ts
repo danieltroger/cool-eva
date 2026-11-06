@@ -778,6 +778,11 @@ const CHECKS: SelfCheck[] = [
       'step\'s "nothing to commit" no-op depends on, which nothing held it to before',
   },
   {
+    script: "scripts/check-installer-apt.ts",
+    covers:
+      "periodic APT guard generation and fail-open errors, pre-admitted jobs and bounded drain progress/expiry without stopping packages",
+  },
+  {
     script: "scripts/check-installer-bootstrap.ts",
     covers:
       "helpers and state before the first fresh/legacy start, interrupted bootstrap, older-helper repair, trial-directory rerun, real Linux lock handoff and a once-only guest verification result",

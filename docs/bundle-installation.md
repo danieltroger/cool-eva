@@ -14,6 +14,8 @@ The initial installer uses GitHub's `releases/latest/download/install.sh` delibe
 
 Copying one boot-partition file could return later for a rider who cannot paste a line, after its own real first-boot test; that route is not part of this release.
 
+[Scheduled package work during setup](installer-periodic-apt.md) waits behind the installer lock. Already-admitted work gets a bounded drain before activation; expiry warns and continues to the existing health checks.
+
 ## What the installer absorbs
 
 | Previously manual work | Installer behavior |

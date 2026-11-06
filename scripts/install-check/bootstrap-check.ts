@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, cp, mkdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
@@ -26,6 +26,7 @@ export async function checkBootstrap(directory: string, repository: string, only
     "failed",
     "inactive-no-job",
     "inactive-pending-job",
+    "periodic-admitted",
   ] as const) {
     if (only && only !== variant) {
       continue;
@@ -55,10 +56,13 @@ export async function checkBootstrap(directory: string, repository: string, only
     for (const command of ["id", "stat", "mv", "curl", "realpath", "sha256sum", "flock", "sync", "cut", "sleep"]) {
       await writeFile(join(commands, command), commandWrapper(command), { mode: 0o755 });
     }
+    if (process.platform === "linux") {
+      await rm(join(commands, "flock"));
+    }
     for (const command of ["apt-get", "apt-mark", "journalctl", "git", "npm"]) {
       await writeFile(
         join(commands, command),
-        `#!/bin/sh\nprintf '%s\\n' '${command} '"$*" >> "$UPDATE_FIXTURE/commands.txt"\n${["git", "npm"].includes(command) ? "exit 99" : command === "apt-get" && variant === "apt-failure" ? "exit 42" : "exit 0"}\n`,
+        `#!/bin/sh\nprintf '%s\\n' '${command} '"$*" >> "$UPDATE_FIXTURE/commands.txt"\n${command === "apt-get" ? 'for unit in apt-daily.service apt-daily-upgrade.service; do test -f "$UPDATE_FIXTURE/systemd/$unit.d/40-cool-eva-install.conf" || exit 87; done\n' : ""}${["git", "npm"].includes(command) ? "exit 99" : command === "apt-get" && variant === "apt-failure" ? "exit 42" : "exit 0"}\n`,
         { mode: 0o755 }
       );
     }
@@ -68,12 +72,16 @@ export async function checkBootstrap(directory: string, repository: string, only
     );
     await writeFile(join(root, "starts"), variant === "activating" ? "1" : "0");
     await writeFile(join(root, "clock.txt"), "100");
+    await writeFile(join(root, "uptime"), "0 0\n");
     await writeFile(join(root, "shows"), "0");
     await writeFile(join(root, "sleeps"), "0");
+    await writeFile(join(commands, "timeout"), '#!/bin/sh\nshift\nexec "$@"\n', { mode: 0o755 });
     await writeFile(
       join(commands, "sleep"),
       `#!/bin/sh
 count=$(cat "$UPDATE_FIXTURE/sleeps"); count=$((count+1)); echo "$count" > "$UPDATE_FIXTURE/sleeps"
+read elapsed idle < "$UPDATE_FIXTURE/uptime"
+printf '%s 0\\n' "$((elapsed+15))" > "$UPDATE_FIXTURE/uptime"
 if [ "$count" -gt 10 ]; then echo 'Fixture wait budget exhausted' >&2; exit 89; fi
 `,
       { mode: 0o755 }
@@ -88,6 +96,14 @@ case "$1" in
     echo inactive > "$UPDATE_FIXTURE/os-state"
     ;;
   show)
+    case "$2" in
+      apt-daily.service|apt-daily-upgrade.service)
+        read elapsed idle < "$UPDATE_FIXTURE/uptime"
+        if [ '${variant}' = periodic-admitted ] && [ "$elapsed" -lt 30 ]; then
+          printf 'LoadState=loaded\\nActiveState=activating\\nJob=42\\n'; exit 0
+        fi
+        printf 'LoadState=loaded\\nActiveState=inactive\\nJob=\\n'; exit 0 ;;
+    esac
     shows=$(cat "$UPDATE_FIXTURE/shows"); shows=$((shows+1)); echo "$shows" > "$UPDATE_FIXTURE/shows"
     if [ '${variant}' = activating ] && [ "$shows" -ge 4 ]; then echo active > "$UPDATE_FIXTURE/os-state"; fi
     cat "$UPDATE_FIXTURE/os-state"
@@ -125,6 +141,14 @@ esac
       join(payload, "runtime/bin/node"),
       `#!/bin/sh
 printf 'node %s\\n' "$*" >> "$UPDATE_FIXTURE/commands.txt"
+if [ '${variant}' = periodic-admitted ]; then
+    read elapsed idle < "$UPDATE_FIXTURE/uptime"
+    [ "$elapsed" -ge 30 ] || { echo 'Payload reached before admitted periodic work finished' >&2; exit 97; }
+fi
+if [ '${process.platform}' = linux ] && /usr/bin/flock --nonblock "$UPDATE_FIXTURE/cache/install.lock" /bin/true; then
+    echo 'Installer lock was released before the payload finished' >&2
+    exit 96
+fi
 if [ -f "$UPDATE_FIXTURE/data/updater/state.json" ]; then
     sh -n "$UPDATE_FIXTURE/code/updater/current/run.sh"
     sh "$UPDATE_FIXTURE/code/updater/current/run.sh" self-test || exit 95
@@ -170,6 +194,7 @@ echo BOOTSTRAP_NODE
       await chmod(join(root, "data/updater/state.json"), 0o600);
     }
     let installer = renderInstaller(await readFile(join(repository, "install.sh"), "utf8"), metadata);
+    installer = installer.replaceAll("/proc/uptime", join(root, "uptime"));
     for (const [source, destination] of [
       ["/var/cache/cool-eva-install", join(root, "cache")],
       ["/opt/cool-eva", join(root, "code")],
@@ -193,7 +218,8 @@ echo BOOTSTRAP_NODE
       variant === "rerun" ||
       variant === "activating" ||
       variant === "failed" ||
-      variant === "inactive-pending-job"
+      variant === "inactive-pending-job" ||
+      variant === "periodic-admitted"
     ) {
       assert.equal(result.code, 0, result.output);
       assert.equal(nodeCalls.length, variant === "rerun" ? 1 : 2);

@@ -9,6 +9,7 @@ import { monotonicNow, since } from "../src/monotonic.ts";
 import { injectRecoveryFault, RECOVERY_FAULTS } from "./update-check/availability.ts";
 import { readUpdateStatus } from "../src/release/update-status.ts";
 import { checkRequestedStop } from "./update-check/requested-stop.ts";
+import { checkPeriodicAptSystemd } from "./install-check/apt-systemd-check.ts";
 import {
   createUpdateFixture,
   fixtureEnvironment,
@@ -33,6 +34,7 @@ export async function checkUpdaterSystemd(): Promise<void> {
   const port = await freePort();
   const units: string[] = [];
   try {
+    await checkPeriodicAptSystemd(join(root, "periodic-apt"), control);
     for (const command of ["systemctl", "dpkg-query", "cut", "sleep", "sync", "stat", "id"]) {
       await unlink(join(fixture.commandDirectory, command));
     }
