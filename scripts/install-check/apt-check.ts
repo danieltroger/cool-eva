@@ -1,17 +1,18 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, readFile, rm, writeFile } from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { createAptFixture, readAptGuard, runAptProgram } from "./apt-fixture.ts";
 
 export async function checkPeriodicApt(directory: string): Promise<void> {
-  const guard = await createAptFixture(join(directory, "guard"));
+  const guard = await createAptFixture(join(directory, "guard-%n"));
   await runAptProgram(guard, "install_periodic_apt_guard");
   for (const unit of guard.units) {
     const contents = await readAptGuard(guard, unit);
     const command = contents.trim().split("ExecCondition=/bin/sh -c '")[1]?.slice(0, -1);
     assert(command, unit);
+    assert(!/[$%]/.test(command.replaceAll("$$", "").replaceAll("%%", "")), "Escape systemd dollars and percent signs");
     assert(!contents.includes("ExecCondition=\n"), "Do not reset charging conditions");
     for (const [status, expected] of [
       [0, 0],
@@ -96,7 +97,6 @@ printf 'LoadState=loaded\\nActiveState=%s\\nJob=%s\\n' "$state" "$job"
     const budgets = (await readFile(join(fixture.root, "query-budgets"), "utf8")).trim().split("\n").map(Number);
     assert(budgets.every(value => value > 0 && value <= 5));
   }
-  await rm(join(guard.root, "cache"), { recursive: true });
   console.log(
     "periodic APT: generated conflict-only guards; idle/queued/admitted jobs; query errors and expiry continue to health"
   );
