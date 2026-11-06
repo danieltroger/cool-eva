@@ -8,15 +8,20 @@ export function cellSnapshot(read, status) {
     return { ...slot, state, value: state === "fresh" ? read(slot.key) : null };
   });
   const values = cells.flatMap(cell => (cell.value === null ? [] : [cell.value]));
-  const low = values.length ? Math.min(...values) : null;
-  const high = values.length ? Math.max(...values) : null;
+  /** @param {string} key */
+  const summary = key => (status(key) === "fresh" ? read(key) : null);
+  const low = summary("cell_min_mv");
+  const high = summary("cell_max_mv");
   return {
     cells,
     low,
     high,
+    spread: summary("cell_spread_mv"),
+    displayLow: values.length ? Math.min(...values) : null,
+    displayHigh: values.length ? Math.max(...values) : null,
     fresh: values.length,
-    weakest: low === null ? null : (cells.find(cell => cell.value === low)?.position ?? null),
-    strongest: high === null ? null : (cells.find(cell => cell.value === high)?.position ?? null),
+    weakest: summary("cell_lowest_v_idx"),
+    strongest: summary("cell_highest_v_idx"),
     fault: cells.filter(cell => cell.state === "fault").length,
     stale: cells.filter(cell => cell.state === "stale").length,
     missing: cells.filter(cell => cell.state === "missing").length,

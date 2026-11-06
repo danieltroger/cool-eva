@@ -1068,13 +1068,20 @@ function perLmuSignals(): SignalDef[] {
         group: "cells",
         source: "stream",
         deadband: 5,
+        displayFreshness: cellNumber <= 3 ? "lmu-cells-1-to-3" : "lmu-cells-4-to-8",
       });
     }
     const sensors: LmuTemperatureSensor[] = LMUS_WITHOUT_BATTERY_TEMP.includes(lmuNumber)
       ? ["pcb1", "pcb2"]
       : ["bat1", "pcb1", "pcb2"];
     for (const sensor of sensors) {
-      signals.push({ key: lmuTemperatureKey(lmuNumber, sensor), unit: "°C", group: "battery", source: "stream" });
+      signals.push({
+        key: lmuTemperatureKey(lmuNumber, sensor),
+        unit: "°C",
+        group: "battery",
+        source: "stream",
+        displayFreshness: "module-temperature",
+      });
     }
   }
   return signals;

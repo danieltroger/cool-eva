@@ -53,6 +53,7 @@ if (ridingFixture.get("fixture") === "all-installed") {
     cell_spread_mv: [38, "mV", "cells"],
     cell_lowest_v_idx: [1, "", "cells"],
     cell_highest_v_idx: [81, "", "cells"],
+    lmu_cell_mux: [1, "", "bms"],
     allowed_discharge_a: [210, "A", "battery"],
     allowed_regen_a: [55, "A", "battery"],
     fan_target_pct: [68, "%", "fan", fanChangedAt],

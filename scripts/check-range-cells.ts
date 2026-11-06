@@ -23,14 +23,26 @@ assert.deepEqual(
   [8, 8, 8, 8, 7, 7, 7, 7, 7, 7, 7]
 );
 const values = new Map(slots.map(slot => [slot.key, slot.position === 1 ? 3120 : slot.position === 81 ? 3158 : 3135]));
+for (const [key, value] of [
+  ["cell_min_mv", 3125],
+  ["cell_max_mv", 3155],
+  ["cell_spread_mv", 30],
+  ["cell_lowest_v_idx", 7],
+  ["cell_highest_v_idx", 19],
+] as const) {
+  values.set(key, value);
+}
 const read = (key: string) => values.get(key) ?? null;
 const fresh = (_key: string): ReadingStatus => "fresh";
 const normal = cellSnapshot(read, fresh);
 assert.equal(normal.fresh, 81);
-assert.equal(normal.low, 3120);
-assert.equal(normal.high, 3158);
-assert.equal(normal.weakest, 1);
-assert.equal(normal.strongest, 81);
+assert.equal(normal.low, 3125);
+assert.equal(normal.high, 3155);
+assert.equal(normal.spread, 30);
+assert.equal(normal.weakest, 7);
+assert.equal(normal.strongest, 19);
+assert.equal(normal.displayLow, 3120);
+assert.equal(normal.displayHigh, 3158);
 for (const state of ["missing", "stale", "fault"] as const) {
   const snapshot = cellSnapshot(read, key => (key === slots[0].key ? state : "fresh"));
   assert.equal(snapshot.cells.length, 81);
@@ -42,7 +54,7 @@ for (const state of ["missing", "stale", "fault"] as const) {
   assert.equal(snapshot.cells[0].state, state);
   assert.equal(snapshot.cells[1].position, 2);
   assert.equal(snapshot.cells[1].key, "lmu1_cell2_mv");
-  assert.equal(snapshot.weakest, 2);
+  assert.equal(snapshot.weakest, 7, "Missing per-cell readings cannot change the BMS's index.");
   assert.equal(snapshot.fresh, 80);
   assert.equal(snapshot[state], 1);
 }
@@ -57,6 +69,21 @@ assert.equal(empty.strongest, null);
 assert.equal(empty.missing, 81);
 const equal = cellSnapshot(() => 3300, fresh);
 assert.equal(equal.high, equal.low, "A balanced pack must have zero observed spread.");
+for (const state of ["missing", "stale", "fault"] as const) {
+  const unavailableSummary = cellSnapshot(read, key => (key.startsWith("cell_") ? state : "fresh"));
+  assert.deepEqual(
+    [
+      unavailableSummary.low,
+      unavailableSummary.high,
+      unavailableSummary.spread,
+      unavailableSummary.weakest,
+      unavailableSummary.strongest,
+    ],
+    [null, null, null, null, null],
+    "Pack summaries never fall back to independently sampled per-cell readings."
+  );
+  assert.equal(unavailableSummary.fresh, 81);
+}
 connection.val = "live";
 apply({
   type: "snapshot",
@@ -73,5 +100,5 @@ apply({
 assert.equal(worstStatus(["allowed_discharge_a"]), "fault");
 assert.equal(freshValue("allowed_discharge_a"), null, "A rejected allowance cannot display the last plausible zero.");
 console.log(
-  "✓ All 81 physical slots, pack/module ordering, true extrema, complete/missing/stale/fault and balanced cells"
+  "✓ All 81 physical slots, pack/module ordering, current BMS summaries, complete/missing/stale/fault and balanced cells"
 );

@@ -1242,6 +1242,8 @@ Only the third needs the temperature for context, and it uses a band that config
 
 ### 0x662 / 0x663 / 0x664 — the per-module cell multiplex (20 Hz)
 
+Measured full-pass distributions and the bounded display-hold/carrier policy are in [Reading status](reading-status.md#bms-multiplex-holds).
+
 Each carries three, three and two of one module's cells, with the module number repeated in byte 0 of all three. **Every frame is decoded on its own and keyed off the LMU number in that SAME frame:** decoders are pure (no cross-frame state), and these are three separate messages, so the module can advance between 0x662 and 0x664.
 
 **The multiplexing itself is confirmed by the manual** — from v6.11 the BMCU polls the LMUs one by one and overwrites mem [2129]-[2149] with each one's data, which is also why 20 Hz matters: the manual's recommended broadcast interval for the block is 50 ms, and sampling slower than the BMCU's poll silently skips modules.

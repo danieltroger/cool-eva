@@ -1,6 +1,6 @@
 // @ts-check
 // Server-clock fault memory and measured/onDemand freshness: docs/reading-status.md.
-import { ON_DEMAND_KEYS } from "./generated-bounds.js";
+import { DISPLAY_FRESHNESS, ON_DEMAND_KEYS } from "./generated-bounds.js";
 import {
   chartTick,
   connection,
@@ -15,6 +15,15 @@ import {
 
 const onDemand = new Set(ON_DEMAND_KEYS);
 export const STALE_MS = 8000;
+// Measured rotation budgets, kept separate for a future faster BMS config: docs/reading-status.md.
+export const LMU_CELLS_1_TO_3_MAX_AGE_MS = 15_000;
+export const LMU_CELLS_4_TO_8_MAX_AGE_MS = 715_000;
+export const MODULE_TEMPERATURE_MAX_AGE_MS = 1_570_000;
+const displayMaxAge = {
+  "lmu-cells-1-to-3": LMU_CELLS_1_TO_3_MAX_AGE_MS,
+  "lmu-cells-4-to-8": LMU_CELLS_4_TO_8_MAX_AGE_MS,
+  "module-temperature": MODULE_TEMPERATURE_MAX_AGE_MS,
+};
 export const FAULT_MEMORY_MS = 60_000;
 /** @typedef {"fresh" | "missing" | "stale" | "fault"} ReadingStatus */
 
@@ -69,5 +78,16 @@ export function readingIsStale(key, sampled = false) {
     const link = sampled ? connection.rawVal : connection.val;
     return reading === null || link !== "live";
   }
-  return sampled ? isStaleSampled(key, STALE_MS) : isStale(key, STALE_MS);
+  const stale = sampled ? isStaleSampled : isStale;
+  const freshnessClass = DISPLAY_FRESHNESS[key];
+  if (freshnessClass) {
+    return stale(key, displayMaxAge[freshnessClass]) || stale("lmu_cell_mux", STALE_MS);
+  }
+  return stale(key, STALE_MS);
+}
+
+/** Provisional colour policy: held values stay visible, but only current samples carry colour.
+ * @param {string} key @param {boolean} [sampled] */
+export function readingCanColour(key, sampled = false) {
+  return readingStatus(key, sampled) === "fresh" && !(sampled ? isStaleSampled : isStale)(key, STALE_MS);
 }

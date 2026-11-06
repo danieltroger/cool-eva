@@ -3,7 +3,7 @@
 import van from "../vendor/van-1.6.1.js";
 import { SubTabs } from "../lib/sub-tabs.js";
 import { chartTick, peek } from "../lib/store.js";
-import { readingStatus, statusWord, worstStatus, freshValue } from "../lib/reading-status.js";
+import { readingCanColour, readingStatus, statusWord, worstStatus, freshValue } from "../lib/reading-status.js";
 import { chargePowerDisplay, displayChargeMode } from "../lib/charge-display.js";
 import { SignalTile, PairTile, Fact } from "../lib/tiles.js";
 import { heatmap, meter, sparkline } from "../lib/svg.js";
@@ -163,9 +163,9 @@ function VoltageGrid() {
           color:
             cell?.state === "fault"
               ? colors.BAD
-              : value === null
+              : !cell || value === null || snapshot.high === null || !readingCanColour(cell.key, true)
                 ? colors.MUTED
-                : colors.spread((snapshot.high ?? 0) - value),
+                : colors.spread(Math.max(0, snapshot.high - value)),
         };
       }),
     }));

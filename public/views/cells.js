@@ -2,7 +2,7 @@
 // Strip scaling, slot order and browser-history origins: docs/range-and-cells.md.
 import van from "../vendor/van-1.6.1.js";
 import { chartTick, peek } from "../lib/store.js";
-import { freshValue, readingStatus, statusWord } from "../lib/reading-status.js";
+import { freshValue, readingCanColour, readingStatus, statusWord } from "../lib/reading-status.js";
 import { cellSnapshot } from "../lib/cell-snapshot.js";
 import { cellVoltageLayout, CELL_COUNT, MODULE_COUNT } from "../lib/cells.js";
 import { barStrip } from "../lib/svg.js";
@@ -54,7 +54,7 @@ function CellsContent() {
 
 function CellsOverview() {
   const snapshot = cellSnapshot(peek, key => readingStatus(key, true));
-  const padding = Math.max(((snapshot.high ?? 0) - (snapshot.low ?? 0)) * 0.25, 5);
+  const padding = Math.max(((snapshot.displayHigh ?? 0) - (snapshot.displayLow ?? 0)) * 0.25, 5);
   const status = `${snapshot.fresh} of ${CELL_COUNT} fresh${snapshot.fault ? ` · ${snapshot.fault} fault` : ""}${snapshot.stale ? ` · ${snapshot.stale} stale` : ""}${snapshot.missing ? ` · ${snapshot.missing} missing` : ""}`;
   return div(
     { class: "tile cells-overview" },
@@ -70,28 +70,28 @@ function CellsOverview() {
           color:
             cell.state === "fault"
               ? colors.BAD
-              : cell.value === null
+              : cell.value === null || snapshot.high === null || !readingCanColour(cell.key, true)
                 ? colors.MUTED
-                : colors.spread((snapshot.high ?? 0) - cell.value),
+                : colors.spread(Math.max(0, snapshot.high - cell.value)),
         })),
-        low: (snapshot.low ?? 0) - padding,
-        high: (snapshot.high ?? 1) + padding,
+        low: (snapshot.displayLow ?? 0) - padding,
+        high: (snapshot.displayHigh ?? 1) + padding,
       })
     ),
     div(
       { class: "sub", "data-cell-extremes": "" },
-      snapshot.low === null
+      snapshot.low === null || snapshot.high === null || snapshot.spread === null
         ? "Cell span unavailable"
-        : `${snapshot.low} – ${snapshot.high} mV · observed span ${(snapshot.high ?? 0) - snapshot.low} mV`
+        : `${snapshot.low} – ${snapshot.high} mV · observed span ${snapshot.spread} mV`
     ),
     div(
       { class: "cells-identities" },
-      span({ "data-weakest": "" }, `Weakest position ${snapshot.weakest ?? "unknown"}`),
-      span({ "data-strongest": "" }, `Strongest position ${snapshot.strongest ?? "unknown"}`)
+      span({ "data-weakest": "" }, `Weakest BMS index ${snapshot.weakest ?? "unknown"}`),
+      span({ "data-strongest": "" }, `Strongest BMS index ${snapshot.strongest ?? "unknown"}`)
     ),
     div(
       { class: "sub" },
-      "Positions 1–81 follow pack order. Height shows the observed spread; colour is the gap below the best cell. Outlines mark unavailable readings."
+      "Positions 1–81 follow pack order. Height shows each reading; colour is the gap below the BMS maximum. Outlines mark unavailable readings."
     )
   );
 }
@@ -113,7 +113,7 @@ function CellReading(cell) {
         style: () => {
           chartTick.val;
           const state = readingStatus(cell.key, true);
-          return `color:${state === "fault" ? colors.BAD : state === "fresh" ? colors.CALM : colors.MUTED}`;
+          return `color:${state === "fault" ? colors.BAD : readingCanColour(cell.key, true) ? colors.CALM : colors.MUTED}`;
         },
       },
       () => {

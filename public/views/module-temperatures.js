@@ -2,7 +2,7 @@
 // Shared parked module grid; sampled cell bindings preserve the table nodes across ticks.
 import van from "../vendor/van-1.6.1.js";
 import { chartTick, peek } from "../lib/store.js";
-import { readingStatus, statusWord } from "../lib/reading-status.js";
+import { readingCanColour, readingStatus, statusWord } from "../lib/reading-status.js";
 import {
   MODULE_COUNT,
   MODULE_SENSORS,
@@ -25,7 +25,13 @@ export function ModuleTemperatures() {
       return heatmap({
         rows: grid.rows.map(row => ({
           label: String(row.module),
-          cells: row.cells.map(cell => ({ ...cell, color: colors.temperature(cell.value) })),
+          cells: row.cells.map((cell, index) => {
+            const key = moduleTemperatureKey(row.module, MODULE_SENSORS[index]);
+            return {
+              ...cell,
+              color: key !== null && readingCanColour(key, true) ? colors.temperature(cell.value) : colors.MUTED,
+            };
+          }),
         })),
       });
     },
@@ -58,7 +64,7 @@ function ModuleReading(key) {
       style: () => {
         chartTick.val;
         const state = readingStatus(key, true);
-        return `color:${state === "fault" ? colors.BAD : state === "fresh" ? colors.temperature(peek(key)) : colors.MUTED}`;
+        return `color:${state === "fault" ? colors.BAD : readingCanColour(key, true) ? colors.temperature(peek(key)) : colors.MUTED}`;
       },
     },
     () => {
