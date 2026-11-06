@@ -53,10 +53,7 @@ export function handleWaypointEndpoint(res: ServerResponse, accept: string | und
  * (public/lib/announce.js), and Siri has the sentence.
  */
 function respond(res: ServerResponse, accept: string | undefined, outcome: WaypointOutcome): void {
-  const reply: WaypointReply = { saved: outcome.saved, message: outcome.message };
-  if (outcome.sequence !== undefined) {
-    reply.sequence = outcome.sequence;
-  }
+  const reply = waypointReply(outcome);
   const wantsJson = (accept ?? "").toLowerCase().includes("application/json");
   const body = Buffer.from(wantsJson ? JSON.stringify(reply) : reply.message + "\n", "utf-8");
   res.writeHead(200, {
@@ -64,4 +61,12 @@ function respond(res: ServerResponse, accept: string | undefined, outcome: Waypo
     "Content-Length": String(body.length),
   });
   res.end(body);
+}
+
+export function waypointReply(outcome: Pick<WaypointOutcome, "saved" | "message" | "sequence">): WaypointReply {
+  return {
+    saved: outcome.saved,
+    message: outcome.message,
+    ...(outcome.sequence === undefined ? {} : { sequence: outcome.sequence }),
+  };
 }

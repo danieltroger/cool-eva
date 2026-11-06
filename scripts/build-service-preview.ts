@@ -251,27 +251,13 @@ const modules = [...registry]
   .map(([key, code]) => `  ${JSON.stringify(key)}: function (__exports, __imp) {\n${code}\n  }`)
   .join(",\n");
 
-// Two templates. The default is the WHOLE dashboard as it actually runs — every tab,
-// the real navigation, nothing annotated — because that is what you want when checking
-// a change. `--annotated` gives the design-review sheet instead: the same modules, but
-// mounted one state per panel with prose explaining each, which is only useful while
-// arguing about a specific design decision.
-const annotated = process.argv.includes("--annotated");
-const templateFile = annotated ? "service-preview-template.html" : "app-preview-template.html";
+const templateFile = "app-preview-template.html";
 const template = await readFile(join(HERE, templateFile), "utf8");
 const css = await readFile(join(PUBLIC, "style.css"), "utf8");
 // String.replace no-ops SILENTLY when the pattern is absent. Deleting either
 // placeholder produced "✓ 32 modules" and an empty registry that renders nothing —
 // the same outcome as the `},,` bug, reached a different way.
 //
-// Required PER TEMPLATE rather than of both: only the whole-dashboard one stubs /fan and
-// /charge-auto, so only it needs the Pi's constants, and a placeholder the annotated sheet
-// carried unused would be a line nothing could notice the loss of.
-// ⚠️ __SERVER_FACTS__ is required of BOTH templates since #190 — the annotated sheet now
-// quotes the gate's own refusal sentences, and a missing placeholder there would leave the
-// literal token on screen rather than failing the build.
-// ⚠️ And the harness placeholder is required of both since #170: a template without it builds
-// a page whose every fixture, stub and shim is missing, which parses perfectly.
 const required = ["__CSS__", "__TABLES__", "__SERVER_FACTS__", HARNESS_PLACEHOLDER];
 for (const placeholder of required) {
   if (!template.includes(placeholder)) {
@@ -306,9 +292,7 @@ const tables = JSON.stringify({
 // object; ./preview-server-facts.ts says why each entry is there.
 const serverConstants = JSON.stringify(serverFacts());
 
-// The harness the two templates share, read out of scripts/preview-harness*.js rather than
-// written into each of them. What the two hand-kept copies had drifted into by the time they
-// were merged, and why this is one injection rather than one parameterised template:
+// Fixture parts are injected once. Their extraction history and ordering constraints:
 // docs/diagnostics-and-checks.md §11.10.
 const harness = await previewHarnessSource();
 
@@ -323,18 +307,14 @@ const out =
   process.argv.slice(2).find(argument => !argument.startsWith("--")) ?? join(HERE, "..", "service-sheet-preview.html");
 await writeFile(out, html, "utf8");
 console.log(
-  `✓ ${out} — ${annotated ? "annotated sheet" : "whole dashboard"}, ${registry.size} modules, ` +
+  `✓ ${out} — whole dashboard, ${registry.size} modules, ` +
     `${Math.round(html.length / 1024)} kB, no network at runtime`
 );
 // The scenes are selected in the URL rather than by a control on the page, so they are invisible
 // to anyone who has not read the template. Printed here because this is where somebody looking for
 // them is standing.
 {
-  // Read out of the page rather than restated: a fourth scene would otherwise leave this line
-  // quietly listing three, and the whole point of printing it is that the scenes are invisible
-  // to anyone who has not opened the template. ⚠️ Both templates, since #190 gave the
-  // annotated sheet its own — printing only the whole-dashboard one meant a reviewer
-  // screenshotted the default parked sheet and never saw the refusal it had just added.
+  // Read from the page so new scenes cannot disappear from the printed list.
   const names = sceneNamesIn(html, "build-service-preview");
   console.log(
     `  ${names.map(name => `?scene=${name}`).join(" · ")} (${names[0]} is the default) — file://${out}?scene=${names[1] ?? names[0]}`

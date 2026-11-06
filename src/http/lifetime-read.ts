@@ -118,13 +118,7 @@ function respond(
   options: LifetimeReadEndpointOptions,
   fields: Partial<LifetimeReadResponse>
 ): void {
-  const payload: LifetimeReadResponse = {
-    measurement: null,
-    answered: null,
-    message: null,
-    gate: options.runner.gate(),
-    ...fields,
-  };
+  const payload = lifetimeReadReply(options, fields);
   const body = Buffer.from(JSON.stringify(payload), "utf-8");
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
@@ -132,4 +126,17 @@ function respond(
     "Cache-Control": "no-store",
   });
   res.end(body);
+}
+
+export function lifetimeReadReply(
+  options: LifetimeReadEndpointOptions,
+  fields: Partial<LifetimeReadResponse>
+): LifetimeReadResponse {
+  return {
+    measurement: null,
+    answered: null,
+    message: null,
+    gate: options.runner.gate(),
+    ...fields,
+  };
 }

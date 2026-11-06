@@ -360,7 +360,7 @@ console.log(`\n── the floor, which is the only calendar bound there is `.pad
   }
   console.log(`  ✓ ten consistent readings from 1999-08-22 → ${accepted} steps`);
   // The floor has to stay below the oldest data the repo can be handed, or
-  // decrypt-log.ts and replay-capture.ts would silently lose gps_epoch_s out of
+  // decrypt-log.ts and simulate.ts would silently lose gps_epoch_s out of
   // history. The 2026-08 sequences replayed above are the live half of that check;
   // this is the half that names the reason.
   // Pinned to the OLDEST data this repo can be handed, not to the newest fixture here.
@@ -371,7 +371,7 @@ console.log(`\n── the floor, which is the only calendar bound there is `.pad
   if (GPS_UTC_FLOOR_EPOCH_S > OLDEST_DATA_THIS_REPO_HOLDS) {
     failures.push(
       "the floor has been raised above the oldest data in the repo (April 2026) — decrypt-log.ts and " +
-        "replay-capture.ts would silently drop gps_epoch_s out of history"
+        "simulate.ts would silently drop gps_epoch_s out of history"
     );
   }
   const zeroedDateField = Date.UTC(2000, 0, 1) / 1000;

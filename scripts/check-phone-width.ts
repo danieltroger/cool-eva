@@ -8,6 +8,7 @@ import { TABS } from "../public/lib/router.js";
 import { sceneNamesIn } from "./preview-scenes.ts";
 import { checkSettingsBrowser } from "./settings-browser-check.ts";
 import { checkRouteDisarmBrowser } from "./route-disarm-browser.ts";
+import { checkSimulatorBrowser } from "./simulator-browser.ts";
 import { checkRidingBrowser } from "./riding-browser-check.ts";
 import {
   closePage,
@@ -214,7 +215,7 @@ if (browserPath === null) {
 
 const workspace = await mkdtemp(join(tmpdir(), "cool-eva-phone-width-"));
 const previewFile = join(workspace, "dashboard.html");
-// The committed template and the shipped public/ — the same page `npm run preview` builds
+// The committed template and the shipped public/ — the same page the fixture command in docs/development.md builds
 // for the dashboard gate, so what is asserted here is what a person looks at there.
 await run(
   process.execPath,
@@ -241,6 +242,7 @@ try {
   await checkSettingsBrowser(page, previewFile);
   await checkRouteDisarmBrowser(page, previewFile);
   await checkRidingBrowser(page, previewFile);
+  await checkSimulatorBrowser(page);
 } finally {
   if (page !== null) {
     await closePage(page);

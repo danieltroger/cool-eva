@@ -4,7 +4,7 @@ import { validBleSecret } from "../../public/lib/ble-secret.js";
 import { bluetoothCodeId, type SettingsRuntime } from "../settings/startup.ts";
 import { pendingSettings, record } from "../settings/schema.ts";
 import { validateSettingsPatch } from "../settings/validation.ts";
-import { publicSettings, type SettingsReply, type HubCandidate } from "../settings/view.ts";
+import { publicSettings, type SettingsReply, type HubCandidate, type HubCandidatesReply } from "../settings/view.ts";
 import type { SettingsRestart, RestartOperation } from "../settings/restart.ts";
 import { retiredLegacyChoices } from "../settings/legacy.ts";
 import { csrfRefusal } from "./mutation-guard.ts";
@@ -49,13 +49,17 @@ export async function handleSettingsEndpoint(
     }
     if (path === "/settings/hub-candidates") {
       const candidates = await context.scanHubs();
-      respond(res, 200, {
-        ok: true,
-        message: candidates.length
-          ? "Choose your motorcycle. Other motorcycles may be nearby."
-          : "No motorcycle found. Wake the bike and try again.",
-        candidates,
-      });
+      respond(
+        res,
+        200,
+        hubCandidatesReply(
+          candidates,
+          candidates.length
+            ? "Choose your motorcycle. Other motorcycles may be nearby."
+            : "No motorcycle found. Wake the bike and try again.",
+          true
+        )
+      );
       return;
     }
     if (path === "/settings/apply") {
@@ -231,4 +235,8 @@ export function validateRestartBluetoothKey(
 function respond(res: ServerResponse, status: number, value: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
   res.end(JSON.stringify(value));
+}
+
+export function hubCandidatesReply(candidates: HubCandidate[], message: string, ok: boolean): HubCandidatesReply {
+  return { ok, message, candidates };
 }

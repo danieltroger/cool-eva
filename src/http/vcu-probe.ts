@@ -101,12 +101,7 @@ function respond(
   reading: VcuProbeReading | null,
   message: string | null
 ): void {
-  const payload: VcuProbeResponse = {
-    reading,
-    message,
-    gate: options.runner.gate(),
-    targets: PROBE_TARGETS,
-  };
+  const payload = vcuProbeReply(options, reading, message);
   const body = Buffer.from(JSON.stringify(payload), "utf-8");
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
@@ -116,4 +111,17 @@ function respond(
     "Cache-Control": "no-store",
   });
   res.end(body);
+}
+
+export function vcuProbeReply(
+  options: VcuProbeEndpointOptions,
+  reading: VcuProbeReading | null,
+  message: string | null
+): VcuProbeResponse {
+  return {
+    reading,
+    message,
+    gate: options.runner.gate(),
+    targets: PROBE_TARGETS,
+  };
 }

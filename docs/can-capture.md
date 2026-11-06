@@ -123,7 +123,7 @@ That was true **only because candump exited**. From this change onward a reader 
 
 ### Why `2>&1` stays, and must
 
-The script folds candump's stderr into the capture file. That is inherited behaviour, and with `-D` it becomes load-bearing: the file boundary that used to mark a gap is gone, so candump's own `can0: interface down` line is the **only** evidence inside the file that one happened — and the file is what gets archived to the laptop, while the journal stays on an SD card that gets reflashed. Removing it would make post-`-D` captures silently gappy, which is worse than what came before. `scripts/replay-capture.ts` skips any line that is not a frame, so it costs nothing to read.
+The script folds candump's stderr into the capture file. That is inherited behaviour, and with `-D` it becomes load-bearing: the file boundary that used to mark a gap is gone, so candump's own `can0: interface down` line is the **only** evidence inside the file that one happened — and the file is what gets archived to the laptop, while the journal stays on an SD card that gets reflashed. Removing it would make post-`-D` captures silently gappy, which is worse than what came before. `scripts/simulate.ts` skips any line that is not a frame, so it costs nothing to read.
 
 ### The unit is left almost exactly as it was found
 
@@ -223,9 +223,9 @@ The Pi takes its power from the bike, so almost every capture ends mid-stream. M
 | Node `zlib.createGunzip()`            | 388 134 B, then `Z_BUF_ERROR` | 390 754 B, then **`Z_BUF_ERROR` too** |
 | Python `gzip.open()`                  | 388 134 B, then `EOFError`    | same                                  |
 
-⚠️ **How much a CLI recovers from a cut member is implementation-dependent** — Apple's gzip gives up 53 kB earlier than GNU's on the identical file — so `scripts/check-capture-reader.ts` asserts against **Node's** number, which is the same on both platforms because it is the same zlib. What every reader agrees on is that the recovered bytes are a **byte-exact prefix**, and that the last line is routinely a partial one. `scripts/replay-capture.ts` counts an unparseable line as `framesSkipped` and `evidence/keyoff/reduce-captures.awk` guards with `NF < 6`, so a partial final line costs a reader nothing.
+⚠️ **How much a CLI recovers from a cut member is implementation-dependent** — Apple's gzip gives up 53 kB earlier than GNU's on the identical file — so `scripts/check-capture-reader.ts` asserts against **Node's** number, which is the same on both platforms because it is the same zlib. What every reader agrees on is that the recovered bytes are a **byte-exact prefix**, and that the last line is routinely a partial one. `scripts/simulate.ts` counts unparseable lines and `evidence/keyoff/reduce-captures.awk` guards with `NF < 6`, so a partial final line costs a reader nothing.
 
-`scripts/capture-lines.ts` is the one place any READER opens a capture — `scripts/can-capture/stub-run.ts` and `evidence/keyoff/tail-shape.py` decode one too, deliberately not through it, because a harness that decodes with the module under test proves less. It treats **`Z_BUF_ERROR` only** as end-of-data, warns once with the line count, and re-throws everything else — so a missing file, an unreadable one, or a corrupt one is still a fault and not a short capture.
+`src/can/capture-lines.ts` is the one place any READER opens a capture — `scripts/can-capture/stub-run.ts` and `evidence/keyoff/tail-shape.py` decode one too, deliberately not through it, because a harness that decodes with the module under test proves less. It treats **`Z_BUF_ERROR` only** as end-of-data, warns once with the line count, and re-throws everything else — so a missing file, an unreadable one, or a corrupt one is still a fault and not a short capture.
 
 ⚠️ **`Z_DATA_ERROR` is deliberately NOT in that set, and an earlier version of this section had it wrong.** Both power-cut shapes give `Z_BUF_ERROR` — the clean cut and the NUL-tailed one, measured above. What gives `Z_DATA_ERROR` is corruption: one flipped byte 20 000 into the _intact_ 400 000 B fixture returns **147 456 B**, one warning and exit 0. Accepting that code as truncation silently loses 63 % of a capture that was entirely there — the same silent-truncation failure this file rejects zstd for, reproduced in gzip by a too-generous error test. Found by the diff reviewer on #302.
 
@@ -237,7 +237,7 @@ The Pi takes its power from the bike, so almost every capture ends mid-stream. M
 
 > Three concatenated `zstd -1` frames, 852 000 B of capture text. `zstd -dc` → 852 000 B ✓. Node 24 `zlib.createZstdDecompress()` → **284 000 B**, which is frame 1 and nothing else.
 
-Node's zstd decompressor **stops at the first frame of a concatenated file**, and in one of the two reproductions it did so with a clean `end` event and **no error at all** — a silent one-third. `scripts/replay-capture.ts` is a Node reader, so a `.zst` capture would replay the first 64 kB of a 3 GB file and report success. `createGunzip()` walks concatenated members natively. That single difference is the whole reason these files are gzip.
+Node's zstd decompressor **stops at the first frame of a concatenated file**, and in one of the two reproductions it did so with a clean `end` event and **no error at all** — a silent one-third. The simulator refuses `.zst` with decompression instructions rather than risking that silent prefix. `createGunzip()` walks concatenated members natively. That single difference is the whole reason these files are gzip.
 
 (An earlier draft of this decision argued from Python instead — that 3.13 has no stdlib zstd and `evidence/keyoff/` is Python. That argument is **wrong and withdrawn**: `capture-figures.py` never opens a capture, it reads the reduction's output. The Node defect is the real reason.)
 

@@ -226,7 +226,7 @@ const CANDUMP_LINE =
   /^\(\d{4}-\d{2}-\d{2} (\d{2}):(\d{2}):(\d{2})\.(\d{6})\)\s+\S+\s+([0-9A-F]{3})\s+\[\d\]\s+([0-9A-F ]+)$/;
 
 /** One candump line into an id, its bytes and its time in ms. Throws rather than guessing. */
-// ⚠️ A second candump parser — scripts/replay-capture.ts has one. Reuse is blocked the
+// ⚠️ A second candump parser — scripts/simulate.ts has one. Reuse is blocked the
 // same way ./freeze-frame-args.ts is: that module runs on import. The contracts also
 // differ (this one is strict, throws, and keeps microseconds for the timing fixture).
 // Do not write a third.

@@ -66,12 +66,7 @@ export async function handleChargeAutoEndpoint(
 }
 
 function respond(res: ServerResponse, status: number, state: ChargeAutoState, message: string | null): void {
-  const body: ChargeAutoResponse = {
-    state,
-    reasonText: CHARGE_AUTO_REASON_TEXT[state.reason] ?? "",
-    floorAmps: MIN_COMMAND_A,
-    message,
-  };
+  const body = chargeAutoReply(state, message);
   res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
   res.end(JSON.stringify(body));
 }
@@ -103,3 +98,7 @@ export const CHARGE_AUTO_REASON_TEXT: Record<number, string> = {
     `${TARGET_C} °C — holding, rather than taking it away first.`,
   [CHARGE_AUTO_REASON.MEASURING]: "Holding the last change until the pack has answered it.",
 };
+
+export function chargeAutoReply(state: ChargeAutoState, message: string | null): ChargeAutoResponse {
+  return { state, reasonText: CHARGE_AUTO_REASON_TEXT[state.reason] ?? "", floorAmps: MIN_COMMAND_A, message };
+}

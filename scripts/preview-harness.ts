@@ -3,10 +3,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // The shared preview harness: which files it is made of, in which order, and what a template
-// has to declare for it to run. scripts/build-service-preview.ts injects it into whichever
-// template it picked; scripts/check-preview-fixtures.ts splices it in the same place so it
-// reads the fixtures where they now live; scripts/check-preview-harness.ts holds both
-// templates to the contract below.
+// has to declare for it to run. scripts/build-service-preview.ts injects it into the dashboard
+// template; scripts/check-preview-fixtures.ts splices it in the same place so it
+// reads the fixtures where they now live; scripts/check-preview-harness.ts holds the
+// template to the contract below.
 //
 // Why there is one harness rather than two hand-kept copies, what the copies had drifted into,
 // and what each of the differences between them turned out to be:

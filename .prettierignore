@@ -25,7 +25,6 @@ obd-garage
 # in it, not source to be styled. Prettier parses the embedded script, adds a trailing
 # comma after __MODULES__, and the generated bundle then carries `},,` — which no check
 # in this repo catches, because nothing here executes the bundle.
-scripts/service-preview-template.html
 scripts/app-preview-template.html
 # The laptop-side map viewer formats itself, with its own Prettier and
 # prettier-plugin-svelte in map/node_modules. Without this entry the root run

@@ -92,7 +92,7 @@ const NOT_A_PAYLOAD = new Set(["signals"]);
 const READING = "[value: number, unit: string, group: string, ts?: number]";
 
 /** Checked when no path is given on the command line. */
-const TEMPLATES = ["scripts/app-preview-template.html", "scripts/service-preview-template.html"];
+const TEMPLATES = ["scripts/app-preview-template.html"];
 
 const failures: string[] = [];
 
@@ -116,12 +116,11 @@ for (const templatePath of templates) {
   }
   const source = ts.createSourceFile(label, harness, ts.ScriptTarget.ESNext, true, ts.ScriptKind.JS);
   const failuresBefore = failures.length;
-  // ⚠️ The app template mounts the whole dashboard, so every endpoint public/ fetches is reachable
-  // in it; the annotated sheet mounts a chosen set of panels, which is a different contract. Read
-  // off the source rather than the filename — the distinction check-service-preview.ts already
-  // draws — so a renamed or copied template is judged by what it does. The test itself lives in
-  // preview-harness.ts, beside the shared code that now defines the `imp` it looks for.
+  // Even an explicitly supplied scratch fixture must mount the real app.
   const mountsTheApp = mountsTheWholeDashboard(harness);
+  if (!mountsTheApp) {
+    failures.push(`${label}: fixture does not mount the whole dashboard`);
+  }
 
   await checkFixtureTypes(source, label, mountsTheApp);
   checkReadings(source, label);
@@ -287,7 +286,7 @@ async function checkFixtureTypes(source: ts.SourceFile, label: string, mountsThe
   if (mountsTheApp) {
     for (const fixture of FIXTURES) {
       if (!declarations.has(fixture.constant)) {
-        // The annotated sheet declares only the fixtures its panels need, and is held to those.
+        // Every whole-dashboard fixture needs every endpoint payload.
         failures.push(`${label}: no ${fixture.constant} fixture, so nothing stands in for the Pi's ${fixture.type}`);
       }
     }

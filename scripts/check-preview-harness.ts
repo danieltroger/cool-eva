@@ -25,7 +25,7 @@ interface Declaration {
 }
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const TEMPLATES = ["app-preview-template.html", "service-preview-template.html"];
+const TEMPLATES = ["app-preview-template.html"];
 
 /**
  * Every builder-placeholder-shaped token, which no harness part may spell.
@@ -45,7 +45,7 @@ const PLACEHOLDER_SHAPE = /__[A-Z][A-Z_]*__/g;
 const failures: string[] = [];
 
 console.log("\n──── scripts/check-preview-harness.ts ──────────────────────────────────────────");
-console.log("     that the two preview templates share one harness rather than two copies of it");
+console.log("     that the dashboard fixture and its harness parts obey their shared contract");
 
 const parts = (await harnessParts()).map(part => ({
   ...part,
@@ -90,7 +90,7 @@ for (const file of TEMPLATES) {
   }
 }
 
-// ── A. every contract name, in both templates ────────────────────────────────
+// ── A. every contract name, before the harness ────────────────────────────────
 //
 // The list is imported rather than restated: a second copy of it is one edit away from leaving a
 // seventh contract name unguarded. Missing `pageFetch` is the one that would otherwise reach a
@@ -100,25 +100,6 @@ for (const [file, names] of templateNames) {
   for (const required of PAGE_CONTRACT) {
     if (!names.has(required)) {
       failures.push(`${file}: declares no ${required}, which the shared harness needs from every page`);
-    }
-  }
-}
-
-// ── B. no OTHER name declared by both templates ──────────────────────────────
-//
-// This is the dead `settle()` itself: one function, written twice, improved once.
-const [firstTemplate, secondTemplate] = TEMPLATES;
-const first = templateNames.get(firstTemplate);
-const second = templateNames.get(secondTemplate);
-if (first && second) {
-  for (const name of first.keys()) {
-    if (second.has(name) && !PAGE_CONTRACT.includes(name)) {
-      failures.push(
-        `both templates declare ${name} — one copy will be improved and the other will not, which is ` +
-          "what this harness was extracted to end. Move it into a scripts/preview-harness-*.js part " +
-          "if nothing above the placeholder uses it, add it to PAGE_CONTRACT if every page must have " +
-          "its own, or give the two versions different names if they are genuinely different things"
-      );
     }
   }
 }
@@ -202,7 +183,7 @@ console.log(
   `  ${parts.length} harness parts, ${harnessNames.size} shared names, ` +
     `${PAGE_CONTRACT.length} declared by each page`
 );
-console.log("\n✓ one harness, two pages: no name is written twice");
+console.log("\n✓ one fixture harness: no name is written twice");
 
 /**
  * Every name a block of harness JavaScript declares at the top level, and whether redeclaring it

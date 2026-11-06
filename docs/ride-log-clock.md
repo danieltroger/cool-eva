@@ -82,7 +82,7 @@ The **uptime** is new and is the only monotonic thing a machine without an RTC h
 
 ⚠️ **The date stays first**, and that is a decision made against a measurement — but a much smaller one than the first version of this sentence claimed. Sorting a boot's files by the name's date agrees with sorting them by their own first frame with **0 disagreements — out of 6**. ⚠️ Six is the whole comparable population: of the 81 boots with a frame-carrying capture, only **6 have more than one**, so in the other 75 there is nothing to order. So the hazard a boot-id-first name would fix has never fired in the six places it could have, while the reorder would cost a chronological `ls` over the whole archive forever and leave one directory carrying two naming schemes. That is thin evidence, and it is why this is a reversible naming choice rather than a claim.
 
-The boot id and the uptime also go **inside** the file, on a `# boot … uptime …` first line — the same argument #185 used to keep `2>&1`: the archive travels to the laptop and the journal stays on a card that gets reflashed, so anything not in the file is lost. `scripts/replay-capture.ts` counts a line it cannot parse as `framesSkipped`, so it costs a reader nothing.
+The boot id and the uptime also go **inside** the file, on a `# boot … uptime …` first line — the same argument #185 used to keep `2>&1`: the archive travels to the laptop and the journal stays on a card that gets reflashed, so anything not in the file is lost. `scripts/simulate.ts` counts lines it cannot parse, so it costs a reader nothing.
 
 ## 6. Reading the archive across boots
 

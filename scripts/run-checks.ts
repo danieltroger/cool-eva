@@ -56,6 +56,11 @@ interface SelfCheck {
 /** In script-name order; they are independent, so nothing depends on which runs first. */
 const CHECKS: SelfCheck[] = [
   {
+    script: "scripts/check-simulator.ts",
+    covers:
+      "real-server recorded replay timing/filter/Mode-01, route-shaped mutation refusals, native/process/Node-state I/O isolation with positive controls, fresh child PIDs, stable scratch contents/instance, port reuse and exited lock holders",
+  },
+  {
     script: "scripts/check-a8-block.ts",
     covers:
       "the 25 bank-1 parameters A8's own firmware table serves that params.ecf does not describe (#219): their " +
@@ -251,6 +256,11 @@ const CHECKS: SelfCheck[] = [
     script: "scripts/check-can-decoders.ts",
     covers:
       "the broadcast frame decoders against frames captured 2026-08-02, plus three properties of the decoder set as a whole: that every id which decodes is in the kernel RX filter, that every emitted key is declared in the registry, and that no 1/0 flag carries a deadband big enough to swallow its own transitions",
+  },
+  {
+    script: "scripts/check-can-receive.ts",
+    covers:
+      "the shared live RX dispatch: read/write consumption order, OBD fallback, kernel arrival stamps, ELOCK replies, both hub-mirror and broadcast decoding on 0x410, GPS clock delivery through a no-I/O spy, traffic qualification and the exact live filter list",
   },
   {
     script: "scripts/check-can-transmit.ts",
@@ -937,15 +947,7 @@ const CHECKS: SelfCheck[] = [
   {
     script: "scripts/check-preview-harness.ts",
     covers:
-      "that the two preview templates still SHARE one harness rather than carrying two copies of it. " +
-      "After #170 merged them, a name declared by both templates is a copy by definition, and so is a name a " +
-      "template declares that scripts/preview-harness-*.js already declares — so this needs no threshold: it " +
-      "asserts that every page-contract name is declared by both pages, that nothing else is, that no template " +
-      "shadows a harness name, and that nothing is declared twice across the harness parts in one of the two " +
-      "ways that redeclare SILENTLY (a function, or a window.* assignment — const/let/class throw at parse and " +
-      "check-service-preview.ts already catches those). Written for the dead settle(): copied into the second " +
-      "template when 85b8643 created it, never called there, improved in one copy only, and unnoticed for three " +
-      "weeks. It reads source and never runs a page; docs/diagnostics-and-checks.md §11.10",
+      "the dashboard fixture's declaration order, complete page contract, no harness shadowing or silent duplicates, and no duplicate builder placeholders; extraction history is in docs/diagnostics-and-checks.md §11.10",
   },
   {
     script: "scripts/check-range-cells.ts",
@@ -1100,7 +1102,7 @@ const CHECKS: SelfCheck[] = [
   {
     script: "scripts/check-service-preview.ts",
     covers:
-      "that scripts/build-service-preview.ts produces a file whose script blocks actually parse — the one failure mode nothing else here can see, since no other check executes generated output — plus the handles the annotated sheet's close-ups hold the shipped page by: every PANEL_BLOCK marker is read out of the template and asserted to be built EXACTLY ONCE across public/views/, tag and whole class token, so a rename goes red — uniqueness being what makes one visible at all — and every panel kind has a marker to be scoped by. It proves that and nothing more: it parses the generated page rather than running it, so it cannot see a dead panel. docs/diagnostics-and-checks.md §11.6 says what that cost and what the runtime asserts instead",
+      "the generated whole-dashboard fixture parses, has a populated module registry, replaces every placeholder and mounts app.js; historical failures are in docs/diagnostics-and-checks.md §11.6",
   },
   {
     script: "scripts/check-service-stamp.ts",

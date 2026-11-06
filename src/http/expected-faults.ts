@@ -68,7 +68,7 @@ export async function handleExpectedFaultsEndpoint(
 }
 
 function respond(res: ServerResponse, statusCode: number, expected: ExpectedFaults, message: string | null): void {
-  const payload: ExpectedFaultsResponse = { expected, message };
+  const payload = expectedFaultsReply(expected, message);
   const body = Buffer.from(JSON.stringify(payload), "utf-8");
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
@@ -76,4 +76,8 @@ function respond(res: ServerResponse, statusCode: number, expected: ExpectedFaul
     "Cache-Control": "no-store",
   });
   res.end(body);
+}
+
+export function expectedFaultsReply(expected: ExpectedFaults, message: string | null): ExpectedFaultsResponse {
+  return { expected, message };
 }

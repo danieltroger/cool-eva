@@ -10,7 +10,7 @@ import { formatObdDtc } from "../src/diagnostics/dtc-table.ts";
 
 // Replays a captured OBD-II trouble-code reply through the real ISO-TP reassembler
 // and the real decoder, on a laptop, with no bike — the same trick
-// scripts/replay-capture.ts plays for the broadcast decoders, and for the same
+// scripts/simulate.ts plays for the broadcast decoders, and for the same
 // reason: the bike is reachable for a few minutes at a time in a garage with no
 // reception, and `socketcan` does not build on macOS anyway.
 //
