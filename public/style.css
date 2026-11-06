@@ -920,12 +920,6 @@ body {
   padding: 0.35rem 0.2rem 0;
 }
 
-/* A 64-character hex key has no break opportunity, so it would push the sheet sideways. */
-.ble-key-readout {
-  font-family: ui-monospace, Menlo, monospace;
-  overflow-wrap: anywhere;
-}
-
 /* The prose under a control is three different things, and they were one
  * undifferentiated amber block: "it will probably do nothing" sat in the same
  * colour and size as "IRREVERSIBLE. There is no unset."
