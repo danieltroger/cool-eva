@@ -18,7 +18,7 @@ The characteristics deliberately omit `encrypt-*` flags. Application sealing sup
 
 The dashboard Bluetooth key is **32 random bytes encoded as 64 lowercase hexadecimal characters**. Create it in Settings → Connections → Dashboard Bluetooth, keep a recoverable copy, Save, then explicitly Restart. A second phone imports the existing code; it does not rotate it. Onboarding (#317) uses `generateBleSecret()` from `public/lib/ble-secret.js` and persists it; restarting the service or rebuilding the app must not change it. A format validator cannot prove random provenance. Human phrases are rejected before BLE starts, while the rest of telemetry continues.
 
-Unset, BLE stays off and the Pi does not advertise. Keys are never put in URLs or diagnostic messages. Changing the Pi's key and restarting revokes old copies. The phone trims surrounding whitespace and normalizes hex case before validating and saving an entered key; invalid input cannot replace a saved key.
+Unset, BLE stays off and the Pi does not advertise. Keys are never put in URLs or diagnostic messages. The phone's **Show key** box is the one place a page displays a key it already holds, and only after the rider asks, so they can compare it with their saved copy after a `wrong secret`. The Pi never returns its key. Changing the Pi's key and restarting revokes old copies. The phone trims surrounding whitespace and normalizes hex case before validating and saving an entered key; invalid input cannot replace a saved key.
 
 **Protocol 2 requires updating both the Pi and the page/app.** The iOS app bundles `public/` and must be rebuilt; refreshing a hosted page does not update an installed bundle. A version mismatch fails before HELLO.
 

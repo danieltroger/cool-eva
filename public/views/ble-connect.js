@@ -19,17 +19,24 @@ import { BLE_ORIGIN_MESSAGE } from "../lib/ble-origin.js";
 // shared secret. Both render nothing unless ../lib/ble-link.js says this page is in
 // BLE mode, so the Pi-served dashboard is unchanged.
 
-const { button, div, form, h2, input, span } = van.tags;
+const { button, div, form, h2, input, label, span } = van.tags;
 
 /** @typedef {import("../lib/ble-link.js").BleStatus} BleStatus */
 
 const bleStatus = van.state(/** @type {BleStatus} */ ("off"));
 const bleDetail = van.state("");
+// Above the listener: onBleStatus calls it synchronously, before later declarations exist.
+const keyVisible = van.state(false);
+const shownKey = van.state("");
 
 if (BLE_MODE) {
   onBleStatus((status, detail) => {
     bleStatus.val = status;
     bleDetail.val = detail;
+    // Settings' "Use saved" stores a key from another view and then connects, which lands here.
+    if (keyVisible.rawVal) {
+      shownKey.val = storedSecret();
+    }
   });
 }
 
@@ -86,6 +93,7 @@ export function BleSection() {
           const field = /** @type {HTMLFormElement} */ (event.target).elements.namedItem("secret");
           try {
             rememberSecret(/** @type {HTMLInputElement} */ (field).value);
+            shownKey.val = storedSecret();
             entryError.val = "";
             connectNow();
           } catch (error) {
@@ -100,9 +108,11 @@ export function BleSection() {
       input({
         id: SECRET_FIELD_ID,
         class: "probe-input",
-        type: "password",
+        type: () => (keyVisible.val ? "text" : "password"),
         name: "secret",
         autocomplete: "current-password",
+        autocapitalize: "off",
+        spellcheck: false,
         placeholder: "Paste the Pi’s generated Bluetooth key",
         value: storedSecret(),
       }),
@@ -110,6 +120,29 @@ export function BleSection() {
         bleStatus.val === "connected" ? "Choose another Pi" : "Connect this phone"
       )
     ),
+    // Each origin keeps its own copy of the key, so after "wrong secret" the rider needs to see
+    // which one this page sends to compare it with their saved copy. Hidden until asked.
+    label(
+      { class: "settings-note settings-check" },
+      input({
+        type: "checkbox",
+        checked: keyVisible,
+        onchange: (/** @type {Event} */ event) => {
+          keyVisible.val = /** @type {HTMLInputElement} */ (event.target).checked;
+          shownKey.val = storedSecret();
+        },
+      }),
+      " Show key"
+    ),
+    // The field shows under half of the 64 characters at phone width, so the stored key, which
+    // is what the HELLO proof uses rather than whatever is typed in the field, is repeated wrapped.
+    () =>
+      keyVisible.val
+        ? div(
+            { class: "action-note ble-key-readout" },
+            shownKey.val ? `This page sends: ${shownKey.val}` : "No key is stored on this page yet."
+          )
+        : span(),
     () => (entryError.val ? div({ class: "action-note failure" }, entryError.val) : span()),
     () =>
       secretWanted.val && bleStatus.val !== "refused"
