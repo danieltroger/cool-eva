@@ -19,12 +19,15 @@ async function originsAndKeys(): Promise<void> {
     "https://danieltroger.github.io/another/",
     "https://unconfigured.invalid/cool-eva/",
     "https://unconfigured.invalid/another/",
+    "https://cool-eva-dashboard.cool-eva.workers.dev/",
     "https://cool-eva-keys.cool-eva.workers.dev/",
-    "https://other.cool-eva.workers.dev/",
-    "https://preview-cool-eva-dashboard.cool-eva.workers.dev/",
-    "https://cool-eva-dashboard.cool-eva.workers.dev.evil.invalid/",
-    "http://cool-eva-dashboard.cool-eva.workers.dev/",
-    "https://cool-eva-dashboard.cool-eva.workers.dev:8443/",
+    "https://andy-siu.github.io/cool-eva/",
+    "https://athegen.com/",
+    "https://emcool.athegen.com/",
+    "https://preview.cool-eva.athegen.com/",
+    "https://cool-eva.athegen.com.evil.invalid/",
+    "http://cool-eva.athegen.com/",
+    "https://cool-eva.athegen.com:8443/",
     "cooleva://other/index.html",
     "cooleva://app:8443/index.html",
     "file:///index.html",
@@ -63,8 +66,8 @@ async function originsAndKeys(): Promise<void> {
     assert.ok(removed > 0);
   }
   for (const url of [
-    "https://cool-eva-dashboard.cool-eva.workers.dev/",
-    "https://cool-eva-dashboard.cool-eva.workers.dev:443/index.html",
+    "https://cool-eva.athegen.com/",
+    "https://cool-eva.athegen.com:443/index.html",
     "http://localhost:8172/?transport=ble",
     "cooleva://app/index.html",
   ]) {

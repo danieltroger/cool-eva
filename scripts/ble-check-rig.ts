@@ -130,7 +130,7 @@ export async function createRig(options: RigOptions = {}) {
   };
   const environment: Partial<BleEnvironment> = {
     ...clock,
-    url: new URL("https://cool-eva-dashboard.cool-eva.workers.dev/"),
+    url: new URL("https://cool-eva.athegen.com/"),
     bluetooth: () => ({ requestDevice: async () => device }),
     secure: () => true,
     shell: () => undefined,

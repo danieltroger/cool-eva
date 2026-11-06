@@ -1,6 +1,6 @@
 # Cool Eva — Raspberry Pi setup
 
-For a **fresh install** using Windows PowerShell or macOS Terminal, follow the [complete setup guide](docs/manual-install.md) or [short README setup](README.md#setup). The installer handles swap, package setup, the bundled Node/native modules, service installation/start and health checks; no Git/npm/compiler or laptop Node is needed.
+For a **fresh install** using Windows PowerShell or macOS Terminal, follow the [complete setup guide](docs/manual-install.md) or [short README setup](README.md#setup). The installer handles swap, package setup, the bundled Node/native modules, service installation/start and health checks; no Git/npm/compiler is needed. Node 24 on the computer is needed only to make a recording key.
 
 ## 0. Hardware
 
@@ -14,7 +14,7 @@ Optional cooling hardware must be wired before enabling it. Fresh setup asks abo
 
 ## 2. Install and start — on your computer
 
-Generate and back up recording keys at [the key page](https://cool-eva-keys.cool-eva.workers.dev). Only the public PEM is accepted by setup; never paste or copy the private key to the Pi. Read [what can change the motorcycle](README.md#what-can-change-the-bike), then paste:
+Generate and back up recording keys with `scripts/generate-log-key.ts` on your computer ([steps](docs/manual-install.md#3-recording-key--on-your-computer)). Only the public PEM is accepted by setup; never paste or copy the private key to the Pi. Read [what can change the motorcycle](README.md#what-can-change-the-bike), then paste:
 
 ```sh
 ssh -tt pi@cool-eva.local "sudo install -d -m 700 /var/cache/cool-eva-install && sudo curl -fsSL --proto '=https' --proto-redir '=https' https://github.com/danieltroger/cool-eva/releases/latest/download/install.sh -o /var/cache/cool-eva-install/install.sh && sudo sh /var/cache/cool-eva-install/install.sh"
