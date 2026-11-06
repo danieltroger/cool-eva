@@ -913,6 +913,7 @@ function HeadlightSection() {
 function ResetVcuSection() {
   return div(
     h3({ class: "sheet-title" }, "Reset VCU"),
+    div({ class: "action-note" }, "An active PSU hold keeps running during this reset."),
     ActionButton("reset-vcu", () => "🔄  Reset the VCU (restart both processors)", {
       confirm: "RESTART both VCU processors now",
       does:

@@ -941,6 +941,11 @@ const CHECKS: SelfCheck[] = [
     covers: "exact PSU requests, monotonic cadence and hour limit, gates, lease and stop paths",
   },
   {
+    script: "scripts/check-psu-reset-vcu.ts",
+    covers:
+      "PSU repeats during held Reset VCU exchanges only; parameter, sweep and charge leases stop; later-holder isolation, Start/Extend refusal and Off/timeout during reset",
+  },
+  {
     script: "scripts/check-range-cells.ts",
     covers:
       "Range zero/fault reading guards and all 81 physical cell slots, module order, missing/stale/fault masking, true extrema and a balanced pack",
