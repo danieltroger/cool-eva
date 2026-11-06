@@ -53,6 +53,7 @@ initialise() {
     initial_target=$(basename "$(readlink -f "$RELEASE_ROOT/current")")
     valid_release_directory "$initial_target" || fail 'Invalid initial release.'
     verify_storage
+    ensure_helpers "$initial_target"
     read_os_packages
     initial_state=$(mktemp "$PRIVATE/state.XXXXXX")
     jq -n --arg current "$initial_target" --arg os "$OS_PACKAGES" \
@@ -62,7 +63,6 @@ initialise() {
     mv -fT "$initial_state" "$STATE"
     sync
     set_current "$initial_target"
-    install_helpers "$initial_target"
 }
 
 HELPER_DIRECTORY=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)

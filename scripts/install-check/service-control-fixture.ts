@@ -11,7 +11,7 @@ export async function createServiceControlFixture(directory: string): Promise<Se
   const commands = new URL("../../src/install/commands.ts", import.meta.url).href;
   await writeFile(
     adapter,
-    `import {writeFile,access} from 'node:fs/promises';
+    `import {writeFile,access,rm} from 'node:fs/promises';
 export {command,unitLoadState} from ${JSON.stringify(commands)};
 const directory=${JSON.stringify(directory)};
 async function marked(name){try{await access(directory+'/'+name);return true;}catch(error){if(error.code!=='ENOENT'){throw error;}return false;}}
@@ -21,7 +21,7 @@ export function parseSettingsDocument(){return {document:{migration:{complete:tr
 export async function exists(path){return (path.endsWith('settings.json')||path==='/etc/systemd/system/cool-eva.service')?await marked('fail-select'):path.endsWith('src/index.ts')&&await marked('migration-fault')||path==='/etc/systemd/system/thermometer.service'&&await marked('before-backup');}
 export async function selectInitialRelease(){if(await marked('fresh-select')){throw new Error('Fresh selection failed');}if(await marked('fail-select')){throw new Error('Release selection failed after stop');}}
 export async function verifyReleaseStorage(){}
-export async function installFile(source,destination){if(destination==='/etc/systemd/system/cool-eva.service'){await writeFile(directory+'/unit','new');}}
+export async function installFile(source,destination){if(destination==='/etc/systemd/system/cool-eva.service'){await writeFile(directory+'/unit','new');await rm(directory+'/no-unit',{force:true});}}
 export async function writeRootFile(path,contents){if(path.endsWith('.previous')&&await marked('before-backup')){throw new Error('Backup write failed');}if(path==='/etc/systemd/system/cool-eva.service'){await writeFile(directory+'/unit',contents==='legacy fixture'?'old':'new');}}
 export async function removeOwnFile(){}
 `
@@ -105,9 +105,15 @@ case "$1" in
   ;;
  start)
   test "$2" = --no-block || exit 91
+  if [ -e "$fixture/require-updater" ] && [ "$(cat "$fixture/unit")" = new ]; then
+    test -f "$(cat "$fixture/bootstrap-state")"
+    sh -n "$(cat "$fixture/bootstrap-helper")"
+    sh "$(cat "$fixture/bootstrap-helper")" self-test
+    printf 'UPDATER_READY_BEFORE_START\\n' >> "$fixture/calls"
+  fi
   if [ -e "$fixture/fail-start" ]; then printf failed > "$fixture/state"; else printf active > "$fixture/state"; fi
   ;;
- stop) printf inactive > "$fixture/state";;
+ stop) if [ -e "$fixture/no-unit" ]; then exit 5; fi; printf inactive > "$fixture/state";;
  show)
   case "$*" in
    *--property=ExecStart*) printf /usr/local/libexec/cool-eva-launch;;

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cp, mkdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
@@ -52,7 +52,7 @@ export async function checkBootstrap(directory: string, repository: string, only
       await mkdir(path, { recursive: true });
     }
     await writeFile(join(root, "commands.txt"), "");
-    for (const command of ["id", "mv", "curl", "realpath", "sha256sum", "flock", "sync", "cut", "sleep"]) {
+    for (const command of ["id", "stat", "mv", "curl", "realpath", "sha256sum", "flock", "sync", "cut", "sleep"]) {
       await writeFile(join(commands, command), commandWrapper(command), { mode: 0o755 });
     }
     for (const command of ["apt-get", "apt-mark", "journalctl", "git", "npm"]) {
@@ -123,7 +123,14 @@ esac
     });
     await writeFile(
       join(payload, "runtime/bin/node"),
-      '#!/bin/sh\nprintf \'node %s\\n\' "$*" >> "$UPDATE_FIXTURE/commands.txt"\necho BOOTSTRAP_NODE\n',
+      `#!/bin/sh
+printf 'node %s\\n' "$*" >> "$UPDATE_FIXTURE/commands.txt"
+if [ -f "$UPDATE_FIXTURE/data/updater/state.json" ]; then
+    sh -n "$UPDATE_FIXTURE/code/updater/current/run.sh"
+    sh "$UPDATE_FIXTURE/code/updater/current/run.sh" self-test || exit 95
+fi
+echo BOOTSTRAP_NODE
+`,
       { mode: 0o755 }
     );
     await writeFile(join(payload, "release.json"), JSON.stringify(metadata));
@@ -132,6 +139,7 @@ esac
     if (variant === "linked-file") {
       await symlink("release.json", join(payload, "linked.json"));
     }
+    await cp(join(repository, "scripts/update"), join(payload, "scripts/update"), { recursive: true });
     await writeFileInventory(payload);
     const archive = join(assets, "bundle.tar.zst");
     await promisify(execFile)("tar", ["--zstd", "-cf", archive, "-C", payload, "."], {
@@ -148,14 +156,18 @@ esac
       await mkdir(join(root, "code/releases"), { recursive: true });
       await cp(payload, target, { recursive: true });
       await symlink(target, join(root, "code/current"));
-      await mkdir(join(root, "data/updater"), { recursive: true });
+      await mkdir(join(root, "data/updater"), { recursive: true, mode: 0o700 });
       await writeFile(
         join(root, "data/updater/state.json"),
         JSON.stringify({
+          format: 1,
+          previous: null,
+          rejected: [],
           current: metadata.release,
           pending: variant === "pending-update" ? { target: "synthetic-trial" } : null,
         })
       );
+      await chmod(join(root, "data/updater/state.json"), 0o600);
     }
     let installer = renderInstaller(await readFile(join(repository, "install.sh"), "utf8"), metadata);
     for (const [source, destination] of [

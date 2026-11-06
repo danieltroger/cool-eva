@@ -17,6 +17,7 @@ import { failAfterServiceRecovery, prepareServiceWithRecovery } from "./failure-
 import { configureAccessories } from "./accessories.ts";
 import { readFile } from "node:fs/promises";
 import { parseSettingsDocument } from "../settings/schema.ts";
+import { prepareBundleUpdater } from "./updater.ts";
 
 export async function installBundle(directory: string): Promise<void> {
   if (process.getuid?.() !== 0 || !(await realpath(directory)).startsWith("/opt/cool-eva/releases/")) {
@@ -54,14 +55,12 @@ export async function installBundle(directory: string): Promise<void> {
     await verifyReleaseStorage(settingsPaths());
     const { document } = parseSettingsDocument(JSON.parse(await readFile(settingsPaths().settingsFile, "utf8")));
     reboot = await configureAccessories(document.values);
-    await installBundleUnits(directory, metadata.channel);
+    await prepareBundleUpdater(directory, metadata.channel);
+    await installBundleUnits(directory);
     console.log("Checking the running service for 60 seconds. No bike connection is required to finish setup.");
     view = await checkInstalledApp(metadata.release);
   } catch (error) {
     return failAfterServiceRecovery(backup, error);
-  }
-  if (!(await exists(settingsPaths().updaterDirectory + "/state.json"))) {
-    await command("sh", [directory + "/scripts/update/run.sh", "initialise"]);
   }
   await installCaptureChoice(directory, captureEnabled);
   await printInstallResults(view, choices.rideLogPublicKeyPem);

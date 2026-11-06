@@ -49,6 +49,7 @@ main() {
     free_kib=$(df -Pk /opt/cool-eva | awk 'END {print $4}')
     [ "$free_kib" -gt $((EXPECTED_BYTES / 1024 * 6 + 1048576)) ] || fail 'Not enough free card space. Keep your ride data backed up before freeing space.'
     if [ -f /var/lib/cool-eva/updater/state.json ]; then
+        repair_existing_helpers
         TARGET=$(readlink -f /opt/cool-eva/current)
         if [ "$(jq -r .release "$TARGET/release.json")" != "$RELEASE" ]; then
             /usr/local/libexec/cool-eva-update install-tag "$INSTALL_TAG"
@@ -59,7 +60,7 @@ main() {
         [ ! -L /var/lib/cool-eva/updater/update.lock ] || fail 'Unsafe updater lock.'
         exec 8>>/var/lib/cool-eva/updater/update.lock
         flock -x -w 2100 8 || fail 'An update or rollback is still running. Let it finish before retrying setup.'
-        jq -e --arg release "$RELEASE" '.pending == null and .current == $release' /var/lib/cool-eva/updater/state.json >/dev/null || fail 'The release changed while setup was starting. Paste the line again; no service was stopped.'
+        jq -e --arg current "$(basename "$TARGET")" '.pending == null and .current == $current' /var/lib/cool-eva/updater/state.json >/dev/null || fail 'The release changed while setup was starting. Paste the line again; no service was stopped.'
         [ "$(readlink -f /opt/cool-eva/current)" = "$TARGET" ] || fail 'The selected release changed. Retry setup.'
         note 'Starting the bundled Node installer with the existing release and settings.'
         "$TARGET/runtime/bin/node" --no-wasm-lazy-compilation --experimental-strip-types "$TARGET/src/install/main.ts" "$TARGET"
@@ -89,6 +90,47 @@ main() {
     "$TARGET/runtime/bin/node" --no-wasm-lazy-compilation --experimental-strip-types "$TARGET/src/release/preflight.ts" native || fail 'This bundle cannot load its native modules on the installed OS. No service was replaced.'
     note 'Starting the bundled Node installer.'
     "$TARGET/runtime/bin/node" --no-wasm-lazy-compilation --experimental-strip-types "$TARGET/src/install/main.ts" "$TARGET"
+}
+
+repair_existing_helpers() {
+    repair_root=/opt/cool-eva/updater
+    if [ -f "$repair_root/current/run.sh" ] && sh -n "$repair_root/current/run.sh" && sh "$repair_root/current/run.sh" self-test; then return 0; fi
+    [ "$(realpath /var/lib/cool-eva/updater)" = /var/lib/cool-eva/updater ] && [ "$(stat -c '%u:%a' /var/lib/cool-eva/updater)" = 0:700 ] || fail 'Unsafe updater storage; no app was stopped.'
+    [ ! -L /var/lib/cool-eva/updater/update.lock ] || fail 'Unsafe updater lock.'
+    exec 8>>/var/lib/cool-eva/updater/update.lock
+    flock -x -w 2100 8 || fail 'An update or rollback is still running. Let it finish.'
+    if [ -f "$repair_root/current/run.sh" ] && sh -n "$repair_root/current/run.sh" && sh "$repair_root/current/run.sh" self-test; then
+        flock -u 8
+        exec 8>&-
+        return 0
+    fi
+    [ ! -L /var/lib/cool-eva/updater/state.json ] && [ "$(stat -c '%u:%a' /var/lib/cool-eva/updater/state.json)" = 0:600 ] || fail 'Unsafe updater state; no app was stopped.'
+    jq -e '.format == 1 and (.current | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9.-]*$")) and
+        (.previous == null or (.previous | type == "string")) and (.rejected | type == "array") and
+        (.pending == null or (.pending.target | type == "string"))' /var/lib/cool-eva/updater/state.json >/dev/null || fail 'Invalid updater state; no app was stopped.'
+    repair_current=$(jq -r .current /var/lib/cool-eva/updater/state.json)
+    repair_source="/opt/cool-eva/releases/$repair_current"
+    [ -d "$repair_source" ] && [ ! -L "$repair_source" ] && [ "$(realpath "$repair_source")" = "$repair_source" ] || fail 'Unsafe recorded release; no app was stopped.'
+    jq -e '.format == 1 and .updaterProtocol == 1 and .platform == "linux-arm64"' "$repair_source/release.json" >/dev/null || fail 'Unsupported recorded release; no app was stopped.'
+    (cd "$repair_source" && sha256sum --check --strict --quiet files.sha256) || fail 'Recorded release was edited. Keep your edits safe; no app was stopped.'
+    [ ! -L "$repair_root" ] && [ ! -L "$repair_root/versions" ] || fail 'Unsafe helper storage.'
+    mkdir -p "$repair_root/versions"
+    [ "$(realpath "$repair_root/versions")" = "$repair_root/versions" ] || fail 'Unsafe helper storage.'
+    repair_staging=$(mktemp -d "$repair_root/versions/helper.XXXXXX")
+    # Protocol 1 has six files; the old release need not understand a new action.
+    for repair_file in run.sh common.sh settings.sh download.sh lifecycle.sh helpers.sh; do
+        cp "$repair_source/scripts/update/$repair_file" "$repair_staging/$repair_file"
+        chmod 700 "$repair_staging/$repair_file"
+        sh -n "$repair_staging/$repair_file" || fail 'The repaired helper failed its syntax check.'
+    done
+    sh "$repair_staging/run.sh" self-test || fail 'The repaired helper failed its self-test.'
+    sync
+    [ ! -e "$repair_root/current.next" ] && [ ! -L "$repair_root/current.next" ] || unlink "$repair_root/current.next"
+    ln -s "versions/${repair_staging##*/}" "$repair_root/current.next"
+    mv -fT "$repair_root/current.next" "$repair_root/current"
+    sync
+    flock -u 8
+    exec 8>&-
 }
 
 catch_up_os() {

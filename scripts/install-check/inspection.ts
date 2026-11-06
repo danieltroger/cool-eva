@@ -47,9 +47,10 @@ record() {
   if timeout 15 "$@"; then :; else printf 'INSPECTION command failed: %s (exit %s)\n' "$*" "$?"; fi
 }
 record date -u +%FT%TZ
-record journalctl --no-pager --output=short-monotonic -b -u cool-eva.service -u cool-eva-rollback.service -u 'cool-eva-update*.service' -u cool-eva-install-os.service -u cool-eva-qemu-diagnostics.service -u cool-eva-qemu-console.service -u ssh.service -u apt-daily.service -u apt-daily-upgrade.service -u unattended-upgrades.service
-record systemctl --no-pager --full status cool-eva.service cool-eva-rollback.service cool-eva-update.service cool-eva-update-repair.service cool-eva-install-os.service cool-eva-qemu-diagnostics.service cool-eva-qemu-console.service ssh.service apt-daily.service apt-daily-upgrade.service unattended-upgrades.service
-record systemctl --no-pager show cool-eva.service cool-eva-rollback.service cool-eva-update.service cool-eva-update-repair.service --property=ActiveState --property=SubState --property=Result --property=MainPID --property=NRestarts --property=ExecMainCode --property=ExecMainStatus --property=ExecMainStartTimestampMonotonic --property=ActiveEnterTimestampMonotonic --property=MemoryCurrent --property=MemoryPeak
+record journalctl --no-pager --output=short-monotonic -b -u cool-eva.service -u cool-eva-rollback.service -u 'cool-eva-update*.service' -u cool-eva-install-os.service -u cool-eva-qemu-verify.service -u cool-eva-qemu-diagnostics.service -u cool-eva-qemu-console.service -u ssh.service -u apt-daily.service -u apt-daily-upgrade.service -u unattended-upgrades.service
+record systemctl --no-pager --full status cool-eva.service cool-eva-rollback.service cool-eva-update.service cool-eva-update-repair.service cool-eva-install-os.service cool-eva-qemu-verify.service cool-eva-qemu-diagnostics.service cool-eva-qemu-console.service ssh.service apt-daily.service apt-daily-upgrade.service unattended-upgrades.service
+record systemctl --no-pager show cool-eva.service cool-eva-rollback.service cool-eva-update.service cool-eva-update-repair.service cool-eva-qemu-verify.service --property=ActiveState --property=SubState --property=Result --property=MainPID --property=NRestarts --property=ExecMainCode --property=ExecMainStatus --property=ExecMainStartTimestampMonotonic --property=ActiveEnterTimestampMonotonic --property=MemoryCurrent --property=MemoryPeak
+record cat /run/cool-eva-qemu-verify.receipt
 record free -m
 record ps -eo pid,ppid,stat,etimes,pcpu,rss,comm:40
 record dmesg
