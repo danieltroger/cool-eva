@@ -28,6 +28,16 @@ export async function checkBmsBrowser(page: HeadlessPage, file: string) {
       "Old held bars draw with neutral ink."
     );
     assert.equal(
+      await evaluateOnPage(page, "document.querySelector('[data-cell-key=lmu1_cell4_mv] .cell-number').style.color"),
+      "var(--sub)",
+      "Old held numbers use the same provisional colour rule as bars."
+    );
+    assert.equal(
+      await evaluateOnPage(page, "document.querySelector('[data-cell-key=lmu1_cell1_mv] .cell-number').style.color"),
+      "var(--fg)",
+      "Current cell numbers retain their current colour."
+    );
+    assert.equal(
       await evaluateOnPage(page, "document.querySelector('.strip [data-cell=lmu1_cell1_mv]').style.fill"),
       "var(--good)",
       "A current cell above the BMS maximum has no gap."
@@ -83,6 +93,7 @@ export async function applyHeldBmsFixture(page: HeadlessPage) {
       lmu1_cell1_mv:[3405,'mV','cells',timestamp],
       lmu1_cell4_mv:[3000,'mV','cells',timestamp-90_000],
       lmu1_pcb1_c:[60,'°C','battery',timestamp-90_000],
+      lmu2_pcb1_c:[42,'°C','battery',timestamp],
       cell_min_mv:[3280,'mV','cells',timestamp],cell_max_mv:[3320,'mV','cells',timestamp],
       cell_spread_mv:[40,'mV','cells',timestamp],
       cell_lowest_v_idx:[7,'','cells',timestamp],cell_highest_v_idx:[19,'','cells',timestamp]
@@ -112,6 +123,16 @@ async function assertHeldModules(page: HeadlessPage) {
   assert.equal(
     await evaluateOnPage(page, "document.querySelectorAll('.module-temperatures .heatmap rect')[1].style.fill"),
     "var(--sub)"
+  );
+  assert.equal(
+    await evaluateOnPage(page, "document.querySelector('[data-module-signal=lmu2_pcb1_c]').style.color"),
+    "var(--watch)",
+    "A current temperature keeps its temperature colour in both module views."
+  );
+  assert.equal(
+    await evaluateOnPage(page, "document.querySelectorAll('.module-temperatures .heatmap rect')[4].style.fill"),
+    "var(--watch)",
+    "The heatmap must show current temperature colour as well as held neutral readings."
   );
   assert.equal(
     await evaluateOnPage(page, "document.querySelectorAll('.module-readings td.sub').length"),

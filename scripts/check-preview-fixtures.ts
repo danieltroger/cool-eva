@@ -173,6 +173,31 @@ function checkReadings(source: ts.SourceFile, label: string): void {
       );
     }
   }
+  checkSceneCarriers(source, label);
+}
+
+function checkSceneCarriers(source: ts.SourceFile, label: string): void {
+  const heldKeys = new Set(SIGNALS.filter(signal => signal.displayFreshness !== undefined).map(signal => signal.key));
+  const declarations = topLevelDeclarations(source);
+  const base = declarations.get("PARKED_SIGNALS");
+  for (const scene of namedEntries(declarations.get("SCENES"))) {
+    const overlay = namedEntries(scene.value).find(entry => entry.name === "signals")?.value;
+    const expressions = [base, overlay].filter((entry): entry is ts.Expression => entry !== undefined);
+    const combined = expressions.map(entry => `...(${inlined(entry, source, declarations)})`).join(",");
+    const expanded = ts.createSourceFile(
+      label,
+      `const readings = {${combined}};`,
+      ts.ScriptTarget.ESNext,
+      true,
+      ts.ScriptKind.JS
+    );
+    const triples: [string, string, string][] = [];
+    collectTriples(expanded, triples);
+    const keys = new Set(triples.map(([key]) => key));
+    if (triples.some(([key]) => heldKeys.has(key)) && !keys.has("lmu_cell_mux")) {
+      failures.push(`${label}: ${scene.name} carries held BMS readings without lmu_cell_mux`);
+    }
+  }
 }
 
 /**
