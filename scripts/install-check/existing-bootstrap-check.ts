@@ -46,6 +46,21 @@ export async function checkExistingBootstrap(directory: string, only?: string): 
     } else {
       console.log("SKIP real util-linux flock handoff on macOS; functional repair checks still run");
     }
+    const manager = join(fixture.commandDirectory, "systemctl");
+    await writeFile(
+      manager,
+      (await readFile(manager, "utf8")).replace(
+        'if [ "$1" = show ]; then',
+        `case "$1:$2" in
+show:apt-daily.service|show:apt-daily-upgrade.service)
+  printf 'LoadState=loaded\\nActiveState=inactive\\nJob=\\n'; exit 0 ;;
+esac
+if [ "$1" = show ]; then`
+      ),
+      { mode: 0o755 }
+    );
+    await writeFile(join(fixture.commandDirectory, "timeout"), '#!/bin/sh\nshift\nexec "$@"\n', { mode: 0o755 });
+    await writeFile(join(fixture.root, "uptime"), "0 0\n");
     const frozen = join(REPOSITORY, "scripts/install-check/fixtures/updater-v1");
     const hashes: Record<string, string> = JSON.parse(await readFile(join(frozen, "sha256.json"), "utf8"));
     for (const [name, expected] of Object.entries(hashes)) {
@@ -135,6 +150,7 @@ exec sh ${quote(dispatcher)} "$1" --config ${quote(fixture.configuration)} "$2"
       { mode: 0o755 }
     );
     let installer = renderInstaller(await readFile(join(REPOSITORY, "install.sh"), "utf8"), metadata);
+    installer = installer.replaceAll("/proc/uptime", join(fixture.root, "uptime"));
     const catchUpStart = installer.indexOf("catch_up_os() {");
     const catchUpEnd = installer.indexOf("stop_progress() {", catchUpStart);
     installer = installer.slice(0, catchUpStart) + "catch_up_os() { :; }\n\n" + installer.slice(catchUpEnd);
@@ -143,6 +159,7 @@ exec sh ${quote(dispatcher)} "$1" --config ${quote(fixture.configuration)} "$2"
       ["/opt/cool-eva", fixture.code],
       ["/var/lib/cool-eva", fixture.data],
       ["/usr/local/libexec/cool-eva-update", entry],
+      ["/etc/systemd/system", join(fixture.root, "systemd")],
     ]) {
       installer = installer.replaceAll(source, destination);
     }
