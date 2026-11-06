@@ -8,11 +8,21 @@ The request is standard CAN ID **0x500**, non-RTR, DLC **8**, data **`01 00 00 0
 
 The hold has a **60 minute** monotonic limit, with remaining time shown on the card. **Extend** needs its own new arm-and-confirm and sets another 60 minutes from that confirmation. Refreshing the page, reconnecting or repeating an already completed request does not extend it. The hold is never persisted: every service boot starts **off**.
 
-**Off** also arms before it confirms, because dropping the rail can stop the Pi. A confirmed Off ignores revision and boot changes, so another viewer's extension cannot prevent stopping. The hold stops on its deadline, a requested service shutdown, CAN down/channel stop or bus-off, three consecutive failed transmissions, loss of write permission, or another operation acquiring the bus lease. Lease users include parameter/service operations, CAN restart and automatic DC charge-current commands. Releasing a lease or recovering CAN does not restart the hold. Each start, explicit extension and stop is logged with its reason.
+**Off** also arms before it confirms, because dropping the rail can stop the Pi. A confirmed Off ignores revision and boot changes, so another viewer's extension cannot prevent stopping. The hold stops on its deadline, a requested service shutdown, CAN down/channel stop or bus-off, three consecutive failed transmissions, loss of write permission, or another operation acquiring the bus lease, **except Reset VCU**. Parameter writes, sweeps, other service operations, CAN restart and automatic DC charge-current commands still stop it. Releasing a lease or recovering CAN does not restart the hold. Each start, explicit extension and stop is logged with its reason.
 
 After stop there are **no new frames** from the repeater. Frames already accepted into the kernel/device queue may still leave it. Stop does not send a guessed OFF payload: the PSU's timeout determines when MAIN drops, and that timeout/key-off behavior still needs the on-bike test.
 
 There is **no 12 V battery**. The Pi runs from the PSU's main rail and loses power when that rail drops. That is expected; an HTTP reply or later shutdown cleanup may not complete. Do not rely on this hold to power the Pi through a service stop, restart or an out-of-process operation that stops Cool Eva.
+
+## Reset VCU while holding the PSU
+
+An already-active hold keeps repeating during **Reset VCU**. Its original deadline stays unchanged. Start and Extend remain refused while any operation holds the bus, including this reset. The reset still requires its existing confirmation and stationary/not-charging checks, and all CAN fault, permission, timeout, Off and shutdown stops remain active.
+
+The exception belongs to that reset's lease and ends when it releases the bus. It permits only the independent PSU repeat; diagnostic operations remain exclusive. The observed reset exchange uses requests on `0x7C0` and replies on `0x7E0`, with target addressing. A `0x500` PSU request cannot satisfy that reply filter. The separate nonblocking sockets share no pending reply or pacing state.
+
+At the configured 500 kbit/s, a conservative 160-bit budget for an eight-byte standard frame is 0.32 ms and about 0.22% added load at 150 ms. The physical bus is shared: higher-priority `0x500` may briefly delay a diagnostic frame, against the reset's 300 ms reply window. This protocol isolation does not establish ECU power retention or explain the reported power loss after key-off.
+
+The VCU may resume its own `0x500` requests after reboot. The repeater does not arbitrate the meaning of competing payloads; inspect local TX and received frames separately with `candump -x`. TX errors and bus-off still stop the hold. If power drops during the reset, the Pi can lose both the HTTP reply and that reset's audit line, which is written after the exchange. On the next service boot the hold is off.
 
 ## Permission and telemetry
 

@@ -1,6 +1,6 @@
 import { monotonicNow } from "../monotonic.ts";
 import { randomUUID } from "node:crypto";
-import { busHeldBy, onBusAcquired } from "../vcu/bus-lease.ts";
+import { busBlocksPsuHold, busHeldBy, onBusAcquired } from "../vcu/bus-lease.ts";
 
 export function createPsuHold(options: PsuHoldOptions): PsuHold {
   const context: HoldContext = {
@@ -18,7 +18,11 @@ export function createPsuHold(options: PsuHoldOptions): PsuHold {
     cancelTimer: null,
     closed: false,
   };
-  const unsubscribe = onBusAcquired(() => stopHold(context, "bus-lease"));
+  const unsubscribe = onBusAcquired(() => {
+    if (busBlocksPsuHold()) {
+      stopHold(context, "bus-lease");
+    }
+  });
   return {
     status: () => status(context),
     perform: (action, revision) => perform(context, action, revision),
@@ -171,7 +175,7 @@ function sendStep(context: HoldContext, generation: number): void {
     stopHold(context, "permission");
     return;
   }
-  if (busHeldBy() !== null) {
+  if (busBlocksPsuHold()) {
     stopHold(context, "bus-lease");
     return;
   }
