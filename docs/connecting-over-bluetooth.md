@@ -14,9 +14,9 @@ How to get the dashboard on your phone over Bluetooth, for when the phone and th
 
 Safari cannot do this on any iPhone: it has no Web Bluetooth.
 
-Bluefy and Chrome use the hosted dashboard, **[https://cool-eva-dashboard.cool-eva.workers.dev](https://cool-eva-dashboard.cool-eva.workers.dev)**. The Pi's `http://cool-eva.local` dashboard uses wifi, so its menu has no Bluetooth section. A browser can only use Bluetooth on an https page. Cloudflare serves the static page; subsequent dashboard data travels directly between the phone and Pi over Bluetooth.
+Bluefy and Chrome use the hosted dashboard, **[https://cool-eva.athegen.com](https://cool-eva.athegen.com)**. The Pi's `http://cool-eva.local` dashboard uses wifi, so its menu has no Bluetooth section. A browser can only use Bluetooth on an https page. GitHub Pages serves the static page; subsequent dashboard data travels directly between the phone and Pi over Bluetooth.
 
-**When moving from the old GitHub Pages address, re-enter your saved Bluetooth access code on the new address.** Browser storage is separate for each origin; the old page's saved code does not move with you. Use your recoverable copy of the Pi's current code, then you may clear the old site's data in your browser. Update your bookmark. The native app's address and saved code are unchanged.
+**When moving from an old address (`cool-eva-dashboard.cool-eva.workers.dev` or `danieltroger.github.io/cool-eva`), re-enter your saved Bluetooth access code on the new address.** Browser storage is separate for each origin; the old page's saved code does not move with you. Use your recoverable copy of the Pi's current code, then you may clear the old site's data in your browser. Update your bookmark. The native app's address and saved code are unchanged.
 
 ## 1. Set up the Pi (once)
 
@@ -30,7 +30,7 @@ Do this with the bike parked in wifi range, over ssh.
 
 A second phone chooses **Use an existing access code** and **Connect this phone**. It never creates a replacement key. If rotation was saved over the tunnel, the current phone must keep the pending key before restarting, or use Wi-Fi. The Settings page offers the retained pending key for reconnecting when a restart reply was lost. No configured BLE server means Bluetooth cannot be a recovery route yet; retain Wi-Fi or use the [manual repair route](manual-install.md).
 
-The hosted copy is deployed from `main` by `.github/workflows/workers.yml`. Only Bluefy and Chrome need it; the app bundles its own copy. See [hosting and Pages retirement](hosted-pages.md#ordered-cutover-and-pages-retirement) for deployment verification and the final hosting switch.
+The hosted copy is deployed from `main` by `.github/workflows/pages.yml`. Only Bluefy and Chrome need it; the app bundles its own copy. See [the hosted dashboard](hosted-pages.md) for the one-time Pages and DNS setup.
 
 ## 2. Connect from the phone
 
@@ -38,7 +38,7 @@ Stay within about 10 m of the bike.
 
 ### Bluefy (iPhone)
 
-1. Install [Bluefy](https://apps.apple.com/app/id1492822055) and open **[https://cool-eva-dashboard.cool-eva.workers.dev](https://cool-eva-dashboard.cool-eva.workers.dev)** in it.
+1. Install [Bluefy](https://apps.apple.com/app/id1492822055) and open **[https://cool-eva.athegen.com](https://cool-eva.athegen.com)** in it.
 2. Open **☰ menu → Settings → Connections → Use an existing access code**.
 3. Paste the key into **Paste the Pi’s generated Bluetooth key** and tap **Connect this phone**.
 4. Allow Bluetooth if Bluefy asks, then pick the Pi’s dashboard service in the list. It may appear without a name, or as **Unnamed Pi** in the app. The encrypted welcome verifies the shared key.
@@ -71,7 +71,7 @@ In Bluefy and Chrome, open the page while you still have signal and leave the ta
 
 | what you see | what to do |
 | --- | --- |
-| **No access-code form in Settings → Connections** | The wifi copy (`cool-eva.local`) does not need a Bluetooth code to connect this phone. Open `https://cool-eva-dashboard.cool-eva.workers.dev` instead, or use the app. |
+| **No access-code form in Settings → Connections** | The wifi copy (`cool-eva.local`) does not need a Bluetooth code to connect this phone. Open `https://cool-eva.athegen.com` instead, or use the app. |
 | **This browser has no Web Bluetooth…** | You are in Safari or another browser without it. Use Bluefy or the app on iPhone, Chrome on Android. |
 | Tapping **Connect** does not open the device list | No secret is saved yet. Open **Menu → Settings → Connections**, paste the saved key under **Use an existing access code** and tap **Connect this phone**. |
 | **The list stays empty** | The Pi is not advertising. Check the journal for `advertising dashboard service` (step 1.3). If it shows `Operation already in progress` over and over, the Pi's Bluetooth adapter is wedged ([`ble-adapter-wedge.md`](ble-adapter-wedge.md)). Restarting the service does **not** clear that; the service power-cycles the adapter itself after a few failures, so give it a minute, and `sudo reboot` if it persists. Also check you are in range. |
@@ -90,7 +90,7 @@ Only a phone that knows the generated key. Anyone in range can see the dashboard
 
 The key lives in the Pi’s private settings and in the browser/app or saved copy on your devices. To revoke a phone, create and save a new key in Settings, then explicitly Restart.
 
-The dashboard has its own Worker origin, separate from the key generator and other sites. Browser storage is shared by origin, not by project path. See [the exact-origin allowlist and fork instructions](ble-server.md#hosted-pages-and-origin-isolation). Address privacy remains an optional, unverified choice: [phone reconnect and hub enrolment trade-offs](ble-server.md#address-privacy-is-optional-and-remains-off-pending-hardware-verification) explain why it stays off until hardware checks pass.
+The dashboard has its own origin, separate from other sites. Browser storage is shared by origin, not by project path. See [the exact-origin allowlist and fork instructions](ble-server.md#hosted-pages-and-origin-isolation). Address privacy remains an optional, unverified choice: [phone reconnect and hub enrolment trade-offs](ble-server.md#address-privacy-is-optional-and-remains-off-pending-hardware-verification) explain why it stays off until hardware checks pass.
 
 ## Earlier branch instructions
 

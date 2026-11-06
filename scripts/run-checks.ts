@@ -834,11 +834,6 @@ const CHECKS: SelfCheck[] = [
       "whose replies are not replies, reads as no reading rather than throwing inside an HTTP handler",
   },
   {
-    script: "scripts/check-log-key-page.ts",
-    covers:
-      "the hosted browser key generator's X25519 PKCS8/SPKI PEM bytes, matching public derivation and fingerprint, fresh pairs, and a production recorder/decrypt-CLI round trip with wrong-key refusal",
-  },
-  {
     script: "scripts/check-module-heatmap.ts",
     covers:
       "the Charge tab's module-temperature grid, whose cells have three states and only two of them are a fault: " +

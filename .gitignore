@@ -76,7 +76,6 @@ build/Release
 # that name, and a symlinked node_modules did get committed that way once. Same
 # trap the temperatures.db* note above describes.
 node_modules
-.wrangler
 jspm_packages/
 
 # Snowpack dependency directory (https://snowpack.dev/)

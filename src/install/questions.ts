@@ -89,7 +89,7 @@ async function publicKey(terminal: FileHandle): Promise<string | null> {
   let contents = "";
   try {
     await terminal.write(
-      "Paste ONLY the ride-log PUBLIC key from the key page, ending with END PUBLIC KEY.\nLeave blank to keep the existing key or configure recording later in Settings.\nPublic key: "
+      "Paste ONLY the ride-log PUBLIC key (ride-log-key.public.pem), ending with END PUBLIC KEY.\nLeave blank to keep the existing key or configure recording later in Settings.\nPublic key: "
     );
     const first = await line(terminal);
     if (!first) return null;

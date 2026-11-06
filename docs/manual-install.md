@@ -32,9 +32,16 @@ If `cool-eva.local` does not resolve, find the Pi's address in the router/hotspo
 
 ## 3. Recording key — on your computer
 
-Open [the recording key page](https://cool-eva-keys.cool-eva.workers.dev). Generate keys, download `ride-log-key.private.pem`, make a recoverable backup away from the Pi, acknowledge that backup and download `ride-log-key.public.pem`. Existing owners can keep their current pair.
+Existing owners can keep their current pair and skip to the paste below. To make one, install **Node 24** from [nodejs.org](https://nodejs.org/en/download) on the computer if needed. Open the [GitHub repository](https://github.com/danieltroger/cool-eva), choose **Code → Download ZIP** and extract it (on Windows, use **Extract All**). In a terminal, change to the extracted folder containing `README.md` and `scripts/`, replacing the example path with its actual location:
 
-Open the **public** file in a text editor and copy the complete `BEGIN PUBLIC KEY` through `END PUBLIC KEY` block for setup. Never paste the private file. No Node installation, project ZIP or key-generation command is needed on the computer. [Key-page details and phone-only handoff](hosted-pages.md#make-recording-keys).
+```sh
+cd "path/to/extracted/cool-eva-main"
+node --experimental-strip-types scripts/generate-log-key.ts
+```
+
+If Git is already installed, `git clone https://github.com/danieltroger/cool-eva.git` followed by `cd cool-eva` works instead; so does an existing checkout. The script writes `ride-log-key.private.pem` and `ride-log-key.public.pem` and refuses to overwrite an existing private key. **Back up `ride-log-key.private.pem` in a password manager, away from the Pi, before continuing.**
+
+Open the **public** file in a text editor and copy the complete `BEGIN PUBLIC KEY` through `END PUBLIC KEY` block for setup. Never paste the private file.
 
 You may leave the public-key prompt blank and configure it later in Settings → Ride recording. The live dashboard works without it, but **no rides are saved**. Losing the private key makes old recordings unreadable; making another pair does not recover them.
 

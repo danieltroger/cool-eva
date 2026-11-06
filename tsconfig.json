@@ -25,7 +25,7 @@
     // extensionless form it prefers.
     "lib": ["ESNext", "DOM", "DOM.Iterable"]
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts", "*.ts", "public/**/*.js", "workers/keys/public/**/*.js"],
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "*.ts", "public/**/*.js"],
   // The vendored VanJS bundle is minified third-party code shipped with its own
   // .d.ts; type-checking its internals would fail for reasons we cannot fix and
   // would not learn anything from.
