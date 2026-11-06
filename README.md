@@ -49,7 +49,7 @@ Insert the card and use a stable **mains USB supply for the entire installation*
 
 ### 2. Make a recording key — on your computer
 
-Run `node --experimental-strip-types scripts/generate-log-key.ts` from a download of this repository with Node 24, and back up the **private** key away from the Pi. Setup takes **only the public PEM**; open that public file in a text editor to copy its complete block. Existing owners can keep their key. You can skip recording during setup and add the public key later in Settings → Ride recording; until then, **no rides are saved**. [Step-by-step, including getting the repository without Git](docs/manual-install.md#3-recording-key--on-your-computer).
+Open [the recording key page](https://cool-eva-keys.cool-eva.workers.dev), generate a pair, download both named PEM files and back up the **private** key away from the Pi. Setup takes **only the public PEM**; open that public file in a text editor to copy its complete block. Existing owners can keep their key. You can skip recording during setup and add the public key later in Settings → Ride recording; until then, **no rides are saved**. No laptop Node installation is needed. [Key backup and phone-only handoff](docs/hosted-pages.md#make-recording-keys).
 
 ### 3. Install and start — on your computer
 
