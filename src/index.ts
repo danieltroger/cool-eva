@@ -42,9 +42,6 @@ import { handleExpectedFaultsEndpoint } from "./http/expected-faults.ts";
 import { handleVcuReadEndpoint } from "./http/vcu-read.ts";
 import { handleVcuProbeEndpoint } from "./http/vcu-probe.ts";
 import { handleVcuWriteEndpoint } from "./http/vcu-write.ts";
-import { handlePsuHoldEndpoint } from "./http/psu-hold.ts";
-import { createPsuHold } from "./psu/hold.ts";
-import { openPsuTransport } from "./psu/can.ts";
 import { createVcuReadRunner } from "./vcu/read-runner.ts";
 import { createVcuWriteRunner } from "./vcu/write-runner.ts";
 import { readRunningVersion, beginRunningVersionChecks } from "./version.ts";
@@ -68,7 +65,7 @@ import { startFanAutomatic } from "./fan/auto.ts";
 import { startFanCycleGesture } from "./fan/gesture-runner.ts";
 import { startHoldGestures } from "./gestures/runner.ts";
 import { startWaypointFixTracking, waypointHoldGesture } from "./gps/waypoint.ts";
-import { bringUpCan, openChannel, openPsuChannel } from "./can/socket.ts";
+import { bringUpCan, openChannel } from "./can/socket.ts";
 import { startCanLinkMonitor } from "./can/link-status.ts";
 import { startWifiMonitor } from "./wifi/status.ts";
 import { WIFI_DIAG_DIRNAME } from "./wifi/dump.ts";
@@ -219,14 +216,6 @@ const handlebarGestures = startHoldGestures(holdGestures);
 // --- CAN: broadcast decode + OBD-II polling ---
 let channel: RawChannel | undefined;
 let stopObd: (() => void) | undefined;
-const psuHold = createPsuHold({
-  enabled: () => SERVICE_WRITE_ENABLED,
-  canUnavailable: () =>
-    !channel || canStartupError || latestValue("can_link") !== 1
-      ? "CAN unavailable. Check the adapter/interface."
-      : null,
-  open: fault => openPsuTransport(() => openPsuChannel(CAN_IFACE), fault),
-});
 
 // --- Which of Energica's parameter tables is this bike running? ---
 // Asked once at startup from the last sweep's snapshot, so a Pi that has already met
@@ -541,7 +530,6 @@ function systemStatus(): DashboardSystemStatus {
   return {
     settingsFault:
       settingsRuntime.fault ?? (settingsRestart.status().state === "failed" ? settingsRestart.status().message : null),
-    psuHold: psuHold.status(),
     can: {
       state,
       message: canStartupError
@@ -569,11 +557,6 @@ const server = createServer(async (req, res) => {
   }
   if (url.pathname === "/settings" || url.pathname.startsWith("/settings/")) {
     await handleSettingsEndpoint(req, res, url.pathname, settingsHttp);
-    return;
-  }
-  if (url.pathname === "/psu-hold") {
-    // This endpoint applies the same CSRF guard while including authoritative hold state in refusals.
-    handlePsuHoldEndpoint(req, res, url, psuHold);
     return;
   }
   if (handleMutationGuard(req, res, url.pathname)) return;
@@ -803,7 +786,6 @@ console.log(
 
 // Ordering, retained failure diagnostics and stop intent: docs/service-shutdown.md.
 const isShutdownRequested = installRequestedShutdown([
-  { name: "stop PSU hold", run: () => psuHold.close() },
   { name: "close the OS-update gate", run: () => osUpdateGate.close() },
   { name: "consume the restart reservation", run: () => settingsRestart.consume() },
   { name: "stop OBD polling", run: () => stopObd?.() },

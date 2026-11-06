@@ -9,7 +9,6 @@ import { sceneNamesIn } from "./preview-scenes.ts";
 import { checkSettingsBrowser } from "./settings-browser-check.ts";
 import { checkRouteDisarmBrowser } from "./route-disarm-browser.ts";
 import { checkRidingBrowser } from "./riding-browser-check.ts";
-import { checkPsuHoldBrowser } from "./psu-hold-browser.ts";
 import {
   closePage,
   evaluateOnPage,
@@ -242,7 +241,6 @@ try {
   await checkSettingsBrowser(page, previewFile);
   await checkRouteDisarmBrowser(page, previewFile);
   await checkRidingBrowser(page, previewFile);
-  await checkPsuHoldBrowser(page, previewFile);
 } finally {
   if (page !== null) {
     await closePage(page);

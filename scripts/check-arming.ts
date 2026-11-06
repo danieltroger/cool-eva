@@ -12,7 +12,6 @@ import { ARMED_KEY as FREEZE_FRAME_READ_KEY } from "../public/views/freeze-frame
 import { ARMED_KEY as LIFETIME_READ_KEY } from "../public/views/lifetime-read.js";
 import { IRREVERSIBLE, refreshVcuWrite } from "../public/views/vcu-write.js";
 import { fetchChargeWriteStatus, writeStatus } from "../public/lib/charge-write.js";
-import { PSU_ACTIONS } from "../public/views/psu-hold.js";
 
 // public/lib/arming.js — the two-tap arm/dwell in front of every control that writes to the
 // motorcycle, checked without a browser.
@@ -175,7 +174,6 @@ check(
 // fold: it writes its own confirmation instead of going through ActionButton, so it is already
 // in `literalKeys` above, and taking it from both lists would be one control counted twice.
 const ALL_KEYS = [
-  ...PSU_ACTIONS.map(entry => entry.key),
   CHARGE_CURRENT_KEY,
   CHARGE_SOC_LIMIT_KEY,
   // The SOC control's READ button is a second control in the same file, so §5 counts it. Imported
@@ -304,7 +302,6 @@ const EXPECTED_SITES = [
   // — while the read-only sweep above them already took two.
   "pi-actions.js → performCanRestart",
   "pi-actions.js → performUpdate",
-  "psu-hold.js → performPsuHold",
   "service-mode.js → performSweep",
   "settings-restart.js → performRestart",
   "vcu-write.js → performAction",

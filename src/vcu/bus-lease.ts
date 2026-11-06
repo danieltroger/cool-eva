@@ -1,4 +1,4 @@
-// One diagnostic operation at a time; the PSU-only exception is in docs/psu-hold.md.
+// One thing at a time on the bike's bus.
 //
 // ── Why this is its own module now ───────────────────────────────────────────
 // Until 2026-08-16 single-flight lived inside ./read-runner.ts as two nullable
@@ -27,8 +27,7 @@
  * sweeps started a minute apart are both called "a parameter read", and comparing
  * names would let the first one's late release free the second one's lease.
  */
-let holder: { name: string; allowPsuHold: boolean } | null = null;
-const acquisitionListeners = new Set<() => void>();
+let holder: { name: string } | null = null;
 
 /** A held lease. Releasing twice is safe, which is what a `finally` on a retried path does. */
 export interface BusLease {
@@ -41,24 +40,12 @@ export interface BusLease {
  * `name` is shown to a person, so it is a phrase and not an identifier: "a parameter
  * read", "a probe", "a parameter write".
  */
-export function acquireBus(
-  name: string,
-  options: { allowPsuHold?: boolean } = {}
-): { ok: true; lease: BusLease } | { ok: false; heldBy: string } {
+export function acquireBus(name: string): { ok: true; lease: BusLease } | { ok: false; heldBy: string } {
   if (holder !== null) {
     return { ok: false, heldBy: holder.name };
   }
-  const mine = { name, allowPsuHold: options.allowPsuHold === true };
+  const mine = { name };
   holder = mine;
-  try {
-    // Notify before the owner can send; the holder already carries its PSU-only exception.
-    for (const listener of acquisitionListeners) {
-      listener();
-    }
-  } catch (error) {
-    holder = null;
-    throw error;
-  }
   return {
     ok: true,
     lease: {
@@ -78,16 +65,4 @@ export function acquireBus(
 /** Who has the bus right now, or null. For showing a reason, not for deciding. */
 export function busHeldBy(): string | null {
   return holder?.name ?? null;
-}
-
-/** Only an existing PSU repeat may share the explicitly opted-in Reset VCU lease. */
-export function busBlocksPsuHold(): boolean {
-  return holder !== null && !holder.allowPsuHold;
-}
-
-export function onBusAcquired(listener: () => void): () => void {
-  acquisitionListeners.add(listener);
-  return () => {
-    acquisitionListeners.delete(listener);
-  };
 }

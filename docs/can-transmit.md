@@ -39,7 +39,7 @@ The SOC-limit read keeps its 500 ms budget. The [charge-limit capture's latency 
 
 Typed OBD transmit rejections and DTC transmit errors log immediately, then at most once per five seconds per class, using a monotonic clock and reporting the suppressed count on the next log. Other poller errors retain the ordinary poll-error label and are not suppressed by the transmit limiter. The DTC recovery loop also retains its existing capped stall messages. Commands continue to surface failures through their existing logs, result and audit paths.
 
-This changes no bitrate, restart timing, queue length or link configuration. The PSU hold uses its own channel and policy; combining the sockets remains separate work.
+This changes no bitrate, restart timing, queue length or link configuration.
 
 ## Transmit inventory
 
