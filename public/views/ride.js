@@ -66,7 +66,7 @@ function PowerPanel() {
         {
           class: "ride-sub ride-power-status",
           style: () =>
-            `color:${currentPower().powerStatus === "fault" || (!charging() && [currentPower().drive.state, currentPower().regen.state].includes("fault")) ? colors.BAD : colors.MUTED}`,
+            `color:${!charging() && (currentPower().powerStatus === "fault" || [currentPower().drive.state, currentPower().regen.state].includes("fault")) ? colors.BAD : colors.MUTED}`,
         },
         () => (!charging() && currentPower().status ? currentPower().status : speedNote())
       ),

@@ -198,6 +198,13 @@ export async function checkRideBrowser(
         state.status
       );
     }
+    if (state.name.startsWith("charging")) {
+      assert.equal(
+        await evaluateOnPage(page, "document.querySelector('.ride-power-status').style.color"),
+        "var(--sub)",
+        "A hidden charging power fault cannot colour the GPS footer."
+      );
+    }
     if (state.side) {
       const fill = await evaluateOnPage(
         page,
