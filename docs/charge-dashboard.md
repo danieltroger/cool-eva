@@ -1,4 +1,24 @@
-# Charge views and temperature ceiling
+# Charge page
+
+The approved Charge tab is one scrolling page with no top switch or Controls/Pack subviews. Its DC reading stack contains delivery/SOC, time to the saved limit, the temperature ceiling plot and Stop. Saved SOC limit, current request and automatic reduction follow on the same page. Idle keeps the saved-limit card. Current/Stop retain live-session/write permission and arm/confirm gates; automatic reduction keeps its existing permission toggle. Both retired Charge URLs canonicalise to `#charge`.
+
+Cards use the shared page/stack/row/card primitives and approved tokens: 12 px page/card padding, 12 px stack gaps, 8 px card gaps, 32 px values, 16 px units/inputs, 14 px labels/status and 12 px chart labels. Delivery is at least 112 px and ETA at least 80 px. A chart's viewBox is 342×132; it scales inside the shared card padding. Controls stay on the page below the fold, with the bottom navigation fixed throughout.
+
+Delivery uses fresh accepted signed power before formatting its magnitude. Negative power says Power out, measured zero says Power, and unavailable/fault readings never retain a charging number. Electrical context is pack current/voltage, explicitly labelled Battery during AC. SOC keeps its own quality gate.
+
+Time to saved limit uses the existing smoothed-power/energy model and SOC freshness budget, rendered as a duration rather than a wall-clock arrival. A saved positive target is required; an unread/removed target, rejected or stale inputs, no incoming power, very low power or a reached target shows Unavailable. A 100% target remains a lower bound, qualified as not before. The estimator is unchanged; [charge-eta.md](charge-eta.md) retains its qualifications.
+
+The DC curve keeps the exact seven observed points and 75 A cap intersections. The approved window uses outside-minus-10 through reported-high-plus-10, includes the nearest knee and at least 25 degrees, within −30…65°C. Missing inputs use the reference 20…65°C frame, extended left when an available valid cold marker would otherwise be cropped. Off-curve reports never become a clamped allowance. Physical battery readings do not gate the separate reported-temperature model. Both reported extremes retain circle/diamond markers and degree labels; coincident extremes use the same coordinate with a larger circle and one both label. Unknown reports draw a reference curve, with no invented ceiling. Numeric fault/stale states remain explicit. Chart bindings sample inputs with `peek()`/sampled status through the chart pulse.
+
+## AC quantities
+
+The approved AC card shows the committed AC setpoint (`charge_limit_a`) and observed dash ceiling (`ac_charge_ceiling_a`) in mains amperes, then the BMS charger-output grant (`charger_max_dc_a`) in pack amperes. The earlier assertion below that all AC values were charger-output values is superseded. `src/can/decode.ts` decodes CHG.PWR.REF as the AC dial setpoint; `src/can/charge-manager.ts` and [charge-manager.md](charge-manager.md#b1-cm_ac_max_curr--the-ac-ceiling) record that it is bounded by the supply-side AC limit. `src/can/charge-setpoint.ts` decodes the dash's AC command-ceiling byte. `src/can/decode-bms.ts` decodes the separate BMS charger-output current/voltage grant. These source blocks were opened for this change; no decoder or wire format changed.
+
+An absent dash ceiling stays unavailable/stale in the reading. The write path retains its existing server-matched 15 A fallback; that fallback is not displayed as a measured ceiling. The AC input follows the sketch's 6 A minimum, and DC keeps 1 A, each bounded by the existing live command ceiling. AC has no automatic-reduction card or DC temperature allowance.
+
+## Superseded layout and preserved findings
+
+The text below describes the retired three-view composition. Its allocation, geometry, five-degree rounding/30-degree framing and AC output-side claim are historical. Protocol, model and negative findings remain preserved for investigation.
 
 The Charge overview uses 648 px at the approved real safe areas. Pack & cooling and Controls are URL subviews outside the handlebar cycle. The graph uses only fresh accepted reported temperatures for allowance, physical temperatures for framing, the exact seven observed points, exact 75 A cap intersections and a fixed 0–75 A axis. The model caveat appears once. Configuration cannot invent a reported temperature.
 

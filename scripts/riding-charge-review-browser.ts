@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { ARM_DWELL_MS } from "../public/lib/arming.js";
 import { evaluateOnPage, waitOnPage, type HeadlessPage } from "./headless-page.ts";
 import { assertFixedLayout, assertRendered } from "./riding-layout-browser.ts";
+import { assertChargeLayout } from "./charge-page-layout.ts";
 import { openPreview, FRAME } from "./riding-preview-page.ts";
 
 export async function checkChargeReviewCases(
@@ -10,83 +11,60 @@ export async function checkChargeReviewCases(
   theme: string,
   capture?: (name: string) => Promise<void>
 ) {
+  await checkIdle(page, file, theme);
   await checkRefusedTarget(page, file, theme, capture);
   await checkAcLimits(page, file, theme, capture);
   await checkChargeDirectionAndToggle(page, file, theme, capture);
 }
-
 async function checkRefusedTarget(
   page: HeadlessPage,
   file: string,
   theme: string,
   capture?: (name: string) => Promise<void>
 ) {
-  await openPreview(page, file, "#charge/controls", `refused-40-${theme}`, "&charge-scene=warm");
+  await openPreview(page, file, "#charge", `refused-40-${theme}`, "&charge-scene=warm");
   await evaluateOnPage(page, `ridingPreview('lib/theme.js').themePreference.val=${JSON.stringify(theme)}`);
   await waitOnPage(
     page,
-    "document.querySelector('[data-charge-reply]')?.textContent==='32 A'",
-    "previous confirmed 32 A"
+    "document.querySelector('[data-current-status]')?.textContent==='Bike requests 32 A'",
+    "held current request"
   );
   await evaluateOnPage(
     page,
-    "const input=document.querySelector('input[name=charge-current-amps]');input.value='40';input.dispatchEvent(new Event('input',{bubbles:true}));chargePreviewReplyMode='refused'"
+    "(()=>{const input=document.querySelector('input[name=charge-current-amps]');input.value='40';input.dispatchEvent(new Event('input',{bubbles:true}));chargePreviewReplyMode='refused'})()"
   );
   await evaluateOnPage(page, FRAME);
-  await evaluateOnPage(page, "document.querySelector('[data-charge-action=current]').click()");
-  await waitOnPage(page, "ridingPreview('lib/arming.js').armed.rawVal==='charge-current'", "40 A retry scope");
-  await evaluateOnPage(page, `new Promise(resolve=>setTimeout(resolve,${ARM_DWELL_MS + 80}))`);
-  await evaluateOnPage(page, "document.querySelector('[data-charge-action=current]').click()");
+  await sendCurrent(page);
   await waitOnPage(
     page,
-    "document.querySelector('.charge-current-control').textContent.includes('Synthetic refusal:')",
-    "the attempted 40 A is explicitly refused"
-  );
-  assert.ok(
-    String(await evaluateOnPage(page, "document.querySelector('.charge-current-control').textContent")).includes(
-      "40 A request NOT sent."
-    ),
-    "A refusal must name the attempted amperage and say it was NOT sent."
+    "document.querySelector('[data-current-status]').textContent==='40 A · Not sent'",
+    "attempted 40 A is explicitly refused"
   );
   assert.deepEqual(
     await evaluateOnPage(
       page,
-      `({request:document.querySelector('[data-last-charge-request]').textContent,reply:document.querySelector('[data-charge-reply]').textContent,draft:document.querySelector('input[name=charge-current-amps]').value,success:document.querySelector('.charge-current-control').textContent.includes('✅'),oldAcknowledgement:document.querySelector('.charge-current-control').textContent.includes('settled at the last commanded current'),posts:chargePreviewRequests.filter(request=>request.method==='POST'&&request.action==='charge-current').length})`
+      "({command:ridingPreview('lib/store.js').valueOf('charge_cmd_a'),draft:document.querySelector('input[name=charge-current-amps]').value,success:document.querySelector('[data-current-status]').textContent.includes('confirmed'),detail:document.querySelector('[data-current-status]').title.includes('Synthetic refusal:'),posts:chargePreviewRequests.filter(request=>request.method==='POST'&&request.action==='charge-current').length})"
     ),
-    { request: "32 A", reply: "32 A", draft: "40", success: false, oldAcknowledgement: false, posts: 1 },
-    "A refused different target must not inherit an unqualified earlier success."
+    { command: 32, draft: "40", success: false, detail: true, posts: 1 },
+    "A refused different target never inherits an earlier success."
   );
-  assert.equal(await evaluateOnPage(page, "document.body.scrollWidth"), 390);
+  await assertChargeLayout(page);
   if (capture) {
-    await capture(`controls-refused-40-${theme}`);
+    await capture(`charge-refused-40-${theme}`);
   }
-  await evaluateOnPage(
-    page,
-    "chargePreviewReplyMode='send-failed';document.querySelector('[data-charge-action=current]').click()"
-  );
+  await evaluateOnPage(page, "chargePreviewReplyMode='send-failed'");
+  await sendCurrent(page);
   await waitOnPage(
     page,
-    "ridingPreview('lib/arming.js').armed.rawVal==='charge-current'",
-    "uncertain transmission scope"
-  );
-  await evaluateOnPage(page, `new Promise(resolve=>setTimeout(resolve,${ARM_DWELL_MS + 80}))`);
-  await evaluateOnPage(page, "document.querySelector('[data-charge-action=current]').click()");
-  await waitOnPage(
-    page,
-    "document.querySelector('.charge-current-control').textContent.includes('delivery uncertain')",
-    "a partial send stays uncertain"
+    "document.querySelector('[data-current-status]').textContent==='40 A · Delivery uncertain'",
+    "partial transmission stays uncertain"
   );
   assert.equal(
-    await evaluateOnPage(page, "document.querySelector('.charge-current-control').textContent.includes('NOT sent')"),
-    false,
-    "A possible partial transmission must never be labelled NOT sent."
-  );
-  assert.equal(
-    await evaluateOnPage(page, "document.querySelector('.charge-current-control').textContent.includes('✅')"),
+    await evaluateOnPage(page, "document.querySelector('[data-current-status]').textContent.includes('Not sent')"),
     false
   );
   if (capture) {
-    await capture(`controls-uncertain-40-${theme}`);
+    await capture(`charge-uncertain-40-${theme}`);
   }
   await evaluateOnPage(
     page,
@@ -96,10 +74,10 @@ async function checkRefusedTarget(
   assert.deepEqual(
     await evaluateOnPage(
       page,
-      "[document.querySelector('[data-last-charge-request]').textContent,document.querySelector('[data-charge-reply]').textContent]"
+      "(()=>{const pair=ridingPreview('lib/charge-request-display.js').chargeRequestReply();return [pair.request,pair.reply]})()"
     ),
     ["—", "—"],
-    "A missing command cannot leave an orphaned 32 A reply."
+    "A missing command cannot leave an orphaned earlier reply in the confirmation model."
   );
   await evaluateOnPage(
     page,
@@ -113,43 +91,33 @@ async function checkRefusedTarget(
     ["stale", "stale"],
     "Request and reply share the link-down freshness boundary."
   );
-  await evaluateOnPage(page, FRAME);
-  const displayed = await evaluateOnPage(
-    page,
-    "[document.querySelector('[data-last-charge-request]')?.textContent??null,document.querySelector('[data-charge-reply]')?.textContent??null]"
-  );
-  assert.ok(
-    JSON.stringify(displayed) === JSON.stringify(["stale", "stale"]) ||
-      JSON.stringify(displayed) === JSON.stringify([null, null]),
-    "A dropout either marks both stale or hides both with the existing session gate."
-  );
 }
-
 async function checkAcLimits(
   page: HeadlessPage,
   file: string,
   theme: string,
   capture?: (name: string) => Promise<void>
 ) {
+  const keys = ["charge_limit_a", "ac_charge_ceiling_a", "charger_max_dc_a"];
   for (const scenario of ["fresh", "missing", "stale", "fault", "zero"]) {
     await openPreview(page, file, "#charge", `ac-${scenario}-${theme}`, "&charge-scene=ac");
     await evaluateOnPage(page, `ridingPreview('lib/theme.js').themePreference.val=${JSON.stringify(theme)}`);
     await waitOnPage(
       page,
-      "document.querySelector('[data-charge-soc]')?.textContent==='62'&&ridingPreview('lib/charge-display.js').currentChargeMode()==='ac'&&document.querySelector('[data-charge-eta]')?.textContent.includes(':')",
-      "accepted AC limits and ETA"
+      "document.querySelector('[data-charge-soc]')?.textContent==='62'&&document.querySelector('[data-charge-eta]')?.textContent.includes('estimated')&&document.querySelector('input[name=charge-current-amps]')?.value==='13'",
+      "accepted AC readings, duration and draft"
     );
     if (scenario !== "fresh") {
       if (scenario === "missing") {
         await evaluateOnPage(page, "pausePreviewMessages(true)");
         await evaluateOnPage(
           page,
-          "for(const key of ['charge_limit_a','charger_max_dc_a','charger_max_dc_v']){ridingPreview('lib/store.js').signalState(key).val=null;}"
+          `for(const key of ${JSON.stringify(keys)}){ridingPreview('lib/store.js').signalState(key).val=null;}`
         );
       } else {
         await evaluateOnPage(
           page,
-          `pushPatch({charge_limit_a:[${scenario === "fault" ? 65535 : scenario === "zero" ? 0 : 15},'A','charge',${scenario === "stale" ? "Date.now()-30_000" : "Date.now()"}],charger_max_dc_a:[${scenario === "fault" ? 65535 : scenario === "zero" ? 0 : 20},'A','charge',${scenario === "stale" ? "Date.now()-30_000" : "Date.now()"}],charger_max_dc_v:[${scenario === "fault" ? 65535 : scenario === "zero" ? 0 : 400},'V','charge',${scenario === "stale" ? "Date.now()-30_000" : "Date.now()"}]})`
+          `pushPatch({${keys.map((key, index) => `${key}:[${scenario === "fault" ? 65535 : scenario === "zero" ? 0 : [13, 16, 75][index]},'A','charge',${scenario === "stale" ? "Date.now()-30_000" : "Date.now()"}]`).join(",")}})`
         );
       }
       await evaluateOnPage(page, "pausePreviewMessages(true)");
@@ -157,135 +125,104 @@ async function checkAcLimits(
     }
     const expected =
       scenario === "fresh"
-        ? ["15 A", "20 A", "400 V"]
+        ? ["13", "16", "75"]
         : scenario === "zero"
-          ? ["0 A", "0 A", "0 V"]
-          : Array(3).fill(scenario === "missing" ? "unavailable" : scenario);
+          ? ["0", "0", "0"]
+          : Array(3).fill(scenario === "missing" ? "Unavailable" : scenario);
     assert.deepEqual(
       await evaluateOnPage(
         page,
         "[...document.querySelectorAll('[data-ac-reading]')].map(element=>element.textContent)"
       ),
       expected,
-      "AC setpoint and battery/charger grants retain explicit accepted or unavailable states."
+      "Accepted AC readings retain explicit missing, stale and fault states."
     );
     const text = String(await evaluateOnPage(page, "document.querySelector('.charge-ac-limits').textContent"));
-    for (const scope of [
-      "AC setpoint",
-      "Charger output current",
-      "Battery ceiling",
-      "Granted charger current",
-      "Granted charger voltage",
-      "not mains current",
-    ]) {
-      assert.ok(text.includes(scope), scope);
+    for (const label of ["AC setpoint", "Charger ceiling", "Battery ceiling"]) {
+      assert.ok(text.includes(label), label);
+    }
+    if (scenario === "fresh" || scenario === "zero") {
+      assert.equal((text.match(/A · mains/g) || []).length, 2);
+      assert.equal((text.match(/A · pack/g) || []).length, 1);
+    } else {
+      assert.equal(text.includes("A ·"), false, "Unknown readings cannot wear measured units.");
     }
     assert.equal(
       await evaluateOnPage(page, "document.querySelector('.charge-chart,[data-ceiling]')"),
       null,
-      "An AC allowance cannot be replaced by the DC temperature curve."
+      "An AC allowance never uses the DC temperature curve."
     );
-    await assertRendered(page, ["[data-ac-reading]", ".charge-ac-limits .label", ".charge-ac-notes"]);
-    await assertFixedLayout(page);
-    assert.deepEqual(
-      await evaluateOnPage(
-        page,
-        "[...document.querySelector('.charge-view').children].map(element=>element.getBoundingClientRect().height)"
-      ),
-      [44, 124, 80, 272, 80]
+    assert.equal(
+      await evaluateOnPage(page, "document.querySelector('.charge-auto-control').getBoundingClientRect().height"),
+      0
     );
+    assert.equal(
+      await evaluateOnPage(page, "document.querySelector('.charge-current-control .charge-label').textContent"),
+      "AC current request"
+    );
+    await assertRendered(page, ["[data-ac-reading]", ".charge-ac-limits .charge-label"]);
+    await assertChargeLayout(page);
     if (capture && ["fresh", "missing"].includes(scenario)) {
       await capture(`charge-ac-${scenario}-${theme}`);
     }
   }
-  await openPreview(page, file, "#charge/controls", `ac-controls-${theme}`, "&charge-scene=ac");
-  await evaluateOnPage(page, `ridingPreview('lib/theme.js').themePreference.val=${JSON.stringify(theme)}`);
-  await waitOnPage(
-    page,
-    "document.querySelector('.charge-current-control')?.textContent.includes('AC setpoint 15 A')",
-    "applicable AC control limits"
-  );
-  const text = String(await evaluateOnPage(page, "document.querySelector('.charge-current-control').textContent"));
-  for (const expected of [
-    "AC command ceiling 15 A (default — may be ignored)",
-    "AC setpoint 15 A",
-    "Battery grants 20 A / 400 V",
-  ]) {
-    assert.ok(text.includes(expected), expected);
-  }
-  assert.equal(text.includes("temperature ceiling"), false, "Controls must not call the DC curve an AC allowance.");
-  assert.equal(await evaluateOnPage(page, "document.body.scrollWidth"), 390);
-  assert.equal(await evaluateOnPage(page, "document.scrollingElement.scrollHeight-innerHeight"), 0);
-  if (capture) {
-    await capture(`controls-ac-${theme}`);
-  }
-  await evaluateOnPage(
-    page,
-    "pausePreviewMessages(true);for(const key of ['charge_limit_a','charger_max_dc_a','charger_max_dc_v']){ridingPreview('lib/store.js').signalState(key).val=null;}"
-  );
-  await evaluateOnPage(page, FRAME);
-  assert.ok(
-    String(await evaluateOnPage(page, "document.querySelector('.charge-current-control').textContent")).includes(
-      "AC setpoint unavailable · Battery grants unavailable / unavailable"
-    )
-  );
 }
-
 async function checkChargeDirectionAndToggle(
   page: HeadlessPage,
   file: string,
   theme: string,
   capture?: (name: string) => Promise<void>
 ) {
-  await openPreview(page, file, "#charge/pack-cooling", `pack-current-${theme}`, "&charge-scene=warm");
+  await openPreview(page, file, "#charge", `direction-${theme}`, "&charge-scene=warm");
   await evaluateOnPage(page, `ridingPreview('lib/theme.js').themePreference.val=${JSON.stringify(theme)}`);
   await waitOnPage(
     page,
-    "document.querySelector('[data-module-count]')?.textContent.startsWith('31 of 31')&&document.querySelector('.charge-voltage-grid')?.textContent.includes('81 of 81 fresh')",
-    "the complete installed pack before direction cases"
+    "document.querySelector('[data-charge-direction]')?.textContent==='DC charging'",
+    "complete Charge delivery"
   );
   for (const [value, direction] of [
-    [32, "Power into the pack"],
-    [-5, "Power out of the pack"],
-    [0, "No current flow"],
+    [32, "DC charging"],
+    [-5, "Power out"],
+    [0, "Power"],
   ] as const) {
     await evaluateOnPage(
       page,
       `pushPatch({pack_a:[${value},'A','battery'],pack_kw:[${(value * 358) / 1000},'kW','battery']});ridingPreview('lib/store.js').chartTick.val++`
     );
     await evaluateOnPage(page, FRAME);
-    assert.ok(
-      String(await evaluateOnPage(page, "document.querySelector('.charge-pack-current').textContent")).includes(
-        direction
-      ),
-      "Pack current must state the direction of its accepted signed reading."
+    assert.equal(
+      await evaluateOnPage(page, "document.querySelector('[data-charge-direction]').textContent"),
+      direction,
+      "Charge uses the accepted power direction."
     );
+    await assertChargeLayout(page);
     if (capture && value === -5) {
-      await evaluateOnPage(page, "document.querySelector('.charge-pack-current').scrollIntoView({block:'center'})");
-      await evaluateOnPage(page, FRAME);
-      await capture(`pack-current-out-${theme}`);
+      await capture(`charge-power-out-${theme}`);
     }
   }
-  await openPreview(page, file, "#charge/controls", `active-toggle-${theme}`, "&charge-scene=warm");
-  await waitOnPage(page, "!!document.querySelector('[data-charge-action=automatic]')", "automatic controller");
-  await evaluateOnPage(
-    page,
-    `ridingPreview('lib/theme.js').themePreference.val=${JSON.stringify(theme)};chargePreviewAutoReason=0;pushPatch({charge_auto_reason:[0,'','charge']})`
-  );
+  await openPreview(page, file, "#charge", `active-toggle-${theme}`, "&charge-scene=warm");
   await waitOnPage(
     page,
-    "document.querySelector('.charge-auto-secondary')?.textContent.includes('Automatic reduction is active.')",
-    "active automatic controller state"
+    "document.querySelector('[data-auto-status]')?.textContent==='Paused for this charge'",
+    "paused controller"
   );
   assert.equal(
     await evaluateOnPage(page, "document.querySelector('[data-charge-action=automatic]').textContent"),
-    "Switch off for this charge",
-    "The toggle must name its off action, not a temporary pause."
+    "Resume"
   );
-  assert.equal(await evaluateOnPage(page, "document.body.scrollWidth"), 390);
-  assert.equal(await evaluateOnPage(page, "document.scrollingElement.scrollHeight-innerHeight"), 0);
+  await evaluateOnPage(page, "chargePreviewAutoReason=0;pushPatch({charge_auto_reason:[0,'','charge']})");
+  await waitOnPage(
+    page,
+    "document.querySelector('[data-auto-status]')?.textContent==='Active for this charge'",
+    "active controller"
+  );
+  assert.equal(
+    await evaluateOnPage(page, "document.querySelector('[data-charge-action=automatic]').textContent"),
+    "Switch off"
+  );
+  await assertChargeLayout(page);
   if (capture) {
-    await capture(`controls-automatic-${theme}`);
+    await capture(`charge-automatic-${theme}`);
   }
   await openPreview(page, file, "#ride", `rejected-charge-${theme}`, "&ride-state=charging");
   await evaluateOnPage(
@@ -299,7 +236,39 @@ async function checkChargeDirectionAndToggle(
       "[document.querySelector('[data-power-direction]').textContent,ridingPreview('lib/charge-display.js').chargePowerDisplay().label]"
     ),
     ["POWER IN", "POWER IN"],
-    "Ride and Charge must agree when charge evidence is rejected."
+    "Ride and Charge agree when charge evidence is rejected."
   );
   await assertFixedLayout(page);
+}
+async function sendCurrent(page: HeadlessPage) {
+  await evaluateOnPage(page, "document.querySelector('[data-charge-action=current]').click()");
+  await waitOnPage(
+    page,
+    "ridingPreview('lib/arming.js').armed.rawVal==='charge-current'",
+    "current confirmation scope"
+  );
+  await evaluateOnPage(page, `new Promise(resolve=>setTimeout(resolve,${ARM_DWELL_MS + 80}))`);
+  await evaluateOnPage(page, "document.querySelector('[data-charge-action=current]').click()");
+}
+
+async function checkIdle(page: HeadlessPage, file: string, theme: string) {
+  await openPreview(page, file, "#charge", `idle-${theme}`);
+  await evaluateOnPage(page, `ridingPreview('lib/theme.js').themePreference.val=${JSON.stringify(theme)}`);
+  await waitOnPage(
+    page,
+    "document.querySelector('.charge-idle')?.textContent==='Not charging'&&document.querySelector('input[name=charge-soc-limit-pct]')?.value==='90'&&!document.querySelector('input[name=charge-soc-limit-pct]').disabled",
+    "idle keeps the saved-limit card"
+  );
+  assert.deepEqual(
+    await evaluateOnPage(
+      page,
+      "[...document.querySelectorAll('.charge-view .tile')].filter(element=>element.getBoundingClientRect().height>0).map(element=>element.classList.contains('charge-idle')?'idle':element.classList.contains('charge-soc-control')?'limit':element.className)"
+    ),
+    ["idle", "limit"]
+  );
+  assert.equal(
+    await evaluateOnPage(page, "document.querySelector('[data-charge-power],.charge-chart,[data-charge-eta]')"),
+    null
+  );
+  await assertChargeLayout(page);
 }

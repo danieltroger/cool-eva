@@ -34,8 +34,6 @@ export const ROUTES = /** @type {const} */ ([
   { name: "hypermile", tab: "hypermile", label: "Range", hash: "#hypermile" },
   { name: "cells", tab: "hypermile", label: "Cells", hash: "#hypermile/cells" },
   { name: "charge", tab: "charge", label: "Charge", hash: "#charge" },
-  { name: "charge-pack", tab: "charge", label: "Pack & cooling", hash: "#charge/pack-cooling" },
-  { name: "charge-controls", tab: "charge", label: "Controls", hash: "#charge/controls" },
   { name: "all", tab: "more", label: "All signals", hash: "#all" },
   { name: "faults", tab: "faults", label: "Faults", hash: "#faults" },
   { name: "fault-report", tab: "faults", label: "Fault report", hash: "#faults/report" },
@@ -218,7 +216,7 @@ function showTabFromUrl() {
  * @returns {{tab:TabName,view:ViewName,rewriteTo:string|null,named:boolean}}
  */
 export function canonicalHash(hash) {
-  const route = ROUTES.find(candidate => candidate.hash === hash.toLowerCase());
+  const route = ROUTES.find(candidate => candidate.hash === chargeHash(hash));
   const landing = route?.tab ?? DEFAULT_TAB;
   const landingView = route?.name ?? DEFAULT_TAB;
   const wanted = hashForView(landingView);
@@ -245,5 +243,11 @@ export function hashForTab(name) {
  * @returns {TabName | null}
  */
 export function tabFromHash(hash) {
-  return ROUTES.find(route => route.hash === hash.toLowerCase())?.tab ?? null;
+  return ROUTES.find(route => route.hash === chargeHash(hash))?.tab ?? null;
+}
+
+/** @param {string} hash */
+function chargeHash(hash) {
+  const normalized = hash.toLowerCase();
+  return ["#charge/controls", "#charge/pack-cooling"].includes(normalized) ? "#charge" : normalized;
 }

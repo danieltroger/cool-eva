@@ -233,7 +233,7 @@ async function checkActions(page: HeadlessPage, theme: string, shots?: string): 
     theme,
     shots
   );
-  await evaluateOnPage(page, `simDestination.openRidingView('charge-controls')`);
+  await evaluateOnPage(page, `simDestination.openRidingView('charge')`);
   await evaluateOnPage(
     page,
     `(async()=>{
@@ -245,7 +245,7 @@ async function checkActions(page: HeadlessPage, theme: string, shots?: string): 
   await refused(
     page,
     "/charge-auto",
-    () => button(page, "Enable", false, "document.querySelector('.compact-auto-toggle')"),
+    () => button(page, "Resume", false, "document.querySelector('.charge-auto-control')"),
     "charge-auto",
     theme,
     shots

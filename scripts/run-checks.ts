@@ -386,6 +386,11 @@ const CHECKS: SelfCheck[] = [
       "spike and falls back to the newest reading when the window is thin, which on AC it legitimately often is",
   },
   {
+    script: "scripts/check-charge-page.ts",
+    covers:
+      "single Charge route, legacy detail aliases, live input defaults, draft preservation, no-op suppression and bounded whole-number requests",
+  },
+  {
     script: "scripts/check-charge-mode.ts",
     covers:
       "the dashboard's one charge rule, driven by real frames through the real decoders: that a parked bike and a " +

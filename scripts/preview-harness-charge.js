@@ -29,6 +29,7 @@ if (ridingFixture.get("fixture") === "all-installed" && chargeScene) {
     batt_temp_hi_vcu: [chargeScene === "custom" ? 33 : cold ? 7 : 47, "°C", "battery"],
     fast_dc_contactor: [1, "", "charge"],
     charge_manager_state: [35, "", "charge"],
+    fast_dc_target_a: [cold ? 16 : 32, "A", "charge"],
     charge_cmd_a: [cold ? 16 : 32, "A", "charge", Date.now() - 60_000],
     charge_auto_mode: [1, "", "charge", Date.now() - 60_000],
     charge_auto_reason: [4, "", "charge", Date.now() - 60_000],
@@ -56,23 +57,24 @@ if (ridingFixture.get("fixture") === "all-installed" && chargeScene) {
       fast_dc_contactor: [0, "", "charge"],
       charge_manager_state: [2, "", "charge"],
       bms_state_charge: [1, "", "battery"],
-      pack_a: [15, "A", "battery"],
-      pack_kw: [5.37, "kW", "battery"],
-      charge_cmd_a: [15, "A", "charge", Date.now() - 60_000],
-      dc_a: [15, "A", "charger"],
+      pack_a: [8.1, "A", "battery"],
+      pack_kw: [2.9, "kW", "battery"],
+      charge_cmd_a: [13, "A", "charge", Date.now() - 60_000],
+      ac_charge_ceiling_a: [16, "A", "charge"],
+      dc_a: [8.1, "A", "charger"],
       dc_v: [358, "V", "charger"],
       mains_v: [230, "V", "charger"],
-      mains_a: [25, "A", "charger"],
-      charger_max_dc_a: [20, "A", "charger"],
+      mains_a: [13, "A", "charger"],
+      charger_max_dc_a: [75, "A", "charger"],
       charger_max_dc_v: [400, "V", "charger"],
-      charge_limit_a: [15, "A", "charger"],
+      charge_limit_a: [13, "A", "charger"],
       charger_enabled: [1, "", "charger"],
     });
   }
   if (chargeScene === "ac") {
     WRITE_STATUS.chargeAck = {
-      verdict: { kind: "took", fromAmps: 16, toAmps: 15, latencyMs: 120 },
-      message: "The AC request settled at 15 A.",
+      verdict: { kind: "took", fromAmps: 16, toAmps: 13, latencyMs: 120 },
+      message: "The AC request settled at 13 A.",
     };
   }
   for (let module = 1; module <= 11; module++) {
@@ -166,7 +168,11 @@ if (ridingFixture.get("fixture") === "all-installed" && chargeScene) {
         });
       }
       if (!["charge-current", "charge-stop"].includes(action)) {
-        return originalChargeFetch(input, init);
+        const response = await originalChargeFetch(input, init);
+        if (action === "charge-soc-limit") {
+          pushPatch({ charge_soc_limit_pct: [SOC_LIMIT.pct, "%", "charge"] });
+        }
+        return response;
       }
       if (action === "charge-current") {
         const amps = Number(url.searchParams.get("amps"));

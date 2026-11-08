@@ -1,68 +1,53 @@
 // @ts-check
 
-import { openDestination } from "../lib/destination.js";
 import van from "../vendor/van-1.6.1.js";
-import { GOOD, MUTED, WARN } from "../lib/colors.js";
+import { WARN } from "../lib/colors.js";
 import { chargeType, onChargeSessionEnd, writesEnabled } from "../lib/charge-write.js";
 
-import { chargeRequestReply } from "../lib/charge-request-display.js";
 import { valueOf } from "../lib/store.js";
 import { request } from "../lib/transport.js";
 
-/** Fetched on the documented wake-ups and after every toggle — never polled. docs/charge-auto.md. */
-/** @param {{compact?:boolean}} [options] */
-export function ChargeAutoControl({ compact = false } = {}) {
-  return div(() => {
-    // ⚠️ Gated on writesEnabled() like the two sibling controls: the controller transmits through
-    // /vcu-write, so on a phone that never enabled writes it is inert and offering a switch for it
-    // would be offering a switch that does nothing. Hidden, not disabled, for the same reason.
-    if (chargeType.val !== "dc" || !writesEnabled()) {
-      return div();
-    }
-    if (!loaded.val) {
-      void refresh();
-      return div(
-        { class: compact ? "charge-auto-secondary" : "tile span2" },
-        div({ class: "label" }, "Automatic charge current")
-      );
-    }
-    if (compact) {
-      return div(
-        { class: "charge-auto-secondary" },
-        div({ class: "label" }, "Automatic reduction"),
-        div({ class: "sub" }, () =>
-          mode.val === "off"
-            ? "Off for this charge"
-            : reasonCode.val === REASON_RIDER
-              ? "Paused for this charge"
-              : reasonSentence.val
-        ),
-        div({ class: "sub" }, () => `Only lowers · minimum ${floorAmps.val} A`),
-        div({ class: "compact-auto-toggle" }, ToggleButton(true)),
-        div({ class: "action-note" }, () => failure.val)
-      );
-    }
-    // ⚠️ The tile itself is built ONCE per visibility change; everything that moves is a thunk
-    // inside it, so a refresh updates text in place instead of replacing the button under a thumb.
-    return div(
-      { class: compact ? "charge-auto-secondary" : "tile span2" },
-      div({ class: "label" }, "Automatic charge current"),
-      div({ class: "action-note" }, () =>
-        div({ style: `color:${mode.val === "automatic" ? GOOD : MUTED}` }, controllerSentence())
+/** Controller reads and reply ordering: docs/charge-controls.md. */
+export function ChargeAutoControl() {
+  return div(
+    {
+      class: "tile layout-card charge-auto-control",
+      hidden: () => {
+        const visible = chargeType.val === "dc" && writesEnabled();
+        if (visible && !loaded.rawVal) {
+          void refresh();
+        }
+        return !visible;
+      },
+    },
+    div(
+      { class: "layout-between" },
+      div(
+        { class: "layout-compact-stack" },
+        div({ class: "charge-label" }, "Automatic reduction"),
+        div({ class: "charge-sub", "data-auto-status": "", title: controllerSentence }, () =>
+          !loaded.val
+            ? "Unavailable"
+            : mode.val === "off"
+              ? "Off for this charge"
+              : reasonCode.val === REASON_RIDER
+                ? "Paused for this charge"
+                : "Active for this charge"
+        )
       ),
-      ToggleButton(compact),
-      ...(compact
-        ? []
-        : [
-            div(
-              { class: "settings-row" },
-              div({ class: "settings-note" }, "Permission on this Pi"),
-              button({ class: "settings-button", onclick: () => openDestination("settings", "charging") }, "Settings →")
-            ),
-          ]),
-      div({ class: "action-note", style: `color:${WARN}` }, () => failure.val)
-    );
-  });
+      ToggleButton()
+    ),
+    div(
+      {
+        class: "charge-sub",
+        hidden: () => !failure.val,
+        role: "status",
+        title: () => failure.val,
+        style: `color:${WARN}`,
+      },
+      () => (failure.val ? "Unavailable" : "")
+    )
+  );
 }
 
 const { button, div } = van.tags;
@@ -127,36 +112,16 @@ onChargeSessionEnd(() => {
   loaded.val = false;
 });
 
-/** @param {boolean} [compact] */
-function ToggleButton(compact = false) {
-  return div(
-    button(
-      {
-        class: "action",
-        "data-charge-action": "automatic",
-        disabled: () => busy.val,
-        // Read at click time, not captured: the state moves under the button between renders.
-        onclick: () => void toggle(toggleAction(mode.val, reasonCode.val, floorAmps.val).mode),
-      },
-      () =>
-        busy.val
-          ? "Waiting…"
-          : compact
-            ? mode.val === "off"
-              ? "Enable"
-              : reasonCode.val === REASON_RIDER
-                ? "Resume"
-                : "Switch off for this charge"
-            : toggleAction(mode.val, reasonCode.val, floorAmps.val).label
-    ),
-    ...(compact
-      ? []
-      : [
-          div(
-            { class: "action-note", style: `color:${MUTED}` },
-            () => toggleAction(mode.val, reasonCode.val, floorAmps.val).note
-          ),
-        ])
+function ToggleButton() {
+  return button(
+    {
+      class: "control-button",
+      "data-charge-action": "automatic",
+      "aria-pressed": () => String(loaded.val && mode.val === "automatic" && reasonCode.val !== REASON_RIDER),
+      disabled: () => busy.val || !loaded.val,
+      onclick: () => void toggle(toggleAction(mode.val, reasonCode.val, floorAmps.val).mode),
+    },
+    () => (busy.val ? "Waiting…" : mode.val === "off" || reasonCode.val === REASON_RIDER ? "Resume" : "Switch off")
   );
 }
 
@@ -192,31 +157,10 @@ export function toggleAction(currentMode, reason, floor_a) {
   };
 }
 
-/**
- * What the controller is doing, in words — the text the tile renders, and nothing else, which is
- * why it is `""` while the tile has no answer yet and shows only its label.
- *
- * ⚠️ No special case for the rider override: the controller already reports it as its REASON, and a
- * branch here beat that — with the toggle off and an override latched the tile said "you set the
- * current on the bike" instead of "off".
- *
- * ⚠️ The amps come from the ENDPOINT, never from `charge_auto_target_a` — that signal is only a
- * wake-up. It outlives the session that produced it (forgetSession() nulls the controller's own
- * copy and records no new target), so reading it here would print a current this charge never commanded.
- *
- * Exported so scripts/check-charge-auto-live.ts can read the tile's own words without a browser,
- * on the same footing as toggleAction() above.
- */
+/** Detailed controller state for the status tooltip and live harness.
+ * @returns {string} */
 export function controllerSentence() {
-  // ⚠️ Empty while the tile has nothing to show. The render above returns its label and nothing
-  // else until `loaded`, so a sentence here would be text that is not on screen — and this
-  // function's contract, which scripts/charge-auto-live-harness.ts leans its whole no-DOM
-  // argument on, is "the text the binding puts on screen". It is also what lets that harness see
-  // the window `onChargeSessionEnd` exists for: between a plug-in and the answer for the new
-  // session, the primitives below still hold the PREVIOUS session's reason and amps.
-  if (!loaded.val) {
-    return "";
-  }
+  if (!loaded.val) return "";
   const suffix = commandedAmps.val === null ? "" : ` Commanding ${commandedAmps.val} A.`;
   return `${reasonSentence.val}${suffix}`;
 }
@@ -305,21 +249,4 @@ async function toggle(wanted) {
   } finally {
     busy.val = false;
   }
-}
-
-export function ChargeAutoSummary() {
-  return div(
-    div({ class: "label" }, () => {
-      return `Last request · ${chargeRequestReply().request}`;
-    }),
-    div({ class: "sub" }, () => {
-      if (chargeType.val === "ac") return "Automatic reduction · DC only";
-      if (!loaded.val) return "Automatic reduction not established";
-      return mode.val === "off"
-        ? "Automatic reduction off"
-        : reasonCode.val === REASON_RIDER
-          ? "Automatic reduction paused"
-          : "Automatic reduction active";
-    })
-  );
 }

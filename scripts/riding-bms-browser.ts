@@ -42,14 +42,6 @@ export async function checkBmsBrowser(page: HeadlessPage, file: string) {
       "var(--good)",
       "A current cell above the BMS maximum has no gap."
     );
-    await evaluateOnPage(page, "ridingPreview('lib/router.js').showView('charge-pack')");
-    await waitOnPage(page, "!!document.querySelector('.charge-pack-view')", "Pack route");
-    await evaluateOnPage(page, FRAME);
-    await assertHeldModules(page);
-    assert.equal(
-      await evaluateOnPage(page, "document.querySelectorAll('.charge-voltage-grid .heatmap rect')[3].style.fill"),
-      "var(--sub)"
-    );
     await evaluateOnPage(page, "ridingPreview('lib/destination.js').openDestination('battery-cooling')");
     await waitOnPage(page, "!!document.querySelector('.battery-cooling-page')", "Battery & cooling module grid");
     await evaluateOnPage(page, FRAME);
@@ -70,9 +62,7 @@ export async function checkBmsBrowser(page: HeadlessPage, file: string) {
       "Live unrelated traffic cannot keep a dead multiplex's held values fresh."
     );
   }
-  console.log(
-    "  ✓ BMS held values stay visible in Cells/Pack/module views, neutral when old, with current 0x203 summaries"
-  );
+  console.log("  ✓ BMS held values stay visible in Cells/module views, neutral when old, with current 0x203 summaries");
 }
 
 export async function applyHeldBmsFixture(page: HeadlessPage) {
@@ -127,7 +117,7 @@ async function assertHeldModules(page: HeadlessPage) {
   assert.equal(
     await evaluateOnPage(page, "document.querySelector('[data-module-signal=lmu2_pcb1_c]').style.color"),
     "var(--watch)",
-    "A current temperature keeps its temperature colour in both module views."
+    "A current temperature keeps its temperature colour in the module view."
   );
   assert.equal(
     await evaluateOnPage(page, "document.querySelectorAll('.module-temperatures .heatmap rect')[4].style.fill"),

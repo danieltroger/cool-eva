@@ -11,9 +11,8 @@ export const CHARGE_CURVE = /** @type {const} */ ([
   [65, 0],
 ]);
 export const CHARGE_CAP_INTERSECTIONS = [(10 * (75 - 2)) / (80 - 2), 25 + ((120 - 75) * 15) / (120 - 50)];
-export const CHARGE_FALLBACK = /** @type {const} */ ([-30, 65]);
-export const CHARGE_MIN_SPAN_C = 30;
-const knees = [-30, -10, 0, ...CHARGE_CAP_INTERSECTIONS, 40, 65];
+export const CHARGE_FALLBACK = /** @type {const} */ ([20, 65]);
+export const CHARGE_MIN_SPAN_C = 25;
 
 /** @param {number|null} temperature @returns {number|null} */
 export function chargeAllowance(temperature) {
@@ -41,39 +40,28 @@ export function chargeCeiling(low, high) {
 /** @typedef {{outside:number|null,physicalLow:number|null,physicalHigh:number|null,reportedLow:number|null,reportedHigh:number|null}} ChargeTemperatures */
 /** @param {ChargeTemperatures} values @returns {{low:number,high:number,fixed:boolean}} */
 export function chargeWindow(values) {
-  const { outside, physicalLow, physicalHigh, reportedLow, reportedHigh } = values;
-  if (
-    [outside, physicalLow, physicalHigh, reportedLow, reportedHigh].some(
-      value => value === null || !Number.isFinite(value)
-    ) ||
-    chargeCeiling(reportedLow, reportedHigh) === null
-  ) {
-    return { low: CHARGE_FALLBACK[0], high: CHARGE_FALLBACK[1], fixed: true };
+  const { outside, reportedLow, reportedHigh } = values;
+  const validReports = [reportedLow, reportedHigh].filter(value => chargeAllowance(value) !== null);
+  if (outside === null || !Number.isFinite(outside) || chargeCeiling(reportedLow, reportedHigh) === null) {
+    return {
+      low: Math.min(CHARGE_FALLBACK[0], ...validReports.map(value => value ?? CHARGE_FALLBACK[0])),
+      high: CHARGE_FALLBACK[1],
+      fixed: true,
+    };
   }
-  const governing =
-    (chargeAllowance(reportedLow) ?? 0) <= (chargeAllowance(reportedHigh) ?? 0)
-      ? (reportedLow ?? 0)
-      : (reportedHigh ?? 0);
-  const nearest = knees.reduce(
-    (best, knee) => (Math.abs(knee - governing) < Math.abs(best - governing) ? knee : best),
-    knees[0]
+  let low = Math.max(-30, Math.min(outside - 10, reportedLow ?? 0, reportedHigh ?? 0));
+  let high = Math.min(65, Math.max(reportedLow ?? 0, reportedHigh ?? 0) + 10);
+  const hottest = Math.max(reportedLow ?? 0, reportedHigh ?? 0);
+  const nearest = [0, ...CHARGE_CAP_INTERSECTIONS, 40, 65].reduce(
+    (selected, knee) => (Math.abs(knee - hottest) < Math.abs(selected - hottest) ? knee : selected),
+    0
   );
-  const next = knees.find(knee => knee > Math.max(nearest, governing)) ?? 65;
-  let low = Math.min((outside ?? 0) - 10, (physicalHigh ?? 0) + 10, reportedLow ?? 0, reportedHigh ?? 0, nearest);
-  let high = Math.max((outside ?? 0) - 10, (physicalHigh ?? 0) + 10, reportedLow ?? 0, reportedHigh ?? 0, next);
+  low = Math.min(low, nearest);
+  high = Math.max(high, nearest);
   if (high - low < CHARGE_MIN_SPAN_C) {
-    const padding = (CHARGE_MIN_SPAN_C - (high - low)) / 2;
-    low -= padding;
-    high += padding;
-  }
-  low = Math.max(-30, Math.floor(low / 5) * 5);
-  high = Math.min(65, Math.ceil(high / 5) * 5);
-  if (high - low < CHARGE_MIN_SPAN_C) {
-    if (low === -30) {
-      high = low + CHARGE_MIN_SPAN_C;
-    } else {
-      low = high - CHARGE_MIN_SPAN_C;
-    }
+    const middle = (low + high) / 2;
+    low = Math.max(-30, Math.min(65 - CHARGE_MIN_SPAN_C, middle - CHARGE_MIN_SPAN_C / 2));
+    high = low + CHARGE_MIN_SPAN_C;
   }
   return { low, high, fixed: false };
 }

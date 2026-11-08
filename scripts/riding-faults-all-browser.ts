@@ -293,9 +293,9 @@ export async function checkFaultReportNavigation(page: HeadlessPage, file: strin
       "Fault report gesture to Ride"
     );
     assert.equal(await evaluateOnPage(page, "scrollY"), 0);
-    await openPreview(page, file, "#charge/pack-cooling", `all-arrival-${kind}`, "&charge-scene=warm");
+    await openPreview(page, file, "#charge", `all-arrival-${kind}`, "&charge-scene=warm");
     await gesture(page, kind);
-    await waitOnPage(page, "!!document.querySelector('.faults-view')", "Charge detail gesture to Faults");
+    await waitOnPage(page, "!!document.querySelector('.faults-view')", "Charge gesture to Faults");
     assert.equal(await evaluateOnPage(page, "scrollY"), 0);
   }
 }

@@ -1,7 +1,7 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { GOOD, MUTED, WARN, WATCH } from "../lib/colors.js";
+import { MUTED, WARN } from "../lib/colors.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 
 import { readingStatus, statusWord, freshValue } from "../lib/reading-status.js";
@@ -16,6 +16,7 @@ import {
   writesEnabled,
 } from "../lib/charge-write.js";
 import { request } from "../lib/transport.js";
+import { chargeEdit } from "../lib/charge-edit.js";
 
 /**
  * The control, or an empty node when it must not be offered.
@@ -24,30 +25,13 @@ import { request } from "../lib/transport.js";
  * controls beside it: an ordinary phone sees a read-only Charge tab.
  */
 export function ChargeSocLimitControl() {
-  // Standalone control mounts share permission; only the route constructor starts a CAN read.
   void ensureWriteStatus();
-  return div(() => {
-    // ⚠️ The VALUE is a read-only signal, arriving over the WebSocket whenever the rider sets the
-    // limit on the bike's own menu, so it shows on any phone. Only the BUTTONS are behind the
-    // writes gate. Gating the whole tile meant an ordinary phone could receive the limit and not
-    // display it — the one read-only thing this feature adds, invisible by default.
-    const known = socKnown.val;
-    if (!known && !writesEnabled()) {
-      return div();
-    }
-    return div(
-      { class: "tile charge-soc-control" },
-      div({ class: "label" }, "Bike’s saved charge limit"),
-      CurrentValue(),
-      () => (writesEnabled() ? SetRow() : div()),
-      div({ class: "sub" }, () =>
-        parsedPercent() === 0
-          ? "0 removes the limit; the bike can charge to full."
-          : "Retained after unplugging. A saved limit is not a promise of where this charge will stop."
-      ),
-      Outcome()
-    );
-  });
+  return div(
+    { class: "tile layout-card charge-soc-control", hidden: () => !socKnown.val && !writesEnabled() },
+    div({ class: "charge-label" }, "Bike’s charge limit"),
+    SetRow(),
+    Outcome()
+  );
 }
 
 const { button, div, input, span } = van.tags;
@@ -58,7 +42,8 @@ const { button, div, input, span } = van.tags;
 /** @typedef {import("../../src/http/vcu-write.ts").VcuWriteResponse} VcuWriteResponse */
 
 /** What the owner typed, as text so an empty box is distinct from a zero. */
-const wanted = van.state("");
+const wanted = van.state(/** @type {string|null} */ (null));
+const attemptedPercent = van.state(/** @type {number|null} */ (null));
 const socKnown = van.derive(() => valueOf("charge_soc_limit_pct") !== null);
 const busy = van.state(false);
 /** Keeps opening-read progress separate from Set's send/verification state.
@@ -78,6 +63,7 @@ onChargeSessionEnd(() => {
   // is not session-scoped, so a cable coming out is no reason to wipe what someone was typing.
   message.val = "";
   lastResult.val = null;
+  attemptedPercent.val = null;
   void ensureWriteStatus();
 });
 
@@ -96,58 +82,58 @@ let openingEntryNumber = 0;
 
 /** Called only by the route constructor; raw reads before await avoid subscribing that binding. */
 export async function readChargeSocLimitOnEntry() {
-  if (peekView() !== "charge-controls" || destination.rawVal !== "") return;
+  if (peekView() !== "charge" || destination.rawVal !== "") return;
   const entryNumber = ++openingEntryNumber;
   const answered = await ensureWriteStatus();
-  if (entryNumber !== openingEntryNumber || peekView() !== "charge-controls" || destination.rawVal !== "") return;
+  if (entryNumber !== openingEntryNumber || peekView() !== "charge" || destination.rawVal !== "") return;
   if (!answered || !writesEnabled() || busy.rawVal || armed.rawVal !== "") return;
   await performSocLimitRead();
 }
 
-/** What the bike says its limit is, or that nobody has asked yet. */
-function CurrentValue() {
-  return div({ class: "value", "data-saved-charge-limit": "" }, () => {
-    if (sending.val === "read") return "Reading…";
-    const limit = freshValue("charge_soc_limit_pct");
-    return limit === null
-      ? statusWord(readingStatus("charge_soc_limit_pct"), "Unknown")
-      : limit === 0
-        ? "No limit"
-        : `${limit} %`;
-  });
-}
-
 function SetRow() {
   return div(
-    { class: "compact-action-row" },
-    input({
-      // The class the controls beside this one use. ⚠️ There is no `action-input` rule in
-      // style.css, so the box rendered 30 px wide — caught by the screenshot gate, which is the
-      // only thing that could have caught it.
-      class: "probe-input",
-      type: "text",
-      inputmode: "numeric",
-      // A name rather than an id: the design sheet mounts this module more than once per document.
-      // `autocomplete="off"` because an autofilled percentage on the control that decides when the
-      // pack stops charging is a number nobody typed — charge-current.js argues the same for amps.
-      name: "charge-soc-limit-pct",
-      autocomplete: "off",
-      placeholder: `0…${MAX_PCT}`,
-      disabled: () => busy.val,
-      value: wanted,
-      oninput: event => {
-        wanted.val = /** @type {HTMLInputElement} */ (event.target).value;
-        // A changed number is a different command from the one that was primed.
-        armed.val = "";
-      },
-    }),
-    span("%"),
+    { class: "charge-control-row" },
+    div(
+      { class: "layout-row charge-entry" },
+      input({
+        // The class the controls beside this one use. ⚠️ There is no `action-input` rule in
+        // style.css, so the box rendered 30 px wide — caught by the screenshot gate, which is the
+        // only thing that could have caught it.
+        class: "probe-input charge-input",
+        type: "number",
+        min: 0,
+        max: MAX_PCT,
+        step: 1,
+        "aria-label": "Charge limit percentage",
+        inputmode: "numeric",
+        // A name rather than an id: the design sheet mounts this module more than once per document.
+        // `autocomplete="off"` because an autofilled percentage on the control that decides when the
+        // pack stops charging is a number nobody typed — charge-current.js argues the same for amps.
+        name: "charge-soc-limit-pct",
+        autocomplete: "off",
+        placeholder: "—",
+        "aria-invalid": () => String(wanted.val !== null && edit().value === null),
+        disabled: () => busy.val || sending.val === "read" || !writesEnabled(),
+        value: () =>
+          wanted.val ?? (freshValue("charge_soc_limit_pct") === null ? "" : String(freshValue("charge_soc_limit_pct"))),
+        oninput: event => {
+          wanted.val = /** @type {HTMLInputElement} */ (event.target).value;
+          message.val = "";
+          lastResult.val = null;
+          attemptedPercent.val = null;
+          // A changed number is a different command from the one that was primed.
+          armed.val = "";
+        },
+      }),
+      span({ class: "unit" }, "%")
+    ),
     button(
       {
-        class: "action writes",
+        class: "control-button writes",
         "data-charge-action": "limit-set",
+        hidden: () => !writesEnabled(),
         onkeydown: refuseKeyRepeat,
-        disabled: () => busy.val || parsedPercent() === null,
+        disabled: () => busy.val || !writesEnabled() || parsedPercent() === null || !edit().changed,
         onclick: () => {
           if (armed.val !== ARMED_KEY) {
             void armSocLimit();
@@ -160,54 +146,54 @@ function SetRow() {
           void performSocLimit();
         },
       },
-      () => {
-        if (sending.val === "write") {
-          return "⏳  Sending…";
-        }
-        if (busy.val) {
-          return "⏳  Checking…";
-        }
-        const value = parsedPercent();
-        if (value === null) {
-          // Disabled, so say what would enable it — the control above does the same. A disabled
-          // button whose label is just "Set" leaves the reader guessing what is wrong.
-          return `Set limit (0…${MAX_PCT})`;
-        }
-        const what = value === 0 ? "remove the limit" : `set ${value} %`;
-        return armed.val === ARMED_KEY
-          ? `Confirm ${value === 0 ? "remove limit" : `${value}%`}`
-          : `${value === 0 ? "Remove limit" : `Set ${value}%`}`;
-      }
+      () =>
+        sending.val === "write" || busy.val
+          ? "Waiting…"
+          : armed.val === ARMED_KEY
+            ? parsedPercent() === 0
+              ? "Confirm remove limit"
+              : `Confirm ${parsedPercent()} %`
+            : "Set"
     )
   );
 }
 
 function Outcome() {
-  return div({ class: "action-note" }, () => {
-    const result = lastResult.val;
-    return div(
-      message.val ? div({ style: `color:${result ? GOOD : WARN}` }, message.val) : div(),
-      result
-        ? div(
-            { style: `color:${WATCH}` },
-            "🔍  Read back from the VCU's own store. That it holds the limit is not proof it stops there — check the next full charge."
-          )
-        : div()
-    );
-  });
+  return div(
+    {
+      class: "charge-sub charge-control-status",
+      "data-limit-status": "",
+      role: "status",
+      title: () => message.val,
+      style: () => `color:${message.val && lastResult.val !== true ? WARN : MUTED}`,
+    },
+    () => {
+      if (sending.val === "read") return "Reading from bike…";
+      if (sending.val === "write" || busy.val) return "Waiting for bike…";
+      if (lastResult.val === true) {
+        const actual = freshValue("charge_soc_limit_pct");
+        if (actual === null || actual !== attemptedPercent.val) return "Waiting for bike…";
+        return actual === 0 ? "Bike confirmed no limit" : `Bike confirmed ${actual} %`;
+      }
+      if (message.val) return "Delivery uncertain";
+      if (wanted.val !== null) {
+        if (edit().value === null) return `Use 0–${MAX_PCT} %`;
+        if (edit().changed) return "Not sent";
+      }
+      const value = freshValue("charge_soc_limit_pct");
+      return value === null
+        ? statusWord(readingStatus("charge_soc_limit_pct"), "Unavailable")
+        : value === 0
+          ? "No limit"
+          : "Read from bike";
+    }
+  );
 }
-
-/** The typed percentage, or null when the box does not hold a whole 0…100. */
+function edit() {
+  return chargeEdit(wanted.val, freshValue("charge_soc_limit_pct"), 0, MAX_PCT);
+}
 function parsedPercent() {
-  const raw = wanted.val.trim();
-  if (raw === "") {
-    return null;
-  }
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < 0 || value > MAX_PCT) {
-    return null;
-  }
-  return value;
+  return edit().value;
 }
 
 async function armSocLimit() {
@@ -229,6 +215,7 @@ async function performSocLimit() {
   }
   // The confirm carries the value, so a page showing one percentage cannot POST another — and 0
   // has its own word, because it removes the battery protection rather than moving it.
+  attemptedPercent.val = value;
   const confirm = value === 0 ? "charge-soc-limit-off" : `charge-soc-limit-${value}`;
   await post(new URLSearchParams({ list: "0", action: "charge-soc-limit", pct: String(value), confirm }), "write");
 }
@@ -263,8 +250,8 @@ async function post(query, kind) {
     message.val =
       `Could not reach the Pi — ${error instanceof Error ? error.message : String(error)}. ` +
       (kind === "read"
-        ? "Reopen Controls to try reading it again."
-        : "This does NOT guarantee nothing was sent — reopen Controls to read it again before retrying.");
+        ? "Reopen Charge to try reading it again."
+        : "This does NOT guarantee nothing was sent — reopen Charge to read it again before retrying.");
     console.warn("charge-soc-limit: request failed", error);
   } finally {
     sending.val = "";
@@ -273,3 +260,9 @@ async function post(query, kind) {
   armed.val = "";
   lastResult.val = kind === "write" && payload?.result ? payload.result.succeeded : null;
 }
+
+van.derive(() => {
+  if (lastResult.val === true && wanted.val !== null && edit().value === freshValue("charge_soc_limit_pct")) {
+    wanted.val = null;
+  }
+});

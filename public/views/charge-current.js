@@ -1,15 +1,14 @@
 // @ts-check
 import van from "../vendor/van-1.6.1.js";
 import { readingStatus, statusWord, freshValue } from "../lib/reading-status.js";
-import { GOOD, MUTED, WARN, WATCH } from "../lib/colors.js";
+import { MUTED, WARN } from "../lib/colors.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 import { chargeRequestReply } from "../lib/charge-request-display.js";
-import { chargeAttemptText } from "../lib/charge-command-display.js";
-import { chargeCeiling } from "../lib/charge-curve.js";
+import { chargeAttemptText, chargeConfirmationText } from "../lib/charge-command-display.js";
+import { chargeEdit } from "../lib/charge-edit.js";
 import { valueOf } from "../lib/store.js";
 import {
   applyWriteStatus,
-  ceilingIsFallback,
   chargeType,
   fetchChargeWriteStatus,
   liveCeiling,
@@ -29,27 +28,12 @@ import { request } from "../lib/transport.js";
  * deliberately NOT a condition here — see the file header and write-runner.ts.
  */
 export function ChargeCurrentControl() {
-  return div(() => {
-    if (!sessionLive.val || !writesEnabled()) return div();
-    return div(
-      { class: "tile charge-current-control" },
-      div({ class: "label" }, "Current · this charge"),
-      div(
-        { class: "charge-request-reply" },
-        div(
-          div({ class: "sub" }, "Last request"),
-          div({ class: "value", "data-last-charge-request": "" }, () => chargeRequestReply().request)
-        ),
-        div(
-          div({ class: "sub" }, "Bike replied"),
-          div({ class: "value", "data-charge-reply": "" }, () => chargeRequestReply().reply)
-        )
-      ),
-      div({ class: "compact-action-row" }, InputRow(), span("A"), SetButton()),
-      Situation(),
-      Outcome()
-    );
-  });
+  return div(
+    { class: "tile layout-card charge-current-control", hidden: () => !sessionLive.val || !writesEnabled() },
+    div({ class: "charge-label" }, () => `${chargeType.val === "ac" ? "AC" : "DC"} current request`),
+    div({ class: "charge-control-row" }, InputRow(), SetButton()),
+    Outcome()
+  );
 }
 
 const { button, div, input, span } = van.tags;
@@ -59,13 +43,13 @@ const { button, div, input, span } = van.tags;
 /** @typedef {import("../../src/http/vcu-write.ts").VcuWriteResponse} VcuWriteResponse */
 
 /** What the owner typed, as text so an empty box is distinct from a zero. */
-const amps = van.state("");
+const amps = van.state(/** @type {string|null} */ (null));
 const busy = van.state(false);
 /** True only while the command's own POST is in flight, so "Sending…" cannot be shown for a status refresh. */
 const sending = van.state(false);
 const message = van.state("");
-/** Whether the last command was accepted by the Pi. The bike's own verdict is `chargeAck`. */
-const lastResult = van.state(/** @type {boolean | null} */ (null));
+const attemptedAmps = van.state(/** @type {number|null} */ (null));
+const attempt = van.state(/** @type {""|"sent"|"not-sent"|"uncertain"} */ (""));
 
 // The form clears when the charge ends — a new session starts blank. Session tracking, the lazy
 // status fetch and the live AC/DC/ceiling reads all live in ../lib/charge-write.js, shared with
@@ -109,70 +93,42 @@ van.derive(() => {
   });
 });
 
-/**
- * What can be commanded right now: the source, the ceiling, or why neither is available.
- *
- * The two "not yet" states are the Pi's own refusals said BEFORE the button is pressed, so
- * the remedy (plug in; nudge the dial) is read where it is actionable rather than after a
- * 409. AC's ceiling is an event the dash only broadcasts when the dial moves, so its absence
- * is normal and gets a remedy, not an error.
- */
-function Situation() {
-  return div({ class: "sub" }, () => {
-    const type = chargeType.val;
-    if (type === null) return "Charge state changing";
-    const cap = liveCeiling(type);
-    const command = `${type.toUpperCase()} command ceiling ${cap === null ? "unavailable — check CAN" : `${cap} A`}${ceilingIsFallback(type) ? " (default — may be ignored)" : ""}`;
-    if (type === "ac") {
-      return div(
-        div(command),
-        div(
-          `AC setpoint ${acReading("charge_limit_a", "A")} · Battery grants ${acReading("charger_max_dc_a", "A")} / ${acReading("charger_max_dc_v", "V")}`
-        )
-      );
-    }
-    const temperature = chargeCeiling(freshValue("batt_temp_lo_vcu"), freshValue("batt_temp_hi_vcu"));
-    return `${command} · DC temperature ceiling ${temperature === null ? "unknown" : `${temperature.toFixed(temperature % 1 === 0 ? 0 : 1)} A`}`;
-  });
-}
-
-/** @param {string} key @param {string} unit */
-function acReading(key, unit) {
-  const value = freshValue(key);
-  return value === null ? statusWord(readingStatus(key), "unavailable") : `${Number(value.toFixed(1))} ${unit}`;
-}
-
 function InputRow() {
-  // ⚠️ The <input> is created ONCE, not inside a binding. A binding that re-ran on a live
-  // signal would replace the element mid-keystroke and take the cursor with it — so only the
-  // placeholder and disabled ATTRIBUTES are reactive (thunks), which VanJS updates in place.
   return div(
-    { class: "probe-field" },
+    { class: "layout-row charge-entry" },
     input({
-      class: "probe-input",
-      type: "text",
+      class: "probe-input charge-input",
+      type: "number",
       inputmode: "numeric",
-      // A name rather than an id, for the reason public/views/vcu-write.js gives: the design
-      // sheet mounts this module more than once per document. `autocomplete="off"` matters more
-      // here than anywhere — an autofilled amperage on the control that commands current into
-      // the pack is a number nobody typed.
+      min: minimumCurrent,
+      max: () => (chargeType.val === null ? null : liveCeiling(chargeType.val)),
+      step: 1,
       name: "charge-current-amps",
       autocomplete: "off",
-      placeholder: () => {
-        const type = chargeType.val;
-        const ceiling = type === null ? null : liveCeiling(type);
-        return ceiling === null ? "amps" : `1…${ceiling}`;
-      },
-      disabled: () => !commandable(),
-      value: amps,
+      "aria-label": () => `${chargeType.val === "ac" ? "AC" : "DC"} current request in amperes`,
+      placeholder: "—",
+      "aria-invalid": () => String(amps.val !== null && commandable() && edit().value === null),
+      disabled: () => busy.val || !commandable(),
+      value: () => amps.val ?? (reportedCurrent() === null ? "" : String(reportedCurrent())),
       oninput: (/** @type {Event} */ event) => {
         amps.val = /** @type {HTMLInputElement} */ (event.target).value;
-        // Retyping disarms: the second tap must send the number now on screen, not the one
-        // the first tap agreed to.
         armed.val = "";
+        attempt.val = "";
+        message.val = "";
       },
-    })
+    }),
+    span({ class: "unit" }, "A")
   );
+}
+function minimumCurrent() {
+  return chargeType.val === "ac" ? 6 : 1;
+}
+function reportedCurrent() {
+  return freshValue(chargeType.val === "ac" ? "charge_limit_a" : "fast_dc_target_a");
+}
+function edit() {
+  const type = chargeType.val;
+  return chargeEdit(amps.val, reportedCurrent(), minimumCurrent(), type === null ? null : liveCeiling(type));
 }
 
 function SetButton() {
@@ -182,11 +138,11 @@ function SetButton() {
         // The reversible/amber tier, the same one the parameter write sits in: it changes
         // the bike and can be taken straight back (transient, the rider overrides on the
         // bike's screen), so it is on-screen and amber, not behind the red fold.
-        class: "action writes",
+        class: "control-button writes",
         "data-charge-action": "current",
         // One held Enter must not arm and then fire. See ../lib/arming.js.
         onkeydown: refuseKeyRepeat,
-        disabled: () => busy.val || !commandable() || parsedAmps() === null,
+        disabled: () => busy.val || !commandable() || parsedAmps() === null || !edit().changed,
         onclick: () => {
           if (armed.val !== ARMED_KEY) {
             void armChargeCurrent();
@@ -202,70 +158,39 @@ function SetButton() {
           void performChargeCurrent();
         },
       },
-      () => {
-        if (sending.val) {
-          return "⏳  Sending…";
-        }
-        if (busy.val) {
-          return "Checking…";
-        }
-        const value = parsedAmps();
-        if (value === null) {
-          const type = chargeType.val;
-          const ceiling = type === null ? null : liveCeiling(type);
-          return ceiling === null ? "Waiting for charge" : `Set current (1…${ceiling})`;
-        }
-        const type = chargeType.val;
-        const label = type === null ? "" : ` ${type.toUpperCase()} ${value} A`;
-        return armed.val === ARMED_KEY ? `Confirm${label}` : `Set${label}`;
-      }
+      () => (sending.val || busy.val ? "Waiting…" : armed.val === ARMED_KEY ? `Confirm ${parsedAmps()} A` : "Set")
     )
   );
 }
 
-/**
- * The last command's outcome, and — once one has landed — where to look to confirm it.
- *
- * The hint is deliberately shown only afterwards: standing at the bike the moment the frame
- * has gone out is the moment the verdict becomes useful, and before then it is one more line
- * competing with the input.
- */
 function Outcome() {
-  return div({ class: "action-note" }, () => {
-    const result = lastResult.val;
-    return div(message.val ? div({ style: `color:${result ? GOOD : WARN}` }, message.val) : div(), Acknowledgement());
-  });
-}
-
-/**
- * Whether the bike actually took the last command — the Pi's own verdict, not a hint about where
- * to look.
- *
- * ⚠️ This is the whole point of the feature after 2026-09-07, when three commands changed the
- * dash's number, moved no current, and nothing anywhere said so. It reads the vehicle's own charge
- * request, never the delivered amps: `pack_a` conflates "the VCU accepted my command" with "the
- * station could deliver it", and those are exactly the two answers this tells apart. So a
- * `station-limited` verdict is amber and explicitly NOT a fault — only a reduction proves anything,
- * since dialling up is the charger's decision. src/charge/acknowledge.ts.
- */
-function Acknowledgement() {
-  const ack = chargeRequestReply().acknowledgement;
-  if (!ack || sending.val || (message.val && lastResult.val !== true)) {
-    return div();
-  }
-  const colour = ack.verdict.kind === "took" ? GOOD : ack.verdict.kind === "not-acknowledged" ? WARN : MUTED;
-  return div({ style: `color:${colour}` }, `${ackIcon(ack.verdict.kind)}  ${ack.message}`);
-}
-
-/** @param {import("../../src/charge/acknowledge.ts").ChargeAckVerdict["kind"]} kind */
-function ackIcon(kind) {
-  if (kind === "took") {
-    return "✅";
-  }
-  if (kind === "not-acknowledged") {
-    return "⚠️";
-  }
-  return "🔍";
+  return div(
+    {
+      class: "charge-sub charge-control-status",
+      "data-current-status": "",
+      role: "status",
+      title: () => message.val || chargeRequestReply().acknowledgement?.message || "",
+      style: () => `color:${attempt.val === "not-sent" || attempt.val === "uncertain" ? WARN : MUTED}`,
+    },
+    () => {
+      if (sending.val || busy.val) return "Waiting for bike…";
+      if (attempt.val === "not-sent") return `${attemptedAmps.val} A · Not sent`;
+      if (attempt.val === "uncertain") return `${attemptedAmps.val} A · Delivery uncertain`;
+      const reply = chargeRequestReply();
+      const acknowledgement = reply.acknowledgement;
+      if (attempt.val === "sent")
+        return chargeConfirmationText(attemptedAmps.val, freshValue("charge_cmd_a"), acknowledgement);
+      if (amps.val !== null) {
+        if (edit().value === null)
+          return `Use ${minimumCurrent()}–${chargeType.val === null ? "—" : (liveCeiling(chargeType.val) ?? "—")} A`;
+        if (edit().changed) return "Not sent";
+      }
+      const reported = reportedCurrent();
+      return reported === null
+        ? statusWord(readingStatus(chargeType.val === "ac" ? "charge_limit_a" : "fast_dc_target_a"), "Unavailable")
+        : `Bike requests ${reported} A`;
+    }
+  );
 }
 
 /**
@@ -285,25 +210,16 @@ function commandable() {
 
 /** The typed amps as a whole number in range, or null. The Pi validates again against the live ceiling. */
 function parsedAmps() {
-  const text = amps.val.trim();
-  if (!/^\d+$/.test(text)) {
-    return null;
-  }
-  const value = Number(text);
-  const type = chargeType.val;
-  const ceiling = type === null ? null : liveCeiling(type);
-  if (ceiling === null || value < 1 || value > ceiling) {
-    return null;
-  }
-  return value;
+  return edit().value;
 }
 
 /** Clears what the form holds. Called when a charge ends — a new session starts blank. */
 function forgetCommand() {
-  amps.val = "";
+  amps.val = null;
+  attemptedAmps.val = null;
+  attempt.val = "";
   armed.val = "";
   message.val = "";
-  lastResult.val = null;
 }
 
 /**
@@ -338,6 +254,8 @@ async function performChargeCurrent() {
     // from the same number the button is committing to.
     confirm: `charge-current-${value}`,
   });
+  attemptedAmps.val = value;
+  attempt.val = "";
   message.val = "";
   sending.val = true;
   busy.val = true;
@@ -366,12 +284,20 @@ async function performChargeCurrent() {
     busy.val = false;
   }
   armed.val = "";
-  if (!payload || !payload.result) {
-    // Transport failure, or a 400/409 refused before the bus (busy bus, no live session, bad
-    // amps). `message` carries the reason; the typed value is kept so a retry needs no
-    // re-typing.
-    lastResult.val = null;
-    return;
-  }
-  lastResult.val = payload.result.succeeded;
+  attempt.val = payload?.result?.succeeded
+    ? "sent"
+    : payload?.chargeCurrentAttempt === "not-sent"
+      ? "not-sent"
+      : "uncertain";
 }
+
+van.derive(() => {
+  if (
+    attempt.val === "sent" &&
+    amps.val !== null &&
+    freshValue(chargeType.val === "ac" ? "charge_limit_a" : "fast_dc_target_a") === attemptedAmps.val &&
+    edit().value === attemptedAmps.val
+  ) {
+    amps.val = null;
+  }
+});
