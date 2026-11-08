@@ -1,4 +1,6 @@
-# Dashboard header
+# Earlier dashboard header
+
+This records the previous header policy and its findings. The approved replacement is described in [dashboard-navigation.md](dashboard-navigation.md).
 
 The header reserves 52 CSS pixels plus the actual top safe area. Its 44 px controls and 8 px bottom padding share the available width with the connection status. Bottom navigation reserves one fixed 50 px box plus the bottom inset. The riding layout gate measures both reservations and requires at least 12 px below complete content.
 

@@ -4,11 +4,22 @@ import { assertRendered } from "./riding-layout-browser.ts";
 import { openPreview, FRAME } from "./riding-preview-page.ts";
 
 export async function assertChargeContent(page: HeadlessPage) {
-  await waitOnPage(
-    page,
-    "document.querySelector('[data-ceiling]')?.dataset.ceiling==='36'&&(document.querySelector('[data-charge-eta]')?.textContent??'').includes(':')",
-    "the complete warm Charge fixture, graph and ETA"
-  );
+  try {
+    await waitOnPage(
+      page,
+      "document.querySelector('[data-ceiling]')?.dataset.ceiling==='36'&&(document.querySelector('[data-charge-eta]')?.textContent??'').includes(':')",
+      "the complete warm Charge fixture, graph and ETA"
+    );
+  } catch (error) {
+    console.error(
+      "Charge fixture at failure",
+      await evaluateOnPage(
+        page,
+        `({query:location.search,hash:location.hash,ceiling:document.querySelector('[data-ceiling]')?.dataset.ceiling,eta:document.querySelector('[data-charge-eta]')?.textContent,connection:ridingPreview('lib/store.js').connection.rawVal,power:ridingPreview('lib/store.js').peek('pack_kw'),soc:ridingPreview('lib/store.js').peek('soc')})`
+      )
+    );
+    throw error;
+  }
   await assertRendered(page, [
     "[data-charge-soc]",
     "[data-charge-power]",

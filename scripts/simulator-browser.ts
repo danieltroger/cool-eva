@@ -267,11 +267,12 @@ async function checkActions(page: HeadlessPage, theme: string, shots?: string): 
     shots
   );
   await evaluateOnPage(page, "document.querySelector('#sim-expected').remove()");
-  await evaluateOnPage(page, "(async()=>{window.simSheet=await import('/views/sheet.js');simSheet.openSheet()})()");
+  await destination(page, "bike-information");
+  await evaluateOnPage(page, "(async()=>{window.simSheet=await import('/views/sheet.js')})()");
   await refused(
     page,
     "/waypoint",
-    () => button(page, "Save waypoint", false, "document.querySelector('.sheet-body')"),
+    () => button(page, "Save waypoint", false, "document.querySelector('.settings-page')"),
     "waypoint",
     theme,
     shots
@@ -284,13 +285,12 @@ async function checkActions(page: HeadlessPage, theme: string, shots?: string): 
   await refused(
     page,
     "/recording/flush",
-    () => button(page, "Download ride log", false, "document.querySelector('.sheet-body')"),
+    () => button(page, "Download all ride logs", false, "document.querySelector('.settings-page')"),
     "recording-flush",
     theme,
     shots,
     "failed: The current recording could not be sealed for download."
   );
-  await evaluateOnPage(page, "simSheet.sheetOpen.val=false");
 }
 
 async function checkDraftAcrossLoop(page: HeadlessPage): Promise<void> {

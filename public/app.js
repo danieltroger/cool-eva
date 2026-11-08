@@ -16,11 +16,11 @@ import { ChargeView } from "./views/charge.js";
 import { AllView } from "./views/all.js";
 import { FaultsView } from "./views/faults.js";
 import { FaultReportView } from "./views/fault-report.js";
-import { Sheet, hasTroubleCodes, installWaypointRefresh, refreshStatus } from "./views/sheet.js";
+import { installWaypointRefresh, refreshStatus } from "./views/sheet.js";
 import { Header } from "./views/header.js";
 import { CoolingView } from "./views/cooling.js";
 import { monotonicNow } from "./lib/clock.js";
-import { TABS, advanceTab, currentTab, currentView, peekTab, showTab, startRouting } from "./lib/router.js";
+import { advanceTab, currentTab, currentView, peekTab, showTab, startRouting } from "./lib/router.js";
 import { Toast } from "./lib/toast.js";
 import { installHandlebarGestures } from "./lib/handlebar-gestures.js";
 import { installAnnouncements } from "./lib/announce.js";
@@ -29,6 +29,8 @@ import { viewRules } from "./lib/view-rules.js";
 import { destination, openDestination, startDestinationRouting } from "./lib/destination.js";
 import { DestinationPage } from "./views/destination-page.js";
 import { settings, watchSettings } from "./lib/settings.js";
+import { SettingsPage } from "./views/settings-page.js";
+import { TabBar } from "./views/tab-bar.js";
 
 const { button, div } = van.tags;
 
@@ -63,6 +65,7 @@ const VIEWS = {
   all: AllView,
   faults: FaultsView,
   "fault-report": FaultReportView,
+  more: SettingsPage,
 };
 
 // Routing before anything else: startRouting() sets the tab from the URL, so the first
@@ -87,7 +90,7 @@ function App() {
   // hit-transparent, so its position in the tree costs nothing else.
   return div(
     Header(),
-    () => (destination.val ? ReloadPageNotice()() : div()),
+    () => (destination.val || currentTab() === "more" ? ReloadPageNotice()() : div()),
     () => {
       const fault = systemStatus.val?.settingsFault ?? settings.val?.fault;
       if (!destination.val || !fault || (destination.val === "settings" && fault === settings.val?.fault)) return div();
@@ -101,26 +104,8 @@ function App() {
       );
     },
     () => (destination.val ? DestinationPage() : VIEWS[currentView()]()),
-    () => (destination.val ? div() : TabBar()),
-    Sheet(),
+    TabBar(),
     Toast()
-  );
-}
-
-function TabBar() {
-  return div(
-    { class: "tabs" },
-    ...TABS.map(tab =>
-      button(
-        {
-          class: () => `tab${currentTab() === tab.name ? " on" : ""}`,
-          onclick: () => showTab(tab.name),
-        },
-        // The Faults tab carries the warning itself, so a code that appears mid-ride
-        // is visible without giving up any space on the screen you are looking at.
-        tab.name === "faults" ? () => (hasTroubleCodes() ? `⚠ ${tab.label}` : tab.label) : tab.label
-      )
-    )
   );
 }
 
@@ -173,7 +158,7 @@ function autoFocus() {
   // peekTab(), not currentTab(): subscribing this timer to the tab would re-pace it on
   // every tab change.
   for (const tab of viewRules(viewRuleMemory, bike, peekTab())) {
-    if (!destination.rawVal) {
+    if (!destination.rawVal && peekTab() !== "more") {
       showTab(tab);
     }
   }
@@ -206,7 +191,7 @@ function detectHighBeamGesture() {
     flashEdges = [...flashEdges, now].filter(edge => now - edge <= FLASH_WINDOW_MS);
     if (flashEdges.length >= FLASH_COUNT) {
       flashEdges = [];
-      if (!destination.rawVal) {
+      if (!destination.rawVal && peekTab() !== "more") {
         advanceTab();
       }
     }
@@ -258,7 +243,7 @@ van.add(document.body, App());
 // be the second answer to a question that must only have one.
 installHandlebarGestures({
   onNextTab: () => {
-    if (!destination.rawVal) {
+    if (!destination.rawVal && peekTab() !== "more") {
       advanceTab();
     }
   },

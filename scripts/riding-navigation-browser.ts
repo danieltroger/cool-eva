@@ -30,10 +30,9 @@ export async function checkHistoryAndGestures(page: HeadlessPage, file: string) 
   assert.equal(await evaluateOnPage(page, "ridingPreview('lib/arming.js').armed.val"), "");
   await evaluateOnPage(page, "history.back()");
   await waitOnPage(page, "!!document.querySelector('.cooling-view')", "Back after current-parent navigation");
-  await evaluateOnPage(page, "document.querySelector('.header-notice').click()");
-  await waitOnPage(page, "location.search.includes('panel=settings')", "Settings from Cooling");
-  assert.equal(await evaluateOnPage(page, "document.querySelector('.header .menu').textContent"), "‹ Cooling");
-  await evaluateOnPage(page, "document.querySelector('.header .menu').click()");
+  await evaluateOnPage(page, "document.querySelector('.tabs a[href$=\"#more\"]').click()");
+  await waitOnPage(page, "location.hash === '#more'", "Settings from Cooling");
+  await evaluateOnPage(page, "history.back()");
   await waitOnPage(page, "!!document.querySelector('.cooling-view')", "return to the actual subview origin");
   for (const kind of ["high_beam", "btn_cruise_set"]) {
     await openPreview(page, file, "#ride", `gesture-${kind}`);
@@ -56,7 +55,7 @@ export async function checkHistoryAndGestures(page: HeadlessPage, file: string) 
       0,
       "Handlebar arrivals must reset scrolling even between long views."
     );
-    await evaluateOnPage(page, "ridingPreview('lib/router.js').showTab('all')");
+    await evaluateOnPage(page, "ridingPreview('lib/router.js').showView('fault-report')");
     await evaluateOnPage(page, FRAME);
     await evaluateOnPage(page, "window.scrollTo(0,200)");
     assert.ok(
@@ -64,7 +63,7 @@ export async function checkHistoryAndGestures(page: HeadlessPage, file: string) 
       "The scroll-reset case must start from an actually scrolled view."
     );
     await gesture(page, kind);
-    await waitOnPage(page, "location.hash === '#faults'", "gesture All to Faults");
+    await waitOnPage(page, "location.hash === '#ride'", "gesture Fault report to Ride");
     assert.equal(await evaluateOnPage(page, "scrollY"), 0, "Handlebar arrivals must reset scrolling.");
     for (const panel of ["settings", "session", "bike-information", "battery-cooling", "advanced-service"]) {
       const origin = await evaluateOnPage(page, "[ridingPreview('lib/router.js').currentView(), location.hash]");
@@ -74,7 +73,7 @@ export async function checkHistoryAndGestures(page: HeadlessPage, file: string) 
       assert.equal(await evaluateOnPage(page, "ridingPreview('lib/destination.js').destination.val"), panel);
       assert.deepEqual(
         await evaluateOnPage(page, "[ridingPreview('lib/router.js').currentView(), location.hash]"),
-        origin,
+        ["more", "#more"],
         `${kind} must preserve the view and hash beneath ${panel}.`
       );
       await evaluateOnPage(page, "ridingPreview('lib/destination.js').closeDestination()");
@@ -93,6 +92,36 @@ export async function checkHistoryAndGestures(page: HeadlessPage, file: string) 
   await openPreview(page, file, "#hypermile", "legacy-link");
   assert.equal(await evaluateOnPage(page, "ridingPreview('lib/router.js').currentView()"), "hypermile");
   await checkAutomaticMoves(page, file);
+  await checkMoreExclusions(page, file);
+}
+
+async function checkMoreExclusions(page: HeadlessPage, file: string) {
+  for (const view of ["more", "all"]) {
+    await openPreview(page, file, `#${view}`, `parked-${view}`);
+    await nextTick(page);
+    for (const kind of ["high_beam", "btn_cruise_set"]) {
+      await gesture(page, kind);
+      assert.equal(
+        await evaluateOnPage(page, "ridingPreview('lib/router.js').currentView()"),
+        view,
+        "Handlebar gestures cannot interrupt More."
+      );
+    }
+    await evaluateOnPage(page, "pushPatch({fast_dc_contactor:[1,'','charge'],charge_manager_state:[35,'','charge']})");
+    await nextTick(page);
+    assert.equal(
+      await evaluateOnPage(page, "ridingPreview('lib/router.js').currentView()"),
+      view,
+      "Charge-start focus cannot interrupt More."
+    );
+    await evaluateOnPage(page, "document.querySelector('.tabs a[href$=\"#hypermile\"]').click()");
+    await nextTick(page);
+    assert.equal(
+      await evaluateOnPage(page, "location.hash"),
+      "#hypermile",
+      "More consumes automatic edges without replaying them on exit."
+    );
+  }
 }
 
 export async function gesture(page: HeadlessPage, key: string) {

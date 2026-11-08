@@ -40,15 +40,15 @@ try {
 
   startRouting();
   arm("charge-stop");
-  showTab("all");
-  assert.equal(currentTab(), "all");
+  showTab("more");
+  assert.equal(currentTab(), "more");
   assert.equal(armed.val, "", "A tab change must discard its previous action confirmation.");
   showTab("charge");
   assert.equal(armed.val, "", "Returning to Charge must not restore its old confirmation.");
 
   arm("charge-stop");
   advanceTab();
-  assert.equal(currentTab(), "all");
+  assert.equal(currentTab(), "faults");
   assert.equal(armed.val, "", "Gesture navigation must also disarm.");
 
   showView("cooling");
@@ -60,7 +60,7 @@ try {
 
   for (const eventName of ["popstate", "hashchange"]) {
     arm("charge-stop");
-    currentHash = currentTab() === "charge" ? "#all" : "#charge";
+    currentHash = currentTab() === "charge" ? "#more" : "#charge";
     const callbacks = listeners.get(eventName);
     assert.ok(callbacks?.length, `${eventName} must have a route listener.`);
     for (const listener of callbacks) {

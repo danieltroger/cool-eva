@@ -1,6 +1,6 @@
 // @ts-check
 import van from "../vendor/van-1.6.1.js";
-import { hashForView, currentViewLabel } from "./router.js";
+import { hashForView, currentViewLabel, currentTab, currentView, showView } from "./router.js";
 import { SETTINGS_PAGE_TITLES } from "./settings-map.js";
 import { armed } from "./arming.js";
 
@@ -17,6 +17,7 @@ export function openDestination(name, section = "", onReturn) {
     returnToOrigin = onReturn;
   }
   const url = new URL(location.href);
+  url.hash = "#more";
   url.searchParams.set("panel", name);
   if (section) {
     url.searchParams.set("section", section);
@@ -33,6 +34,7 @@ export function openDestination(name, section = "", onReturn) {
   destination.val = name;
   destinationSection.val = section;
   armed.val = "";
+  dispatchEvent(new PopStateEvent("popstate", { state: history.state }));
   window.scrollTo(0, 0);
 }
 
@@ -79,15 +81,17 @@ export function openRidingTab(tab) {
 
 /** Browser history preserves the actual menu origin; see docs/range-and-cells.md. @param {import("./router.js").ViewName} view */
 export function openRidingView(view) {
+  if (!destination.rawVal) {
+    showView(view);
+    return;
+  }
   const backName = destination.rawVal ? destinationName() : currentViewLabel();
   const url = new URL(location.href);
   url.searchParams.delete("panel");
   url.searchParams.delete("section");
   url.hash = hashForView(view);
   history.pushState(
-    view === "cells" || view === "fault-report"
-      ? { coolEvaSubview: true, menuOrigin: destination.rawVal !== "", backName }
-      : null,
+    view === "cells" || view === "fault-report" ? { coolEvaSubview: true, menuOrigin: true, backName } : null,
     "",
     url
   );
@@ -95,6 +99,26 @@ export function openRidingView(view) {
   destinationSection.val = "";
   armed.val = "";
   dispatchEvent(new PopStateEvent("popstate", { state: history.state }));
+}
+
+export function navigationTab() {
+  return destination.val ? "more" : currentTab();
+}
+
+/** @param {import("./router.js").ViewName} view */
+export function ridingUrl(view) {
+  const url = new URL(location.href);
+  url.searchParams.delete("panel");
+  url.searchParams.delete("section");
+  url.hash = hashForView(view);
+  return url.href;
+}
+
+export function moreSection() {
+  const panel = destination.val;
+  if (panel === "session" || panel === "bike-information" || panel === "battery-cooling") return "bike";
+  if (panel === "advanced-service" || (!panel && currentView() === "all")) return "service";
+  return "settings";
 }
 
 /** @param {Destination} [name] @param {string} [section] */

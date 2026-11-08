@@ -105,7 +105,7 @@ export function Sheet() {
  * No banner from here, unlike the handlebar gesture: you are looking at this button
  * when you press it, and the note under it is already in view.
  */
-function WaypointButton() {
+export function WaypointButton() {
   return div(
     { class: "settings-card" },
     OwnerActionRow(
@@ -146,7 +146,7 @@ function WaypointButton() {
 const downloadProgress = van.state("");
 
 /** Downloads the sealed ride log, with its size known before you commit to it. */
-function DownloadButton() {
+export function DownloadButton() {
   return div(
     { class: "settings-card" },
     OwnerActionRow(
@@ -178,12 +178,12 @@ function DownloadButton() {
         () => {
           const current = status.val;
           if (!current) {
-            return "⬇  Download ride log";
+            return "Download all ride logs";
           }
           if (!current.log.enabled) {
             return "Ride recording unavailable — Settings";
           }
-          return `⬇  Download ride log (${bytes(current.log.bytes)})`;
+          return `Download all ride logs (${bytes(current.log.bytes)})`;
         }
       ),
       () => (status.val && !status.val.log.enabled ? "Settings" : "Download")
@@ -273,7 +273,11 @@ export function installWaypointRefresh() {
     // lib/store.js §peek. ⚠️ A sheet left open THROUGH a service restart keeps the previous
     // boot's rows until it is reopened, exactly as the tile above it does and for the same
     // reason — views/trip-stats.js says it there.
-    const decision = shouldRefreshOnWaypoint(memory, counters, sheetOpen.rawVal || destination.rawVal === "session");
+    const decision = shouldRefreshOnWaypoint(
+      memory,
+      counters,
+      sheetOpen.rawVal || destination.rawVal === "session" || destination.rawVal === "bike-information"
+    );
     memory = decision.memory;
     if (decision.refresh) {
       void refreshStatus();

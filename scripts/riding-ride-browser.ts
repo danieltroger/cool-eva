@@ -68,7 +68,7 @@ export async function assertRideContent(page: HeadlessPage) {
       page,
       `[parseFloat(getComputedStyle(document.querySelector('.ride-speed')).fontSize),parseFloat(getComputedStyle(document.querySelector('.ride-kilowatts')).fontSize),parseFloat(getComputedStyle(document.querySelector('.ride-speed .hero-unit')).fontSize),document.querySelector('.ride-trace').getBoundingClientRect().height,document.querySelector('.ride-view').getBoundingClientRect().height]`
     ),
-    [64, 34.4, 17.6, 40, 648]
+    [64, 34.4, 17.6, 40, 596]
   );
   await assertEdge(page, 2, 0);
 }

@@ -8,6 +8,7 @@ import { assertRangeContent, checkRangeCases } from "./riding-range-browser.ts";
 import { assertCellsContent, checkCellsNavigation } from "./riding-cells-browser.ts";
 import { checkBmsBrowser } from "./riding-bms-browser.ts";
 import { checkHistoryAndGestures } from "./riding-navigation-browser.ts";
+import { checkPersistentNavigation } from "./persistent-navigation-browser.ts";
 import { checkCoolingFan } from "./riding-fan-browser.ts";
 import { checkFaultRecovery } from "./riding-fault-browser.ts";
 import { checkPowerWords } from "./riding-power-browser.ts";
@@ -34,6 +35,7 @@ const COVERAGE = {
   all: "fixed-landing",
   faults: "fixed",
   "fault-report": "scrolling",
+  more: "scrolling",
 } as const;
 const COOLING_SIGNALS = [
   "coolant_in",
@@ -131,6 +133,7 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
   await setPageInsets(page, { top: 47, bottom: 34, left: 0, right: 0 });
   await checkInsetCounterexample(page, previewFile);
   await checkHistoryAndGestures(page, previewFile);
+  await checkPersistentNavigation(page, previewFile);
   await checkCellsNavigation(page, previewFile);
   await checkBmsBrowser(page, previewFile);
   await checkChargeNavigation(page, previewFile);
@@ -143,7 +146,7 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
     await checkFaultRecovery(page, previewFile, assertFixedLayout, theme);
   }
   console.log(
-    `  ✓ riding: real PWA/native insets, ${layoutClearance()}px minimum riding-landing clearance, complete content, notices/Connect, history/reload and both gestures`
+    `  ✓ riding: real PWA/native insets, ${layoutClearance()}px minimum riding-landing clearance, complete content, parent/switch header, history/reload and both gestures`
   );
 }
 
@@ -258,112 +261,21 @@ async function assertCoolingContent(page: HeadlessPage) {
 }
 
 async function checkNoticeStates(page: HeadlessPage, file: string, theme: string, hash = "#ride/cooling") {
-  for (const link of ["live", "offline", "connecting", "ble-connect"]) {
-    await openPreview(
-      page,
-      file,
-      hash,
-      `${theme}-${link}-${Date.now()}`,
-      link === "ble-connect" ? "&header-link=ble-connect" : ""
-    );
+  for (const link of ["live", "offline", "connecting"]) {
+    await openPreview(page, file, hash, `${theme}-${link}-${Date.now()}`);
     await evaluateOnPage(
       page,
-      `pausePreviewMessages(${link !== "live"}); ridingPreview('lib/theme.js').themePreference.val=${JSON.stringify(theme)}; ridingPreview('lib/store.js').connection.val=${JSON.stringify(link === "ble-connect" ? "connecting" : link)}`
-    );
-    for (const state of ["setup", "reload", "fault"]) {
-      await evaluateOnPage(
-        page,
-        `(() => {
-        ridingPreview('lib/page-reload.js').pageReloadRequired.val = ${state !== "setup"};
-        const setting = ridingPreview('lib/settings.js').settings;
-        SETTINGS.fault = ${state === "fault" ? JSON.stringify("Synthetic settings fault; open Settings for the complete repair instructions.") : "null"};
-        SETTINGS.ok = !SETTINGS.fault;
-        setting.val = {...setting.rawVal, fault:SETTINGS.fault,ok:SETTINGS.ok};
-      })()`
-      );
-      await evaluateOnPage(page, FRAME);
-      await evaluateOnPage(page, FRAME);
-      const notice = (await evaluateOnPage(
-        page,
-        `(() => {
-        const button=document.querySelector('.header-notice');
-        return {label:button.querySelector('.notice-label').textContent,count:button.querySelector('.notice-count').textContent,name:button.getAttribute('aria-label'),visible:!button.hidden,connect:!!document.querySelector('.ble-connect'),overflow:button.scrollWidth>button.clientWidth};
-      })()`
-      )) as { label: string; count: string; name: string; visible: boolean; connect: boolean; overflow: boolean };
-      assert.equal(notice.label, state === "fault" ? "Fault" : state === "reload" ? "Reload" : "Setup");
-      assert.equal(notice.count, state === "fault" ? "3" : state === "reload" ? "2" : "");
-      assert.equal(notice.visible, true);
-      assert.equal(notice.overflow, false);
-      assert.ok(notice.name.includes("Open Settings"));
-      assert.equal(notice.connect, link === "ble-connect");
-      await assertFixedLayout(page, hash === "#all");
-      if (link === "ble-connect" && state === "reload") {
-        await evaluateOnPage(page, "document.querySelector('.brand-slot').style.maxWidth='44px'");
-        await evaluateOnPage(page, FRAME);
-        await evaluateOnPage(page, FRAME);
-        assert.equal(
-          await evaluateOnPage(page, "document.querySelector('.header-notice').dataset.compact"),
-          "true",
-          "A narrower measured slot must use the icon/count fallback."
-        );
-        assert.equal(
-          await evaluateOnPage(
-            page,
-            "document.querySelector('.header-notice').scrollWidth<=document.querySelector('.header-notice').clientWidth"
-          ),
-          true
-        );
-        await evaluateOnPage(page, "document.querySelector('.brand-slot').style.maxWidth=''");
-        await evaluateOnPage(page, FRAME);
-      }
-    }
-    await evaluateOnPage(page, "document.querySelector('.header-notice').click()");
-    await waitOnPage(
-      page,
-      "location.search.includes('panel=settings') && document.body.innerText.includes('What changed on this Pi')",
-      "full notices on the existing Settings root"
-    );
-    assert.equal(
-      await evaluateOnPage(
-        page,
-        "document.body.innerText.includes('Repair instructions') && document.body.innerText.includes('This dashboard is out of date')"
-      ),
-      true
-    );
-    assert.equal(
-      await evaluateOnPage(page, "document.querySelector('.header .menu').textContent"),
-      `‹ ${ROUTES.find(route => route.hash === hash)?.label}`
-    );
-    await evaluateOnPage(
-      page,
-      "[...document.querySelectorAll('button')].find(button=>button.textContent==='Got it').click(); document.querySelector('.header .menu').click()"
-    );
-    await waitOnPage(page, "!!document.querySelector('.riding-view')", "return after acknowledging setup notes");
-    await evaluateOnPage(
-      page,
-      `(() => {
-      SETTINGS.fault=null; SETTINGS.ok=true;
-      const settings=ridingPreview('lib/settings.js').settings;settings.val={...settings.rawVal,fault:null,ok:true};
-      const system=ridingPreview('lib/store.js').systemStatus;system.val={...system.rawVal,settingsFault:null};
-      ridingPreview('lib/page-reload.js').pageReloadRequired.val=false;
-    })()`
+      `pausePreviewMessages(true); ridingPreview('lib/theme.js').themePreference.val=${JSON.stringify(theme)}; ridingPreview('lib/store.js').connection.val=${JSON.stringify(link)}`
     );
     await evaluateOnPage(page, FRAME);
-    await evaluateOnPage(page, FRAME);
     assert.equal(
-      await evaluateOnPage(
-        page,
-        "document.querySelector('.header-notice').hidden && !document.querySelector('.brand').hidden && document.querySelector('.brand').textContent==='Cool Eva'"
-      ),
-      true
+      await evaluateOnPage(page, "document.querySelector('.app-title .dot').getAttribute('aria-label')"),
+      link
     );
     assert.equal(
-      await evaluateOnPage(
-        page,
-        "document.querySelector('.brand').scrollWidth <= document.querySelector('.brand-slot').clientWidth"
-      ),
-      true,
-      "The restored brand must fit without ellipsis."
+      await evaluateOnPage(page, "document.querySelector('.header button,.header-notice,.can-status-link,.menu')"),
+      null,
+      "The header has only the approved parent, connection dot and top switch."
     );
     await assertFixedLayout(page, hash === "#all");
   }

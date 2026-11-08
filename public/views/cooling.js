@@ -2,7 +2,6 @@
 import van from "../vendor/van-1.6.1.js";
 import { chartTick, valueOf } from "../lib/store.js";
 import { readingStatus } from "../lib/reading-status.js";
-import { SubTabs } from "../lib/sub-tabs.js";
 import { settings } from "../lib/settings.js";
 import { FAN_MODE_CODE, fanDriveState } from "../lib/fan-display.js";
 import * as units from "../lib/units.js";
@@ -13,7 +12,6 @@ const { div, span } = van.tags;
 export function CoolingView() {
   return div(
     { class: "view riding-view cooling-view", "data-view": "cooling" },
-    SubTabs("ride"),
     TemperatureCard(
       "Coolant · inlet / outlet",
       ["coolant_in", "coolant_out"],

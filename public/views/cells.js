@@ -6,7 +6,6 @@ import { freshValue, readingCanColour, readingStatus, statusWord } from "../lib/
 import { cellSnapshot } from "../lib/cell-snapshot.js";
 import { cellVoltageLayout, CELL_COUNT, MODULE_COUNT } from "../lib/cells.js";
 import { barStrip } from "../lib/svg.js";
-import { SubTabs } from "../lib/sub-tabs.js";
 import { ringFor } from "../lib/ring.js";
 import { monotonicNow } from "../lib/clock.js";
 import { sparkline } from "../lib/svg.js";
@@ -17,7 +16,6 @@ const { button, div, h2, span } = van.tags;
 export function CellsView() {
   return div(
     { class: "view cells-view", "data-view": "cells" },
-    SubTabs("hypermile"),
     ...(history.state?.menuOrigin
       ? [
           button(

@@ -28,7 +28,7 @@ export async function checkChargeNavigation(page: HeadlessPage, file: string) {
     );
     await evaluateOnPage(
       page,
-      "ridingPreview('lib/arming.js').arm('charge-stop');[...document.querySelectorAll('.tabs button')].find(button=>button.textContent==='Charge').click()"
+      "ridingPreview('lib/arming.js').arm('charge-stop');[...document.querySelectorAll('.tabs a')].find(button=>button.textContent==='Charge').click()"
     );
     await waitOnPage(
       page,
@@ -39,7 +39,7 @@ export async function checkChargeNavigation(page: HeadlessPage, file: string) {
     for (const kind of ["high_beam", "btn_cruise_set"]) {
       await openPreview(page, file, hash, `${name}-${kind}`, "&charge-scene=warm");
       await gesture(page, kind);
-      await waitOnPage(page, "location.hash==='#all'&&scrollY===0", "both gestures take Charge detail to All");
+      await waitOnPage(page, "location.hash==='#faults'&&scrollY===0", "both gestures take Charge detail to Faults");
     }
     await openPreview(page, file, hash, `${name}-arrival`);
     const tick = Number(await evaluateOnPage(page, "ridingPreview('lib/store.js').chartTick.rawVal"));

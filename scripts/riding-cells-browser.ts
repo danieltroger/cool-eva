@@ -92,7 +92,7 @@ export async function checkCellsNavigation(
   await waitOnPage(page, "!!document.querySelector('.cells-view')", "direct reload preserves Cells");
   await evaluateOnPage(
     page,
-    "window.scrollTo(0,400);[...document.querySelectorAll('.tabs button')].find(button=>button.textContent==='Range').click()"
+    "window.scrollTo(0,400);[...document.querySelectorAll('.tabs a')].find(button=>button.textContent==='Range').click()"
   );
   await waitOnPage(
     page,
@@ -145,8 +145,8 @@ export async function checkCellsNavigation(
     await waitOnPage(page, "location.hash==='#charge'", "both gesture entry points move Cells to Charge");
   }
   await openPreview(page, file, "#ride/cooling", "battery-menu-origin");
-  await evaluateOnPage(page, "document.querySelector('.header .menu').click()");
-  await clickText(page, "Bike information");
+  await evaluateOnPage(page, "document.querySelector('.tabs a[href$=\"#more\"]').click()");
+  await evaluateOnPage(page, "document.querySelector('[data-more=bike]').click()");
   await waitOnPage(page, "location.search.includes('panel=bike-information')", "Bike information origin");
   await clickText(page, "Battery & cooling");
   await waitOnPage(page, "!!document.querySelector('.battery-cooling-page')", "Battery & cooling menu page");
@@ -194,7 +194,7 @@ export async function checkCellsNavigation(
   await openPreview(page, file, "#charge", "charging-cells-entry", "&ride-state=charging");
   await evaluateOnPage(
     page,
-    "[...document.querySelectorAll('.tabs button')].find(button=>button.textContent==='Range').click()"
+    "[...document.querySelectorAll('.tabs a')].find(button=>button.textContent==='Range').click()"
   );
   await waitOnPage(page, "!!document.querySelector('.range-view')", "Range entry during charging");
   await evaluateOnPage(
