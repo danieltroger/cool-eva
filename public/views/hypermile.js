@@ -184,8 +184,7 @@ function EnergyCard() {
       span({ class: "unit" }, () =>
         worstStatus([rangeEnergyKey()]) === "fresh" && remainingWh() !== null ? "kWh" : ""
       )
-    ),
-    div({ class: "sub" }, "Bike estimate")
+    )
   );
 }
 

@@ -54,6 +54,11 @@ export async function assertRangeContent(page: HeadlessPage) {
   assert.equal(content.regen, "55");
   assert.equal(content.energy, "4.8");
   assert.match(content.range, /^\d+$/);
+  const valueTops = (await evaluateOnPage(
+    page,
+    "[...document.querySelectorAll('.range-bottom .value')].map(element=>element.getBoundingClientRect().top)"
+  )) as number[];
+  assert.equal(valueTops[0], valueTops[1], "The approved Energy left and Range at this rate values align.");
   assert.equal(
     await evaluateOnPage(page, "document.querySelector('.range-spread,[data-reading=spread]')"),
     null,
