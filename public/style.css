@@ -57,15 +57,7 @@
   --cold: #38bdf8;
   --cool: #67e8f9; /* the 5-20 °C step between --cold and --good */
 
-  /* The unfilled part of every bar and ring, and the power meter's own grey. Sized by
-     VISIBILITY rather than readability, so it is the one mark not held to the 6:1 floor —
-     but it IS held, by MARK_FLOORS in scripts/check-theme-contrast.ts, because nothing
-     did until 2026-09-08 and a value walked towards --tile passed every check while
-     making the meter invisible.
-     It is also the ONE knob that sets how legible a derate is: the limited stretch is
-     this same grey dashed against the tile showing through, so dash-against-gap IS
-     track-against-tile. Raising it makes the derate clearer and the fill's edge weaker.
-     1.53:1 is where the drive fill still clears its 4:1 floor, at 4.44:1. */
+  /* Chart tracks and the inset power bar; contrast history: docs/ride-power.md. */
   --track: #39465b;
   /* Drive: the meter's fill, and the kW figure beside it. Its own token because drive
      used to be --fg, which drew the loudest thing on the hero in the same ink as the
@@ -113,25 +105,33 @@
 .layout-page,
 .layout-stack,
 .layout-compact-stack,
-.layout-card {
+.layout-card,
+.view.layout-page,
+.view.layout-stack,
+.tile.layout-card {
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
 
 .layout-page,
-.layout-stack {
+.layout-stack,
+.view.layout-page,
+.view.layout-stack {
   gap: var(--space-3);
 }
 
-.layout-page {
+.layout-page,
+.view.layout-page {
   min-height: 0;
   padding: var(--space-3);
   font-size: var(--text-md);
 }
 
 .layout-compact-stack,
-.layout-card {
+.layout-card,
+.tile.layout-card {
+  min-height: 0;
   gap: var(--space-2);
 }
 
@@ -165,11 +165,16 @@
   min-width: 0;
 }
 
-.layout-card {
+.layout-card,
+.tile.layout-card {
   padding: var(--space-3);
   border: 1px solid var(--tile-edge);
   border-radius: var(--radius);
   background: var(--tile);
+}
+
+.layout-card.layout-between {
+  flex-direction: row;
 }
 
 /* ---------- the light palette ----------
@@ -1502,107 +1507,6 @@ body {
   padding-left: 0.15rem;
 }
 
-/* The cooling fan's duty slider. The only range input on the dashboard, and the only
-   control here whose value you set by dragging rather than by typing.
-   ⚠️ 2.75rem of height, which is mostly padding around a 0.35rem track: the thumb is
-   what a gloved finger has to catch, and the default ~16 px one is under half the 44pt
-   target every other control on this sheet clears. The track keeps `.probe-input`'s
-   fill and edge so it reads as a field rather than as decoration. */
-/* The mode toggle and the slider sit on one line, because they are one control: the
-   toggle says who is moving the thumb, and moving the thumb changes the toggle. Two
-   stacked rows read as two unrelated settings, which is what they must not be. */
-.fan-row {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  margin-top: 0.5rem;
-}
-
-/* Sized off .action rather than styled like it: same 3.75rem touch height for a gloved
-   thumb, but it must not stretch — the slider takes the rest of the row. */
-.fan-mode {
-  flex: 0 0 auto;
-  min-height: 3.75rem;
-  padding: 0 0.9rem;
-  background: var(--tile);
-  border: 1px solid var(--tile-edge);
-  border-radius: 0.8rem;
-  box-shadow: inset 3px 0 0 var(--dim);
-  color: var(--fg);
-  font: inherit;
-  font-size: 0.95rem;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-/* Green rather than the slider's amber, and deliberately so: amber on this sheet means
-   "you are about to move something", and automatic is the resting state nobody has to
-   act on. The thumb stays amber because dragging it IS the act. */
-.fan-mode.automatic {
-  border-color: var(--good);
-  box-shadow: inset 3px 0 0 var(--good);
-}
-
-/* The same measured 0.66 as .action:disabled — see the note above that rule. */
-.fan-mode:disabled {
-  opacity: 0.66;
-  cursor: default;
-}
-
-.fan-slider {
-  flex: 1 1 0;
-  min-width: 0;
-  box-sizing: border-box;
-  height: 2.75rem;
-  background: transparent;
-  -webkit-appearance: none;
-  appearance: none;
-  cursor: pointer;
-}
-
-/* ⚠️ The vendor pseudo-elements get one rule EACH and are never grouped in a selector
-   list: a browser that does not know one of the selectors throws the whole rule away, so
-   a combined `::-webkit-… , ::-moz-…` block styles the track in neither engine. */
-.fan-slider::-webkit-slider-runnable-track {
-  height: 0.35rem;
-  border-radius: 0.2rem;
-  background: var(--tile);
-  border: 1px solid var(--tile-edge);
-}
-
-.fan-slider::-moz-range-track {
-  height: 0.35rem;
-  border-radius: 0.2rem;
-  background: var(--tile);
-  border: 1px solid var(--tile-edge);
-}
-
-/* Amber, matching `.action.writes` directly under it: this is the same tier — it moves
-   something on the bike and can be moved straight back. */
-.fan-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 1.9rem;
-  height: 1.9rem;
-  margin-top: -0.85rem;
-  border-radius: 50%;
-  border: 1px solid var(--warn-edge);
-  background: var(--warn);
-}
-
-.fan-slider::-moz-range-thumb {
-  width: 1.9rem;
-  height: 1.9rem;
-  border-radius: 50%;
-  border: 1px solid var(--warn-edge);
-  background: var(--warn);
-}
-
-.fan-slider:disabled {
-  opacity: 0.66;
-  cursor: default;
-}
-
 /* ---------- toast ---------- */
 
 /* The banner a handlebar gesture answers with. Sized and coloured for the worst case
@@ -1873,19 +1777,6 @@ body {
 .riding-view > .span2 {
   grid-column: 1 / -1;
 }
-.cooling-view > .tile {
-  height: 112px;
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-}
-.cooling-view > .cooling-short {
-  height: 96px;
-}
-.cooling-values {
-  white-space: nowrap;
-}
 .sub-tabs {
   display: flex;
   height: 44px;
@@ -1907,91 +1798,143 @@ body {
   color: var(--fg);
   font-weight: 600;
 }
+/* Approved Ride/Cooling cards share the page, stack and row primitives. */
+.ride-view [hidden],
+.cooling-view [hidden] {
+  display: none;
+}
+.ride-view .value,
+.cooling-view .value {
+  margin: 0;
+  font-size: var(--text-value);
+  font-weight: 500;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.ride-view .unit,
+.cooling-view .unit,
+.ride-speed .hero-unit {
+  margin: 0;
+  padding-inline-start: var(--space-1);
+  font-size: var(--text-md);
+  font-weight: 400;
+  color: var(--label);
+}
+.ride-label {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--label);
+  line-height: 1.4;
+}
+.ride-upper {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.ride-sub {
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  color: var(--sub);
+}
 .ride-view > .ride-power {
-  height: 176px;
-  padding: 12px 12px 28px;
-  position: relative;
+  height: calc(var(--space-4) * 14);
   justify-content: space-between;
 }
-.ride-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
+.ride-numbers,
+.ride-speed {
   align-items: baseline;
 }
 .ride-speed {
-  font-size: 64px;
+  font-size: var(--text-hero);
   line-height: 1;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.ride-kilowatts {
-  margin: 0;
+.ride-speed .hero-unit {
+  padding: 0;
+}
+.ride-kilowatts,
+.cooling-values,
+.ride-temperature .value {
   white-space: nowrap;
 }
-.ride-statusline {
-  align-items: center;
-  min-height: 28px;
-}
-.ride-power-status {
-  flex: 1;
-  min-width: 0;
-  font-size: 12.48px;
-}
 .ride-soc {
-  font-size: 16px;
+  font-size: var(--text-lg);
   font-weight: 600;
   white-space: nowrap;
 }
 .power-edge {
-  position: absolute;
-  left: 0;
-  bottom: 0;
   display: block;
-  margin: 0;
-  height: 20px;
+  width: 100%;
+  height: var(--space-5);
+  flex: none;
+  overflow: visible;
 }
-.power-band {
-  border-radius: 0 0 13px 13px;
-  /* Nested SVGs need an explicit clip; ceiling ticks stay outside it. */
-  clip-path: inset(0 round 0 0 13px 13px);
+.ride-view > .ride-temperature {
+  height: calc(var(--space-5) * 3);
 }
 .ride-view > .ride-delta {
-  height: 144px;
-  padding: 10px 12px;
+  height: calc(var(--space-4) * 10);
   justify-content: space-between;
 }
 .ride-view > .ride-heat {
-  height: 132px;
-  padding: 10px 12px;
+  height: calc(var(--space-4) * 7);
   justify-content: space-between;
-}
-.ride-delta .value,
-.ride-heat .value {
-  margin: 0;
 }
 .ride-trace,
 .ride-trace .spark {
-  height: 40px;
-  margin: 0;
   display: block;
   width: 100%;
-}
-.ride-pair {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  height: 104px;
-}
-.ride-temperature {
-  height: 104px;
-  padding: 8px;
-  justify-content: space-between;
-}
-.ride-temperature .value {
+  height: calc(var(--space-5) * 2);
   margin: 0;
-  white-space: nowrap;
+}
+.ride-chart-label {
+  fill: var(--sub);
+  font-size: var(--text-xs);
+}
+.ride-heat-meter {
+  height: var(--space-2);
+  border-radius: var(--space-1);
+  background: var(--track);
+  overflow: hidden;
+}
+.ride-heat-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+.cooling-top .value {
+  font-size: var(--text-lg);
+}
+.cooling-fan {
+  gap: var(--space-3);
+}
+.fan-choices > * {
+  flex: 1;
+}
+.control-button {
+  min-height: var(--size-touch);
+  min-width: var(--size-touch);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--tile-edge);
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+.control-button[aria-pressed="true"] {
+  border-color: var(--good);
+  color: var(--good);
+}
+.control-button:disabled {
+  opacity: 0.5;
+}
+.cooling-fan .fan-slider {
+  width: 100%;
+  height: var(--size-touch);
+  margin: 0;
+  accent-color: var(--good);
 }
 
 .range-view > .range-margin {

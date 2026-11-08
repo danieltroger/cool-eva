@@ -40,8 +40,6 @@ const COVERAGE = {
 const COOLING_SIGNALS = [
   "coolant_in",
   "coolant_out",
-  "batt_temp_lo",
-  "batt_temp_hi",
   "motor_temp_c",
   "bike_coolant_temp",
   "ambient_temp",
@@ -198,7 +196,7 @@ async function assertPopulatedFixture(page: HeadlessPage) {
     page,
     `(() => {
     const store = ridingPreview("lib/store.js");
-    const required = ${JSON.stringify([...COOLING_SIGNALS, "fan_duty_pct", "fan_driver_enabled", "fan_auto_mode", "batt_temp_lo_vcu", "batt_temp_hi_vcu", "cell_cutoff_mv"])};
+    const required = ${JSON.stringify([...COOLING_SIGNALS, "batt_temp_lo", "batt_temp_hi", "fan_duty_pct", "fan_driver_enabled", "fan_auto_mode", "batt_temp_lo_vcu", "batt_temp_hi_vcu", "cell_cutoff_mv"])};
     return {missing:required.filter(key => store.valueOf(key) === null), cells:store.knownKeys.val.filter(key => /^lmu[0-9]+_cell[0-9]+_mv$/.test(key)).length, installed:ridingPreview("lib/settings.js").settings.val?.active.coolantProbesEnabled};
   })()`
   );
@@ -250,11 +248,11 @@ async function assertCoolingContent(page: HeadlessPage) {
   );
   assert.deepEqual(
     values,
-    ["36.5", "41.2", "38", "41", "65", "67", "17", "68"],
+    ["36.5", "41.2", "65", "67", "17", "68"],
     "Required readings must render; hidden tiles cannot buy a short screen."
   );
   assert.equal(
-    await evaluateOnPage(page, "document.querySelector('.cooling-view').innerText.includes('Automatic · driving')"),
+    await evaluateOnPage(page, "document.querySelector('.cooling-view').innerText.includes('Automatic control')"),
     true,
     "Steady on-demand fan commands must stay available on a live link."
   );

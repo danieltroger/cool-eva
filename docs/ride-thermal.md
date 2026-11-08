@@ -1,5 +1,17 @@
 # Ride thermal readings
 
+The approved allocation is battery low/high on Ride, followed by coolant ΔT and resistance heat / loop removal. Motor/OBD, individual coolant probes and outside air have one home on Cooling. Ride's battery row is 72 px, ΔT card 160 px and heat card 112 px. Normal captions are the sketch's short labels; derivations and qualifications live here.
+
+`public/lib/ride-thermal.js` keeps independent validity for both estimates. Outlet minus inlet is available only with enabled probes and two fresh, accepted readings. I²R uses accepted pack current and the existing resistance estimate. Probe failure does not blank independent resistance heat. Missing, stale and fault states remain explicit and never acquire numeric units.
+
+The ΔT trace still joins probes by time over ten minutes. Its 48 px plot always includes a visible labelled zero line, including for negative and flat traces. Axis scaling includes zero and preserves the trace's sign. Timed chart bindings use `peek()` and sampled status/resistance/settings, rather than subscribing to sensor frame rates. Temperature differences convert to Fahrenheit by scale only.
+
+The 8 px heat meter shows resistance heat divided by loop removal, capped only at the finite meter's end. Numeric readings retain their actual values. If positive heat meets zero or negative removal the meter is full; if neither estimate can establish a comparison the fill is absent. Removal lower than heat uses fault ink. Loop removal is ΔT times the existing rated-flow constant; it is an estimate, not a measured flow rate. Resistance remains the existing measured/modelled estimate. Hardware disabled in active Settings hides the corresponding card and leaves loop removal unavailable.
+
+## Previous allocation and preserved findings
+
+The following records describe the earlier UI and retain its measured provenance. The allocation and card geometry below are historical; the current allocation is above.
+
 Ride keeps measured outlet-minus-inlet ΔT, its time-aligned ten-minute trace, and the resistance-heat / loop-removal estimates. Rejected, missing or stale probe inputs suppress the derived value and trace, while valid independent heat inputs remain visible. Resistance provenance and rated pump flow qualify the estimates.
 
 The individual probe values and ambient reading live on Cooling. Battery min/max and motor/OBD remain on Ride. The approved card heights are 144, 132 and 104 px for the lower pair.

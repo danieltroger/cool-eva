@@ -1,117 +1,32 @@
 // @ts-check
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, valueOf } from "../lib/store.js";
-import { readingStatus } from "../lib/reading-status.js";
 import { settings } from "../lib/settings.js";
-import { FAN_MODE_CODE, fanDriveState } from "../lib/fan-display.js";
-import * as units from "../lib/units.js";
-import * as colors from "../lib/colors.js";
+import { TemperatureReadings } from "./temperature-readings.js";
+import { FanControl } from "./fan.js";
 
 const { div, span } = van.tags;
 
 export function CoolingView() {
   return div(
-    { class: "view riding-view cooling-view", "data-view": "cooling" },
-    TemperatureCard(
-      "Coolant · inlet / outlet",
-      ["coolant_in", "coolant_out"],
-      () => (settings.val?.active.coolantProbesEnabled === false ? "Coolant probes off" : "Two coolant probes"),
-      1
-    ),
-    TemperatureCard("Battery · min / max", ["batt_temp_lo", "batt_temp_hi"], "Across the battery"),
-    TemperatureCard("Motor / OBD", ["motor_temp_c", "bike_coolant_temp"], "Separate temperature sensors"),
-    TemperatureCard("Ambient", ["ambient_temp"], "Outside air", 0, "cooling-short"),
+    { class: "view riding-view cooling-view layout-page layout-stack", "data-view": "cooling" },
     div(
-      { class: "tile cooling-short" },
-      div({ class: "label" }, "Cooling fan · commanded"),
-      div({ class: "value" }, Reading("fan_target_pct", 0, false), Unit("fan_target_pct", "%")),
-      FanStatus()
-    )
-  );
-}
-
-function FanStatus() {
-  return div({ class: "sub", "data-fan-status": "" }, () => {
-    chartTick.val;
-    if (settings.val?.active.radiatorFanEnabled === false) return "Not installed";
-    const signals = ["fan_auto_mode", "fan_driver_enabled", "fan_duty_pct", "fan_target_pct"];
-    if (signals.some(key => readingStatus(key) === "fault")) {
-      return span({ style: `color:${colors.BAD}` }, "Fan status fault");
-    }
-    if (signals.some(key => readingStatus(key) !== "fresh")) {
-      return "Fan status unavailable";
-    }
-    const mode = valueOf("fan_auto_mode");
-    const modeText =
-      mode === FAN_MODE_CODE.AUTOMATIC
-        ? "Automatic"
-        : mode === FAN_MODE_CODE.FUN
-          ? "Fun"
-          : mode === FAN_MODE_CODE.MANUAL
-            ? "Manual"
-            : "Mode unavailable";
-    const driveState = fanDriveState(valueOf("fan_duty_pct"), valueOf("fan_target_pct"), valueOf("fan_driver_enabled"));
-    if (driveState === "braking") {
-      return span({ style: `color:${colors.BAD}` }, "Braking fault · cut fan power");
-    }
-    if (driveState === "stop-failed") {
-      return span({ style: `color:${colors.BAD}` }, "Stop failed · still driving");
-    }
-    if (driveState === "unreported") return "Fan status unavailable";
-    if (driveState === "standby") return `${modeText} · Standby`;
-    if (driveState === "kick-start") return `${modeText} · kick-starting`;
-    return `${modeText} · driving`;
-  });
-}
-
-/** @param {string} label @param {string[]} keys @param {string | (() => string)} caption @param {number} [decimals] @param {string} [extraClass] */
-function TemperatureCard(label, keys, caption, decimals = 0, extraClass = "") {
-  return div(
-    { class: `tile ${extraClass}` },
-    div({ class: "label" }, label),
-    div(
-      { class: "value cooling-values" },
-      ...keys.flatMap((key, index) => [
-        index ? span(" / ") : span(),
-        Reading(key, decimals, true),
-        Unit(key, units.tempUnit, keys.slice(index + 1)),
-      ])
+      { class: "layout-grid-2 cooling-top" },
+      div(
+        { class: "tile layout-card cooling-probes", hidden: () => settings.val?.active.coolantProbesEnabled === false },
+        span({ class: "ride-label" }, "Coolant in / out"),
+        div({ class: "value cooling-values" }, ...TemperatureReadings(["coolant_in", "coolant_out"], 1))
+      ),
+      div(
+        { class: "tile layout-card" },
+        span({ class: "ride-label" }, "Motor / OBD"),
+        div({ class: "value cooling-values" }, ...TemperatureReadings(["motor_temp_c", "bike_coolant_temp"]))
+      )
     ),
-    div({ class: "sub" }, caption)
+    div(
+      { class: "tile layout-card layout-between cooling-outside" },
+      span({ class: "ride-label" }, "Outside air"),
+      div({ class: "value" }, ...TemperatureReadings(["ambient_temp"]))
+    ),
+    FanControl()
   );
-}
-
-/** @param {string} key @param {number} decimals @param {boolean} temperature */
-function Reading(key, decimals, temperature) {
-  return span(
-    {
-      "data-signal": key,
-      style: () =>
-        `color:${readingStatus(key) === "fault" ? colors.BAD : readingStatus(key) !== "fresh" ? colors.MUTED : temperature ? colors.temperature(valueOf(key)) : colors.CALM}`,
-    },
-    () => {
-      chartTick.val;
-      if (
-        (key.startsWith("coolant_") && settings.val?.active.coolantProbesEnabled === false) ||
-        (key.startsWith("fan_") && settings.val?.active.radiatorFanEnabled === false)
-      ) {
-        return "—";
-      }
-      const status = readingStatus(key);
-      if (status !== "fresh") return status === "missing" ? "—" : status;
-      const reading = valueOf(key) ?? 0;
-      return (temperature ? units.temp(reading) : reading).toFixed(decimals);
-    }
-  );
-}
-
-/** @param {string} key @param {string | (() => string)} unit @param {string[]} [following] */
-function Unit(key, unit, following = []) {
-  // An empty text anchor lets the unit appear when the initial snapshot or a recovery arrives.
-  return () => {
-    if (readingStatus(key) !== "fresh" || following.some(next => readingStatus(next) === "fresh")) return "";
-    if (key.startsWith("coolant_") && settings.val?.active.coolantProbesEnabled === false) return "";
-    if (key.startsWith("fan_") && settings.val?.active.radiatorFanEnabled === false) return "";
-    return span({ class: "unit" }, typeof unit === "function" ? unit() : unit);
-  };
 }

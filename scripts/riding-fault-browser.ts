@@ -116,7 +116,7 @@ export async function checkFaultRecovery(
     );
     await assertNumericUnits(page, scenario.hash);
     if (scenario.key === "fan_target_pct") {
-      await assertReading(page, "[data-fan-status]", "Automatic · driving", "FanStatus must recover too");
+      await assertReading(page, "[data-fan-status]", "Automatic control", "FanStatus must recover too");
     }
     assert.equal(
       await evaluateOnPage(page, `!!ridingPreview('lib/store.js').faultState(${JSON.stringify(scenario.key)}).val`),
@@ -189,7 +189,7 @@ async function assertNumericUnits(page: HeadlessPage, hash: string) {
         ? "[...document.querySelectorAll('.ride-temperature .unit')].map(element=>element.textContent)"
         : "[...document.querySelectorAll('.cooling-view .unit')].map(element=>element.textContent)"
     ),
-    hash === "#ride" ? ["°C", "°C"] : ["°C", "°C", "°C", "°C", "%"],
+    hash === "#ride" ? ["°C"] : ["°C", "°C", "°C", "%"],
     "Numeric readings must render their units after the initial snapshot and fault recovery."
   );
 }
