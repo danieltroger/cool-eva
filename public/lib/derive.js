@@ -68,10 +68,11 @@ export function coolantDelta() {
  * the zero over the good value behind it and the screen says "0.0 kWh left" on a pack
  * that has 4.8 kWh in it. Every fallback below goes through here.
  * @param {string} key
+ * @param {(key:string)=>number|null} [read]
  * @returns {number | null}
  */
-function positiveOrNull(key) {
-  const value = valueOf(key);
+function positiveOrNull(key, read = valueOf) {
+  const value = read(key);
   return value != null && value > 0 ? value : null;
 }
 
@@ -205,33 +206,28 @@ export function restingHeadroomMv() {
 /**
  * Energy the pack says it has left, preferring the 1 Wh field from the extended
  * config over the coarser VCU one.
+ * @param {(key:string)=>number|null} [read]
  * @returns {number | null}
  */
-export function remainingWh() {
-  return positiveOrNull("bms_remaining_energy_wh") ?? positiveOrNull("residual_energy_wh");
+export function remainingWh(read = valueOf) {
+  return positiveOrNull("bms_remaining_energy_wh", read) ?? positiveOrNull("residual_energy_wh", read);
 }
 
 /**
- * Wh/km over the last few minutes: pack power integrated over time, against distance
- * actually covered.
- *
- * The energy term is INTEGRATED from `pack_kw` rather than differenced from a
- * remaining-energy counter, which is what the first version did and why the readout kept
- * going blank mid-ride. Returns a state rather than a bare number, because "nothing to
- * show yet" and "you are net regenerating" are different things and a descent must not
- * be reported as waiting for you to start moving. Measurements, and why the bike's own
- * average is not used: docs/dashboard-decisions.md §"Wh/km".
- * @param {number} now monotonic, from lib/clock.js — the rings are keyed on it
+ * Integrated pack power against the distance window, including waiting/regen states.
+ * Model constraints and retained findings: docs/range-and-cells.md#sampled-range-estimate.
+ * @param {number} now monotonic, from lib/clock.js
+ * @param {(key:string)=>number|null} [read]
  * @returns {{ state: "measured", whPerKm: number, km: number }
  *          | { state: "regenerating", km: number }
  *          | { state: "waiting" }}
  */
-export function rollingConsumption(now) {
+export function rollingConsumption(now, read = valueOf) {
   const power = ringFor("pack_kw").since(ROLLING_WINDOW_MS, now);
   // 0x104's odometer in preference to the hub's: it is on the CAN bus, so it is
   // there whenever the bike is awake, while the Bluetooth one needs the hub link to
   // be up. Both are logged separately on purpose, so this picks rather than merges.
-  const distanceKey = positiveOrNull("odometer_can_km") != null ? "odometer_can_km" : "odometer_km";
+  const distanceKey = positiveOrNull("odometer_can_km", read) != null ? "odometer_can_km" : "odometer_km";
   const distance = ringFor(distanceKey).since(ROLLING_WINDOW_MS, now);
   if (power.values.length < 2 || distance.values.length < 2) {
     return { state: "waiting" };
@@ -324,11 +320,12 @@ export function bikeConsumptionWhPerKm(now) {
  * Range left at the rate you have actually been riding, rather than at whatever
  * the bike's estimator assumes.
  * @param {number} now monotonic, from lib/clock.js
+ * @param {(key:string)=>number|null} [read]
  * @returns {number | null}
  */
-export function rollingRangeKm(now) {
-  const consumption = rollingConsumption(now);
-  const energy = remainingWh();
+export function rollingRangeKm(now, read = valueOf) {
+  const consumption = rollingConsumption(now, read);
+  const energy = remainingWh(read);
   if (consumption.state !== "measured" || energy == null) {
     return null;
   }

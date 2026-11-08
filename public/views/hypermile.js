@@ -1,7 +1,7 @@
 // @ts-check
 // Reading meanings, layout budget and preserved findings: docs/range-and-cells.md.
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, valueOf } from "../lib/store.js";
+import { chartTick, peek } from "../lib/store.js";
 import { readingStatus, worstStatus, statusWord, freshValue } from "../lib/reading-status.js";
 import { REGEN_CEILING_A, rangeDistanceKey, rangeEnergyKey } from "../lib/range-readings.js";
 import {
@@ -34,7 +34,7 @@ export function HypermileView() {
       AllowanceCard("Regen available", "allowed_regen_a", REGEN_CEILING_A)
     ),
     ConsumptionCard(),
-    div({ class: "range-pair range-bottom" }, EnergyCard(), SpreadCard())
+    div({ class: "range-pair range-bottom" }, EnergyCard(), EstimatedRangeCard())
   );
 }
 
@@ -141,7 +141,7 @@ function ConsumptionCard() {
         chartTick.val;
         const status = worstStatus(["pack_kw", rangeDistanceKey()]);
         if (status !== "fresh") return statusWord(status);
-        const rolling = rollingConsumption(monotonicNow());
+        const rolling = rollingConsumption(monotonicNow(), peek);
         return rolling.state === "measured"
           ? units.efficiency(rolling.whPerKm).toFixed(0)
           : rolling.state === "regenerating"
@@ -151,7 +151,7 @@ function ConsumptionCard() {
       span({ class: "unit" }, () => {
         chartTick.val;
         return worstStatus(["pack_kw", rangeDistanceKey()]) === "fresh" &&
-          rollingConsumption(monotonicNow()).state === "measured"
+          rollingConsumption(monotonicNow(), peek).state === "measured"
           ? units.efficiencyUnit()
           : "";
       })
@@ -161,14 +161,11 @@ function ConsumptionCard() {
       const status = worstStatus(["pack_kw", rangeDistanceKey()]);
       if (status !== "fresh") return `Consumption ${statusWord(status)} · last 5 min`;
       const now = monotonicNow();
-      const rolling = rollingConsumption(now);
+      const rolling = rollingConsumption(now, peek);
       if (rolling.state === "waiting") return "Needs about 200 m of riding · last 5 min";
       const horizon = `Last ${units.distance(rolling.km).toFixed(1)} ${units.distanceUnit()}`;
       if (rolling.state === "regenerating") return `${horizon} · putting charge back`;
-      const range = worstStatus([rangeEnergyKey()]) === "fresh" ? rollingRangeKm(now) : null;
-      return range === null
-        ? `${horizon} · range unavailable`
-        : `${horizon} · about ${Math.round(units.distance(range))} ${units.distanceUnit()} left at this rate`;
+      return horizon;
     })
   );
 }
@@ -192,25 +189,39 @@ function EnergyCard() {
   );
 }
 
-function SpreadCard() {
+function EstimatedRangeCard() {
   return div(
-    { class: "tile range-spread" },
-    div({ class: "label" }, "Cell spread"),
+    { class: "tile range-estimate" },
+    div({ class: "label" }, "Range at this rate"),
     div(
       {
         class: "value",
-        style: () =>
-          `color:${readingStatus("cell_spread_mv") === "fault" ? colors.BAD : colors.spread(freshValue("cell_spread_mv"))}`,
+        style: () => {
+          chartTick.val;
+          const estimate = rangeEstimate();
+          return `color:${estimate.status === "fault" ? colors.BAD : estimate.kilometres === null ? colors.MUTED : colors.CALM}`;
+        },
       },
-      span({ "data-reading": "spread" }, () =>
-        freshValue("cell_spread_mv") === null
-          ? statusWord(readingStatus("cell_spread_mv"))
-          : String(Math.round(valueOf("cell_spread_mv") ?? 0))
-      ),
-      span({ class: "unit" }, () => (freshValue("cell_spread_mv") === null ? "" : "mV"))
-    ),
-    div({ class: "sub" }, "Best − weakest")
+      span({ "data-reading": "range-estimate" }, () => {
+        chartTick.val;
+        const estimate = rangeEstimate();
+        return estimate.status !== "fresh"
+          ? statusWord(estimate.status)
+          : estimate.kilometres === null
+            ? "—"
+            : String(Math.round(units.distance(estimate.kilometres)));
+      }),
+      span({ class: "unit" }, () => {
+        chartTick.val;
+        return rangeEstimate().kilometres === null ? "" : units.distanceUnit();
+      })
+    )
   );
+}
+
+function rangeEstimate() {
+  const status = worstStatus(["pack_kw", rangeDistanceKey(), rangeEnergyKey(true)], true);
+  return { status, kilometres: status === "fresh" ? rollingRangeKm(monotonicNow(), peek) : null };
 }
 
 /** @param {"allowed_discharge_a"|"allowed_regen_a"} key @param {number} ceiling */

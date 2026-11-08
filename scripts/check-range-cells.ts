@@ -1,3 +1,4 @@
+import { remainingWh, rollingConsumption, rollingRangeKm } from "../public/lib/derive.js";
 import { worstStatus } from "../public/lib/reading-status.js";
 import assert from "node:assert/strict";
 import { cellVoltageLayout, CELL_COUNT } from "../public/lib/cells.js";
@@ -101,4 +102,24 @@ assert.equal(worstStatus(["allowed_discharge_a"]), "fault");
 assert.equal(freshValue("allowed_discharge_a"), null, "A rejected allowance cannot display the last plausible zero.");
 console.log(
   "✓ All 81 physical slots, pack/module ordering, current BMS summaries, complete/missing/stale/fault and balanced cells"
+);
+
+const sampledKeys: string[] = [];
+const sampledRead = (key: string) => {
+  sampledKeys.push(key);
+  return key === "bms_remaining_energy_wh" ? 4800 : key === "odometer_can_km" ? 40000 : null;
+};
+assert.equal(remainingWh(sampledRead), 4800);
+assert.equal(
+  remainingWh(key => (key === "residual_energy_wh" ? 2000 : null)),
+  2000
+);
+sampledKeys.length = 0;
+assert.equal(rollingConsumption(1_000_000, sampledRead).state, "waiting");
+assert.ok(sampledKeys.includes("odometer_can_km"));
+sampledKeys.length = 0;
+assert.equal(rollingRangeKm(1_000_000, sampledRead), null);
+assert.ok(
+  sampledKeys.includes("odometer_can_km") && sampledKeys.includes("bms_remaining_energy_wh"),
+  "Range sampling propagates the caller's reader through both operands."
 );

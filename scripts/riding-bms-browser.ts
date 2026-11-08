@@ -7,40 +7,45 @@ export async function checkBmsBrowser(page: HeadlessPage, file: string) {
     await openPreview(page, file, "#hypermile/cells", `bms-held-${theme}`);
     await evaluateOnPage(page, `ridingPreview('lib/theme.js').themePreference.val=${JSON.stringify(theme)}`);
     await applyHeldBmsFixture(page);
+    await evaluateOnPage(
+      page,
+      "document.querySelector('[data-map-mode=balance]').click();document.querySelector('[data-position=\"4\"]').click()"
+    );
+    await evaluateOnPage(page, FRAME);
     assert.equal(
-      await evaluateOnPage(page, "document.querySelector('[data-cell-count]').textContent"),
-      "81 of 81 fresh"
+      await evaluateOnPage(page, "document.querySelector('[data-cell-description]').textContent"),
+      "M1 · L1 C4 · 3.000 V"
     );
     assert.equal(
-      await evaluateOnPage(page, "document.querySelector('[data-cell-key=lmu1_cell4_mv] .cell-number').textContent"),
-      "3000mV"
-    );
-    assert.deepEqual(
       await evaluateOnPage(
         page,
-        "[...document.querySelectorAll('[data-cell-extremes],[data-weakest],[data-strongest]')].map(element=>element.textContent)"
+        "document.querySelector('[data-position=\"4\"]').style.getPropertyValue('--cell-color')"
       ),
-      ["3280 – 3320 mV · observed span 40 mV", "Weakest BMS index 7", "Strongest BMS index 19"]
-    );
-    assert.equal(
-      await evaluateOnPage(page, "document.querySelector('.strip [data-cell=lmu1_cell4_mv]').style.fill"),
       "var(--sub)",
-      "Old held bars draw with neutral ink."
+      "Old held readings keep neutral map ink."
     );
     assert.equal(
-      await evaluateOnPage(page, "document.querySelector('[data-cell-key=lmu1_cell4_mv] .cell-number').style.color"),
-      "var(--sub)",
-      "Old held numbers use the same provisional colour rule as bars."
+      await evaluateOnPage(page, "document.querySelector('[data-cell-extra]').textContent.includes('below best')"),
+      false
     );
     assert.equal(
-      await evaluateOnPage(page, "document.querySelector('[data-cell-key=lmu1_cell1_mv] .cell-number').style.color"),
-      "var(--fg)",
-      "Current cell numbers retain their current colour."
+      await evaluateOnPage(page, "document.querySelector('[data-spread-now]').textContent"),
+      "40mV",
+      "The current BMS summary stays independent of held cell values."
+    );
+    await evaluateOnPage(page, "document.querySelector('[data-position=\"1\"]').click()");
+    await evaluateOnPage(page, FRAME);
+    assert.equal(
+      await evaluateOnPage(page, "document.querySelector('[data-cell-description]').textContent"),
+      "M1 · L1 C1 · 3.405 V"
     );
     assert.equal(
-      await evaluateOnPage(page, "document.querySelector('.strip [data-cell=lmu1_cell1_mv]').style.fill"),
-      "var(--good)",
-      "A current cell above the BMS maximum has no gap."
+      await evaluateOnPage(
+        page,
+        "document.querySelector('[data-position=\"1\"]').style.getPropertyValue('--cell-color')"
+      ),
+      "color-mix(in srgb,var(--warn) 0%,var(--good))",
+      "A current cell above the BMS maximum has zero relative gap."
     );
     await evaluateOnPage(page, "ridingPreview('lib/destination.js').openDestination('battery-cooling')");
     await waitOnPage(page, "!!document.querySelector('.battery-cooling-page')", "Battery & cooling module grid");

@@ -2,11 +2,10 @@
 // The snapshot stays above the parked raw grid and its filter: docs/fault-report.md.
 import van from "../vendor/van-1.6.1.js";
 import { freshValue, readingStatus, statusWord } from "../lib/reading-status.js";
-import { openDestination } from "../lib/destination.js";
 import * as colors from "../lib/colors.js";
 import * as units from "../lib/units.js";
 
-const { button, div, span } = van.tags;
+const { div, span } = van.tags;
 
 /** @param {HTMLElement} filterControl */
 export function AllLanding(filterControl) {
@@ -29,11 +28,7 @@ export function AllLanding(filterControl) {
       SnapshotReading("allowed_discharge_a", "allowed_discharge_a", "Drive current limit")
     ),
     filterControl,
-    div(
-      { class: "all-history-row" },
-      div({ class: "sub" }, "Raw signals below"),
-      button({ class: "settings-button", onclick: () => openDestination("battery-cooling") }, "Battery history →")
-    )
+    div({ class: "all-history-row" }, div({ class: "sub" }, "Raw signals below"))
   );
 }
 

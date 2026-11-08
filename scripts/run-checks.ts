@@ -362,6 +362,11 @@ const CHECKS: SelfCheck[] = [
       "dash's own measured 4.2-10.1 ms",
   },
   {
+    script: "scripts/check-cell-map.ts",
+    covers:
+      "nine physical modules across eleven LMUs, exact dashed boundaries, stable series selection, missing sensors, bounded faults, old-sample ages and neutral reference-less colour",
+  },
+  {
     script: "scripts/check-charge-curve.ts",
     covers:
       "exact observed charge-current interpolation/cap, both reported extremes, adaptive/fallback framing, truthful command replies and shared status priority",

@@ -12,8 +12,13 @@ export async function assertAllContent(page: HeadlessPage, includeRaw = true) {
   await assertRendered(page, [
     ...SNAPSHOT.map(key => `[data-snapshot="${key}"] .value`),
     ".all-landing input[aria-label='Filter raw signals']",
-    ".all-history-row button",
+    ".all-history-row .sub",
   ]);
+  assert.equal(
+    await evaluateOnPage(page, "document.querySelector('.all-history-row button,.all-history-row a')"),
+    null,
+    "All has no Battery history CTA."
+  );
   assert.deepEqual(
     await evaluateOnPage(
       page,
@@ -219,8 +224,11 @@ export async function checkFaultsAllCases(page: HeadlessPage, file: string, them
     "fault"
   );
   await assertFixedLayout(page, true);
-  await evaluateOnPage(page, "document.querySelector('.all-history-row button').click()");
-  await waitOnPage(page, "!!document.querySelector('.battery-cooling-page')", "the real Battery history destination");
+  assert.equal(
+    await evaluateOnPage(page, "document.querySelector('.all-history-row button,.all-history-row a')"),
+    null,
+    "The retired Battery history CTA is gone."
+  );
 }
 
 export async function checkFaultReportNavigation(page: HeadlessPage, file: string) {

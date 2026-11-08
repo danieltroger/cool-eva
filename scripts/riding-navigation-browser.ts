@@ -42,12 +42,9 @@ export async function checkHistoryAndGestures(page: HeadlessPage, file: string) 
     await waitOnPage(page, "location.hash === '#hypermile'", "gesture Cooling to Range");
     assert.equal(await evaluateOnPage(page, "scrollY"), 0, "Range is a fixed riding landing.");
     await evaluateOnPage(page, "document.querySelector('[data-view=cells]').click()");
-    await waitOnPage(page, "!!document.querySelector('.cells-view')", "scrolling Cells subview");
+    await waitOnPage(page, "!!document.querySelector('.cells-view')", "fixed Cells map");
     await evaluateOnPage(page, "window.scrollTo(0,200)");
-    assert.ok(
-      Number(await evaluateOnPage(page, "scrollY")) > 0,
-      "Cells must actually scroll before the arrival-reset probe."
-    );
+    assert.equal(await evaluateOnPage(page, "scrollY"), 0, "The approved Cells map fits one screen.");
     await gesture(page, kind);
     await waitOnPage(page, "location.hash === '#charge'", "gesture Cells to Charge");
     assert.equal(

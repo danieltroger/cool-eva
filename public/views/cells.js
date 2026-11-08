@@ -1,148 +1,261 @@
 // @ts-check
-// Strip scaling, slot order and browser-history origins: docs/range-and-cells.md.
+// Approved option C and live/held selection policy: docs/cell-module-map.md.
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, peek } from "../lib/store.js";
-import { freshValue, readingCanColour, readingStatus, statusWord } from "../lib/reading-status.js";
-import { cellSnapshot } from "../lib/cell-snapshot.js";
-import { cellVoltageLayout, CELL_COUNT, MODULE_COUNT } from "../lib/cells.js";
-import { barStrip } from "../lib/svg.js";
-import { ringFor } from "../lib/ring.js";
-import { monotonicNow } from "../lib/clock.js";
-import { sparkline } from "../lib/svg.js";
+import { chartTick, ageOf } from "../lib/store.js";
+import { freshValue, readingStatus, statusWord } from "../lib/reading-status.js";
+import {
+  PACK_MODULE_GRID,
+  packCellLayout,
+  cellLmuBoundaries,
+  lowestModuleCell,
+  stepCellPosition,
+} from "../lib/pack-layout.js";
+import { cellMapReading, cellMapColour, cellMapAge, cellAgeText } from "../lib/cell-map.js";
+import { moduleTemperatureKey } from "../lib/cells.js";
+import { TemperatureReadings } from "./temperature-readings.js";
+import * as units from "../lib/units.js";
 import * as colors from "../lib/colors.js";
 
-const { button, div, h2, span } = van.tags;
-
 export function CellsView() {
+  const metric = van.state(/** @type {import("../lib/cell-map.js").CellMapMetric} */ ("temperature"));
+  const position = van.state(48);
+  const selection = { metric, position };
+  const cells = packCellLayout();
   return div(
-    { class: "view cells-view", "data-view": "cells" },
-    ...(history.state?.menuOrigin
-      ? [
+    { class: "view riding-view cells-view layout-page", "data-view": "cells" },
+    div(
+      { class: "layout-compact-stack cells-content", "data-cell-option": "combined" },
+      Summary(),
+      div(
+        { class: "layout-row cell-mode", role: "group", "aria-label": "Map reading" },
+        .../** @type {const} */ (["temperature", "balance"]).map(mode =>
           button(
             {
-              class: "cells-back",
-              onclick: () => history.back(),
+              class: "control-button",
+              "data-map-mode": mode,
+              "aria-pressed": () => String(metric.val === mode),
+              onclick: () => {
+                metric.val = mode;
+              },
             },
-            `‹ ${history.state.backName}`
-          ),
-        ]
-      : []),
-    CellsContent()
+            mode === "temperature" ? "Temperature" : "Cell balance"
+          )
+        )
+      ),
+      div(
+        { class: "layout-between" },
+        span({ class: "cell-tiny", "data-map-age": "" }, () => {
+          chartTick.val;
+          const age = cellMapAge(cells.map(cell => cellMapReading(cell, metric.val)));
+          return age === "now" ? "Modules · now" : `Latest readings · ${age}${/^\d/.test(age) ? " old" : ""}`;
+        }),
+        span({ class: "cell-legend", "data-map-legend": "" }, () =>
+          metric.val === "temperature"
+            ? `${Math.round(units.temp(38))} → ${Math.round(units.temp(50))} ${units.tempUnit()}`
+            : "0 → −40 mV"
+        )
+      ),
+      div(
+        { class: "pack-map", role: "group", "aria-label": "Nine modules, nine cells per module, across eleven LMUs" },
+        ...PACK_MODULE_GRID.flat().map(moduleNumber =>
+          ModuleBlock(
+            moduleNumber,
+            cells.filter(cell => cell.module === moduleNumber),
+            selection
+          )
+        )
+      ),
+      SelectionDetail(cells, selection)
+    )
   );
 }
 
-function CellsContent() {
-  const slots = cellVoltageLayout();
+const { button, div, span } = van.tags;
+/** @typedef {{metric:import("../vendor/van-1.6.1.js").State<import("../lib/cell-map.js").CellMapMetric>,position:import("../vendor/van-1.6.1.js").State<number>}} Selection */
+
+function Summary() {
   return div(
-    { class: "cells-content" },
-    () => {
-      chartTick.val;
-      return CellsOverview();
-    },
-    SpreadHistory(),
-    ...Array.from({ length: MODULE_COUNT }, (_, index) =>
+    { class: "cell-summary" },
+    div(
+      { class: "tile layout-card" },
+      span({ class: "label" }, "Battery · low / high"),
+      div({ class: "value" }, ...TemperatureReadings(["batt_temp_lo", "batt_temp_hi"]))
+    ),
+    div(
+      { class: "tile layout-card" },
+      span({ class: "label" }, "Cell spread"),
       div(
-        { class: "tile cell-module", "data-module": index + 1 },
-        h2(`Module ${index + 1}`),
-        div({ class: "cell-values" }, ...slots.filter(cell => cell.module === index + 1).map(CellReading))
+        {
+          class: "value",
+          "data-spread-now": "",
+          style: () =>
+            `color:${readingStatus("cell_spread_mv") === "fault" ? colors.BAD : freshValue("cell_spread_mv") === null ? colors.MUTED : colors.CALM}`,
+        },
+        () =>
+          freshValue("cell_spread_mv") === null
+            ? statusWord(readingStatus("cell_spread_mv"))
+            : span(String(Math.round(freshValue("cell_spread_mv") ?? 0)), span({ class: "unit" }, "mV"))
       )
     )
   );
 }
 
-function CellsOverview() {
-  const snapshot = cellSnapshot(peek, key => readingStatus(key, true));
-  const padding = Math.max(((snapshot.displayHigh ?? 0) - (snapshot.displayLow ?? 0)) * 0.25, 5);
-  const status = `${snapshot.fresh} of ${CELL_COUNT} fresh${snapshot.fault ? ` · ${snapshot.fault} fault` : ""}${snapshot.stale ? ` · ${snapshot.stale} stale` : ""}${snapshot.missing ? ` · ${snapshot.missing} missing` : ""}`;
-  return div(
-    { class: "tile cells-overview" },
-    h2("Battery cells"),
-    div({ class: "sub", "data-cell-count": "" }, status),
-    div(
-      { role: "img", "aria-label": `${CELL_COUNT} physical cell positions in pack order. ${status}.` },
-      barStrip({
-        bars: snapshot.cells.map(cell => ({
-          key: cell.key,
-          state: cell.state,
-          value: cell.value,
-          color:
-            cell.state === "fault"
-              ? colors.BAD
-              : cell.value === null || snapshot.high === null || !readingCanColour(cell.key, true)
-                ? colors.MUTED
-                : colors.spread(Math.max(0, snapshot.high - cell.value)),
-        })),
-        low: (snapshot.displayLow ?? 0) - padding,
-        high: (snapshot.displayHigh ?? 1) + padding,
-      })
-    ),
-    div(
-      { class: "sub", "data-cell-extremes": "" },
-      snapshot.low === null || snapshot.high === null || snapshot.spread === null
-        ? "Cell span unavailable"
-        : `${snapshot.low} – ${snapshot.high} mV · observed span ${snapshot.spread} mV`
-    ),
-    div(
-      { class: "cells-identities" },
-      span({ "data-weakest": "" }, `Weakest BMS index ${snapshot.weakest ?? "unknown"}`),
-      span({ "data-strongest": "" }, `Strongest BMS index ${snapshot.strongest ?? "unknown"}`)
-    ),
-    div(
-      { class: "sub" },
-      "Positions 1–81 follow pack order. Height shows each reading; colour is the gap below the BMS maximum. Outlines mark unavailable readings."
-    )
-  );
-}
-
-/** @param {ReturnType<typeof cellVoltageLayout>[number]} cell */
-function CellReading(cell) {
-  return div(
+/** @param {number} moduleNumber @param {import("../lib/pack-layout.js").PackCell[]} cells @param {Selection} selection */
+function ModuleBlock(moduleNumber, cells, selection) {
+  return button(
     {
       class: () => {
         chartTick.val;
-        return `cell-reading ${readingStatus(cell.key, true)}`;
+        const age = cellMapAge(cells.map(cell => cellMapReading(cell, selection.metric.val)));
+        return `module-block${Math.ceil(selection.position.val / 9) === moduleNumber ? " selected" : ""}${/^\d/.test(age) ? " old" : ""}`;
       },
-      "data-cell-key": cell.key,
+      "data-module": moduleNumber,
+      "aria-label": `Module ${moduleNumber}`,
+      "aria-pressed": () => String(Math.ceil(selection.position.val / 9) === moduleNumber),
+      onclick: event => {
+        const target = event.target instanceof Element ? event.target.closest("[data-position]") : null;
+        selection.position.val = target
+          ? Number(target.getAttribute("data-position"))
+          : selection.metric.val === "temperature"
+            ? cells[0].position
+            : lowestModuleCell(moduleNumber, key => {
+                const cell = cells.find(candidate => candidate.key === key);
+                const reading = cell ? cellMapReading(cell, "balance") : null;
+                return reading?.current ? reading.value : null;
+              });
+      },
     },
-    div({ class: "sub" }, `Position ${cell.position} · cell ${cell.cell}`),
-    div(
-      {
-        class: "cell-number",
-        style: () => {
-          chartTick.val;
-          const state = readingStatus(cell.key, true);
-          return `color:${state === "fault" ? colors.BAD : readingCanColour(cell.key, true) ? colors.CALM : colors.MUTED}`;
-        },
-      },
-      () => {
+    span(
+      { class: "module-head" },
+      span(`M${moduleNumber}`),
+      span({ class: "age-cue", "data-module-age": "" }, () => {
         chartTick.val;
-        const state = readingStatus(cell.key, true);
-        const value = freshValue(cell.key, true);
-        return value === null ? statusWord(state) : span(String(value), span({ class: "unit" }, "mV"));
-      }
+        const age = cellMapAge(cells.map(cell => cellMapReading(cell, selection.metric.val)));
+        return age === "now" ? "" : age;
+      })
+    ),
+    span(
+      { class: "module-cells" },
+      ...cells.map((cell, index) => CellSquare(cell, cellLmuBoundaries(cells, index), selection))
     )
   );
 }
 
-function SpreadHistory() {
-  return div(
-    { class: "tile cell-spread-history" },
-    div({ class: "label" }, "Cell spread history"),
-    div({ class: "value" }, () => {
-      chartTick.val;
-      const state = readingStatus("cell_spread_mv", true);
-      const value = state === "fresh" ? peek("cell_spread_mv") : null;
-      return value === null ? statusWord(state) : `${Math.round(value)} mV`;
-    }),
-    () => {
-      chartTick.val;
-      const fresh = readingStatus("cell_spread_mv", true) === "fresh";
-      return sparkline({
-        values: fresh ? ringFor("cell_spread_mv").since(600_000, monotonicNow()).values : [],
-        color: colors.spread(fresh ? peek("cell_spread_mv") : null),
-        minSpan: 10,
-      });
+/** @param {import("../lib/pack-layout.js").PackCell} cell @param {string[]} boundaries @param {Selection} selection */
+function CellSquare(cell, boundaries, selection) {
+  return span(
+    {
+      "data-position": cell.position,
+      "data-cell-key": cell.key,
+      "data-lmu": cell.lmu,
+      "data-lmu-cell": cell.cell,
+      "data-state": () => {
+        chartTick.val;
+        return cellMapReading(cell, selection.metric.val).state;
+      },
+      class: () => {
+        chartTick.val;
+        const state = cellMapReading(cell, selection.metric.val).state;
+        return `cell-square ${boundaries.join(" ")}${selection.position.val === cell.position ? " selected" : ""}${state === "fault" ? " fault" : ["absent", "missing", "stale"].includes(state) ? " missing" : ""}`;
+      },
+      style: () => {
+        chartTick.val;
+        return `--cell-color:${cellMapColour(cellMapReading(cell, selection.metric.val), selection.metric.val, freshValue("cell_max_mv", true))}`;
+      },
+      title: () => {
+        chartTick.val;
+        const reading = cellMapReading(cell, selection.metric.val);
+        return `Position ${cell.position} · LMU ${cell.lmu} cell ${cell.cell} · ${reading.state === "absent" ? "Battery sensor not fitted" : reading.value === null ? mapStatusWord(reading.state) : `${selection.metric.val === "temperature" ? `${Math.round(units.temp(reading.value))} ${units.tempUnit()}` : `${reading.value} mV`} · ${ageDescription(reading.age)}`}`;
+      },
     },
-    div({ class: "sub" }, "last 10 min")
+    span({ class: "lmu-label" }, boundaries.includes("lmu-start") ? `L${cell.lmu}` : ""),
+    span({ class: "cell-marker" }, () => {
+      chartTick.val;
+      const state = cellMapReading(cell, selection.metric.val).state;
+      return state === "fault" ? "!" : state === "missing" || state === "stale" ? "×" : "";
+    })
   );
+}
+
+/** @param {import("../lib/pack-layout.js").PackCell[]} cells @param {Selection} selection */
+function SelectionDetail(cells, selection) {
+  return div(
+    { class: "cell-detail" },
+    ...[-1, 0, 1].map(direction =>
+      direction
+        ? button(
+            {
+              class: "control-button",
+              "data-cell-step": direction,
+              "aria-label": direction < 0 ? "Previous cell" : "Next cell",
+              disabled: () => selection.position.val === (direction < 0 ? 1 : 81),
+              onclick: () => {
+                selection.position.val = stepCellPosition(selection.position.val, direction);
+              },
+            },
+            direction < 0 ? "‹" : "›"
+          )
+        : div(
+            { class: "layout-compact-stack" },
+            span(
+              {
+                "data-cell-description": "",
+                style: () => {
+                  chartTick.val;
+                  return `color:${cellMapReading(cells[selection.position.val - 1], selection.metric.val).state === "fault" ? colors.BAD : "var(--fg)"}`;
+                },
+              },
+              () => {
+                chartTick.val;
+                const cell = cells[selection.position.val - 1];
+                const reading = cellMapReading(cell, selection.metric.val);
+                return selection.metric.val === "temperature"
+                  ? `M${cell.module} · LMU ${cell.lmu} · ${reading.value === null ? (reading.state === "absent" ? "—" : mapStatusWord(reading.state)) : `${Math.round(units.temp(reading.value))} ${units.tempUnit()}`}`
+                  : `M${cell.module} · L${cell.lmu} C${cell.cell} · ${reading.value === null ? mapStatusWord(reading.state) : `${(reading.value / 1000).toFixed(3)} V`}`;
+              }
+            ),
+            span({ class: "cell-tiny", "data-cell-extra": "" }, () => {
+              chartTick.val;
+              const cell = cells[selection.position.val - 1];
+              const reading = cellMapReading(cell, selection.metric.val);
+              if (selection.metric.val === "temperature") {
+                const keys = [moduleTemperatureKey(cell.lmu, "pcb1"), moduleTemperatureKey(cell.lmu, "pcb2")].filter(
+                  key => key !== null
+                );
+                const oldestBoardAge = Math.max(...keys.filter(key => freshValue(key, true) !== null).map(ageOf));
+                const boardAge = cellAgeText(oldestBoardAge);
+                const showAge = boardAge !== "—" && (reading.state !== "absent" || boardAge !== "now");
+                return `${reading.state === "absent" ? "No battery sensor · " : ""}PCB ${temperaturePair(keys)}${showAge ? ` · ${ageDescription(oldestBoardAge)}` : ""}`;
+              }
+              if (reading.state === "fault") return "Invalid voltage · slot retained";
+              if (reading.state === "missing") return "No reading · slot retained";
+              if (reading.state === "stale") return "stale · slot retained";
+              const reference = freshValue("cell_max_mv", true);
+              return `Position ${cell.position}${reading.current && reference !== null && reading.value !== null ? ` · ${Math.max(0, reference - reading.value)} mV below best` : ""} · ${ageDescription(reading.age)}`;
+            })
+          )
+    )
+  );
+}
+/** @param {string[]} keys */
+function temperaturePair(keys) {
+  const values = keys.map(key => freshValue(key, true));
+  const lastNumeric = values.findLastIndex(value => value !== null);
+  return values
+    .map((value, index) =>
+      value === null
+        ? statusWord(readingStatus(keys[index], true))
+        : `${Math.round(units.temp(value))}${index === lastNumeric ? ` ${units.tempUnit()}` : ""}`
+    )
+    .join(" / ");
+}
+/** @param {number} age */
+function ageDescription(age) {
+  const text = cellAgeText(age);
+  return text === "now" || text === "—" ? text : `${text} old`;
+}
+
+/** @param {import("../lib/cell-map.js").CellMapReading["state"]} state */
+function mapStatusWord(state) {
+  return state === "absent" ? "—" : statusWord(state, "Missing");
 }

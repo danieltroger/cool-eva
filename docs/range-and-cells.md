@@ -4,7 +4,9 @@ Range keeps its existing #hypermile URL. Its 648 px fixed layout includes a 44 p
 
 Missing, stale and rejected inputs retain their cards and explicit states. Zero current allowance is a real empty allowance; unknown allowance gets a dashed outline without a capacity fill. Derivations require fresh accepted inputs. Fault memory is shared with Ride, Cooling and ordinary tiles. The cut-off timer never says clear when its inputs are unavailable.
 
-Cells is #hypermile/cells, a scrolling URL subview outside the six-stop cycle. Its next gesture selects Charge. The strip and list retain all 81 physical positions in module order; missing or rejected readings cannot shift later cells or retain a plausible coloured bar. Full readings follow the strip and weakest/strongest identities. Battery & cooling is a menu page, reached from Bike information, with the same gesture/automatic exclusions as other menu pages. Browser history retains actual origin for Cells and falls back to Range on a direct entry.
+The approved [option C module map](cell-module-map.md) now owns Cells at #hypermile/cells. It replaces the strip, per-LMU tables and history trace described below.
+
+**Retired Cells composition:** Cells was a scrolling URL subview outside the riding cycle. Its next gesture selects Charge. The strip and list retain all 81 physical positions in module order; missing or rejected readings cannot shift later cells or retain a plausible coloured bar. Full readings follow the strip and weakest/strongest identities. Battery & cooling is a menu page, reached from Bike information, with the same gesture/automatic exclusions as other menu pages. Browser history retains actual origin for Cells and falls back to Range on a direct entry.
 
 ## Preserved findings from the previous Hypermile view
 
@@ -52,8 +54,32 @@ The _scale_ is relative — that is what makes a short bar visible — but the _
 
 Regen headroom. It derates at high SOC and at temperature extremes, so a full battery at the top of a mountain means the brakes are doing all the work — worth knowing before the descent rather than during it.
 
-## Follow-ups decided after PR 3
+## Preserved follow-ups before the module map
 
 Range and Cells name the reported weakest/strongest values as BMS indices without translating them. Cells labels individual readings with physical positions 1–81, retaining each module-local cell number separately. Pack extrema and spread use the current 0x203 summary; held per-cell values only fit the bar geometry. The shared [reading-status policy](reading-status.md#bms-multiplex-holds) bounds holds and colour eligibility. Cells has a Back control only for an explicitly recorded menu origin, preserved through reload; normal riding entries and direct links return through the adjacent Range sub-tab or browser history.
 
 Drive allowed and Regen available retain the same exact values, shares, bars and 648 px budget. The duplicate drive sentence is deliberately removed. Regen inspection hints live on Battery & cooling and are checks rather than asserted diagnoses. Cells restores the accepted cell_spread_mv ten-minute history before Module 1. A stale or rejected spread has an explicit state and no live trace.
+
+## Sampled range estimate
+
+Cell spread has one home in Cells. Range's former spread card now holds the approved “Range at this rate” reading, using the existing rolling-range model; its duplicate sentence is removed from the consumption caption. The current layout budget stays the same. The model accepts an explicit reader so chart-pulse bindings sample via `peek()` through distance-source selection and remaining energy as well as the rings, with existing reactive callers retaining their default. No formula or integration window changed.
+
+The following comment was relocated intact when the sampler argument was added:
+
+```text
+/**
+ * Wh/km over the last few minutes: pack power integrated over time, against distance
+ * actually covered.
+ *
+ * The energy term is INTEGRATED from `pack_kw` rather than differenced from a
+ * remaining-energy counter, which is what the first version did and why the readout kept
+ * going blank mid-ride. Returns a state rather than a bare number, because "nothing to
+ * show yet" and "you are net regenerating" are different things and a descent must not
+ * be reported as waiting for you to start moving. Measurements, and why the bike's own
+ * average is not used: docs/dashboard-decisions.md §"Wh/km".
+ * @param {number} now monotonic, from lib/clock.js — the rings are keyed on it
+ * @returns {{ state: "measured", whPerKm: number, km: number }
+ *          | { state: "regenerating", km: number }
+ *          | { state: "waiting" }}
+ */
+```
