@@ -248,7 +248,16 @@ async function checkActions(page: HeadlessPage, theme: string, shots?: string): 
     () => button(page, "Resume", false, "document.querySelector('.charge-auto-control')"),
     "charge-auto",
     theme,
-    shots
+    shots,
+    "Unavailable"
+  );
+  assert.equal(
+    await evaluateOnPage(
+      page,
+      `document.querySelector('.charge-auto-control [role=status]').title.includes(${JSON.stringify(SIMULATOR_MESSAGE)})`
+    ),
+    true,
+    "The short Charge status retains the simulator's refusal reason in its tooltip."
   );
   await evaluateOnPage(
     page,
