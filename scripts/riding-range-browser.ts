@@ -57,7 +57,7 @@ export async function assertRangeContent(page: HeadlessPage) {
   assert.match(content.horizon, /Last [\d.]+ km · about \d+ km left at this rate/);
   assert.deepEqual(content.shares, ["53% of 400 A", "46% of 120 A"]);
   assert.deepEqual(content.sizes, [140, 96, 112, 108, 92]);
-  assert.equal(content.height, 648);
+  assert.equal(content.height, 596);
   assert.deepEqual(content.fonts, ["64px", "34.4px", "16px"]);
   assert.deepEqual(
     content.bars.map(bar => [bar.height, bar.state]),

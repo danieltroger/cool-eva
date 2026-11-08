@@ -2,7 +2,6 @@
 // Instrument geometry and thermal provenance: docs/ride-power.md and docs/ride-thermal.md.
 // Conditional units keep a text anchor: VanJS cannot revive a binding whose first result is null.
 import van from "../vendor/van-1.6.1.js";
-import { SubTabs } from "../lib/sub-tabs.js";
 import { chartTick, valueOf } from "../lib/store.js";
 import { readingStatus, worstStatus, statusWord, freshValue } from "../lib/reading-status.js";
 import { currentChargeMode } from "../lib/charge-display.js";
@@ -23,7 +22,6 @@ const { div, span } = van.tags;
 export function RideView() {
   return div(
     { class: "view riding-view ride-view", "data-view": "ride" },
-    SubTabs("ride"),
     PowerPanel(),
     DeltaCard(),
     HeatCard(),

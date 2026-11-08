@@ -25,7 +25,7 @@ export async function checkRouteDisarmBrowser(page: HeadlessPage, previewFile: s
   await waitOnPage(page, `${STOP_BUTTON}.textContent.includes("Tap again")`, "Stop to arm");
   // The old confirmation must have passed its dwell, or a stale arm could appear safe by timing alone.
   await evaluateOnPage(page, `new Promise(resolve => setTimeout(resolve, ${ARM_DWELL_MS + 50}))`);
-  await clickTab(page, "all");
+  await clickTab(page, "more");
   await clickTab(page, "charge");
   await waitOnPage(page, `${STOP_BUTTON} && !${STOP_BUTTON}.disabled`, "Stop after returning to Charge");
   const returnedCaption = await evaluateOnPage(page, `${STOP_BUTTON}.textContent`);
@@ -43,13 +43,13 @@ export async function checkRouteDisarmBrowser(page: HeadlessPage, previewFile: s
   );
   assert.equal(typeof returnedCaption, "string");
   assert.ok(!String(returnedCaption).includes("Tap again"), "Navigation must leave Stop visibly unarmed.");
-  await clickTab(page, "all");
-  console.log("  ✓ Charge → All → Charge disarms Stop; the first return tap sends zero write requests");
+  await clickTab(page, "more");
+  console.log("  ✓ Charge → More → Charge disarms Stop; the first return tap sends zero write requests");
 }
 
 const STOP_BUTTON = `document.querySelector("[data-charge-action=stop]")`;
 
-async function clickTab(page: HeadlessPage, name: "all" | "charge"): Promise<void> {
+async function clickTab(page: HeadlessPage, name: "more" | "charge"): Promise<void> {
   const label = TABS.find(tab => tab.name === name)?.label;
   assert.ok(label);
   await evaluateOnPage(

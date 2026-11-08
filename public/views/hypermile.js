@@ -2,7 +2,6 @@
 // Reading meanings, layout budget and preserved findings: docs/range-and-cells.md.
 import van from "../vendor/van-1.6.1.js";
 import { chartTick, valueOf } from "../lib/store.js";
-import { SubTabs } from "../lib/sub-tabs.js";
 import { readingStatus, worstStatus, statusWord, freshValue } from "../lib/reading-status.js";
 import { REGEN_CEILING_A, rangeDistanceKey, rangeEnergyKey } from "../lib/range-readings.js";
 import {
@@ -27,7 +26,6 @@ const DISCHARGE_CEILING_A = 400;
 export function HypermileView() {
   return div(
     { class: "view riding-view range-view", "data-view": "hypermile" },
-    SubTabs("hypermile"),
     MarginCard(),
     TimerCard(),
     div(

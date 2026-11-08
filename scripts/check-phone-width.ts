@@ -129,29 +129,15 @@ interface SheetMeasurement {
   rows: string[];
 }
 
-/**
- * The menu sheet, measured from INSIDE itself.
- *
- * ⚠️ `body.scrollWidth` cannot witness this surface at all: `.sheet` is `position: fixed;
- * inset: 0`, so a fixed subtree contributes nothing to the document's scrollable overflow,
- * and `.sheet-body` is `width: 100%` of that — its border box IS the viewport whatever it
- * holds. So the question has to be asked the way the page asks it of the body: does the
- * sheet's own content scroll inside it? `overflow-y: auto` makes `overflow-x` compute to
- * `auto` too, which is exactly where a too-wide row goes to hide.
- *
- * The per-row right edge is the second witness, from outside the scroll container: an
- * overflowing child keeps its real laid-out box, so its rect extends past the phone even
- * though the box holding it does not.
- */
+// Bike rows are measured inside their container; prior sheet findings: docs/dashboard-navigation.md.
 const SHEET = `(() => {
-  const sheet = document.querySelector(".sheet");
-  const body = document.querySelector(".settings-page:has(.waypoint-list)") ?? document.querySelector(".sheet-body");
-  if (sheet === null || body === null) {
-    throw new Error("no menu sheet in the page to measure");
+  const body = document.querySelector(".settings-page:has(.waypoint-list)");
+  if (body === null) {
+    throw new Error("no Bike waypoint list in the page to measure");
   }
   const rows = [...body.querySelectorAll(".waypoint-row")];
   return {
-    open: sheet.classList.contains("open"),
+    open: !!document.querySelector('[data-more=bike][aria-current=page]'),
     clientWidth: document.documentElement.clientWidth,
     bodyScrollWidth: body.scrollWidth,
     bodyClientWidth: body.clientWidth,
@@ -292,42 +278,19 @@ async function sweep(page: HeadlessPage, previewFile: string) {
   await measureSheet(page, previewFile, SCENES[0]);
 }
 
-/**
- * Opens the menu sheet and measures inside it.
- *
- * ⚠️ THE CLICK IS AN ASSERTION, not a convenience. `.sheet` is `visibility: hidden`, not
- * `display: none`, so the sheet and every row in it have full layout boxes whether or not
- * anything ever opened it — every measurement below passes on a sheet nobody opened. Hence
- * the `open` check first: a `.menu` button that stopped opening the sheet must go red here
- * rather than green.
- */
+/** Opens Bike through the persistent navigation before measuring its waypoint list. */
 async function measureSheet(page: HeadlessPage, previewFile: string, scene: string) {
-  const where = `${scene}/sheet`;
-  // `&sheet=1` is inert, exactly like `&tab=` above — the template reads only `scene`, and
-  // its whole job is to make this URL differ outside the fragment so the page really reloads.
-  // The CLICK below is what opens the sheet.
-  await gotoPage(page, `file://${previewFile}?scene=${scene}&sheet=1#ride`);
-  await waitOnPage(page, `document.querySelectorAll(".view > *").length > 0`, `the ${where} page to render`);
-  await evaluateOnPage(page, `document.querySelector(".header .menu").click()`);
-  await evaluateOnPage(page, "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
-  const menu = asSheetMeasurement(await evaluateOnPage(page, SHEET));
-  check(`${where} really opened — hidden menus have the same layout boxes`, menu.open);
-  check(`${where} is being measured at ${PHONE.width} px`, menu.clientWidth === PHONE.width);
-  check(`${where} fits inside itself`, menu.bodyScrollWidth <= menu.bodyClientWidth);
-  // The list moved into Session; follow the real menu link so the old overflow checks still reach it.
-  await evaluateOnPage(
-    page,
-    `[...document.querySelectorAll(".menu-link")].find(button => button.textContent.includes("This session & waypoints")).click()`
-  );
-  await waitOnPage(page, `document.querySelectorAll(".waypoint-row").length > 0`, `the ${where} to render its list`);
+  const where = `${scene}/bike`;
+  await gotoPage(page, `file://${previewFile}?scene=${scene}&navigation=1#ride`);
+  await waitOnPage(page, `!!document.querySelector(".ride-view")`, `the ${where} origin`);
+  await evaluateOnPage(page, `document.querySelector('.tabs a[href$="#more"]').click()`);
+  await waitOnPage(page, `!!document.querySelector('[data-more=bike]')`, "More top switch");
+  await evaluateOnPage(page, `document.querySelector('[data-more=bike]').click()`);
+  await waitOnPage(page, `document.querySelectorAll(".waypoint-row").length > 0`, `the ${where} list`);
   const collapsed = asSheetMeasurement(await evaluateOnPage(page, SHEET));
-  check(
-    `${where} opened the named Session destination`,
-    (await evaluateOnPage(
-      page,
-      `location.search.includes("panel=session") && document.querySelector(".header .menu").textContent.includes("Menu")`
-    )) === true
-  );
+  check(`${where} opened through the top switch`, collapsed.open);
+  check(`${where} is being measured at ${PHONE.width} px`, collapsed.clientWidth === PHONE.width);
+  check(`${where} fits inside itself`, collapsed.bodyScrollWidth <= collapsed.bodyClientWidth);
   // ⚠️ Measured EXPANDED, because the row that decides this — the longest refusal sentence —
   // is older than the six the list previews, and a check that never opened the list would
   // report a clean ✓ for the rows nobody had measured. The toggle is asserted rather than
@@ -376,7 +339,11 @@ async function measureSheet(page: HeadlessPage, previewFile: string, scene: stri
 async function measureTab(page: HeadlessPage, previewFile: string, scene: string, tab: string) {
   const where = `${scene}/${tab}`;
   await gotoPage(page, `file://${previewFile}?scene=${scene}&tab=${tab}#${tab}`);
-  await waitOnPage(page, `document.querySelectorAll(".view > *").length > 0`, `the ${where} tab to render`);
+  await waitOnPage(
+    page,
+    `document.querySelectorAll(".view > *, .settings-page > *").length > 0`,
+    `the ${where} tab to render`
+  );
   const measured = asMeasurement(await evaluateOnPage(page, MEASURE));
   console.log(
     `\n${where}: body.scrollWidth ${measured.bodyScrollWidth} · innerWidth ${measured.innerWidth} · ` +

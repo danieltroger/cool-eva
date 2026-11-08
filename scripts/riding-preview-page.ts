@@ -5,7 +5,7 @@ export async function openPreview(page: HeadlessPage, file: string, hash: string
   await gotoPage(page, `file://${file}?scene=riding&fixture=all-installed&case=${testCase}${extra}${hash}`);
   await waitOnPage(
     page,
-    "document.documentElement.dataset.previewReady === 'yes' && document.querySelector('.view')",
+    "document.documentElement.dataset.previewReady === 'yes' && document.querySelector('.view,.settings-page')",
     "the actual dashboard view"
   );
   await evaluateOnPage(page, FRAME);

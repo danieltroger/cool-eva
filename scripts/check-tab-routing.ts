@@ -9,30 +9,7 @@ import {
   tabFromHash,
 } from "../public/lib/router.js";
 
-// The dashboard's tab URLs, checked without a browser.
-//
-//   node --experimental-strip-types scripts/check-tab-routing.ts
-//
-// public/lib/router.js puts the bottom tab bar in the URL, and splits itself so the
-// parts worth checking need no DOM: hashForTab, tabFromHash, nextViewAfter and
-// canonicalHash are pure, and the handful of lines that touch `history` and `location`
-// do nothing but act on what canonicalHash decided. That is the whole reason this file
-// can exist alongside the other checks — no jsdom, no headless browser, no dependency.
-// (VanJS itself imports fine under Node; the router's state lives in a van.state and
-// nothing here reads it.)
-//
-// ⚠️ A TAB'S NAME IS A URL. `/#charge` is what a bookmark on the phone's home screen
-// holds. Renaming a tab in TABS silently breaks every one of them and nothing else in
-// the repo would notice — the dashboard still builds, still typechecks and still works
-// for anyone who opens it fresh. So the names are pinned here BY HAND, spelled out
-// rather than derived from TABS, which makes changing one a decision.
-//
-// The other three properties, and why each matters: docs/diagnostics-and-checks.md §11.4.
-// A URL that names nothing must still open something (tabFromHash runs before the first
-// render, so a throw is a blank screen — half the cases below are malformed on purpose);
-// canonicalHash must leave a correct URL alone as well as fix a wrong one; and the
-// high-beam ring must close, since it is the only input this dashboard has that works
-// with both hands on the bars.
+// Bookmark compatibility and the five-stop handlebar cycle: docs/dashboard-navigation.md.
 
 let failures = 0;
 
@@ -53,8 +30,8 @@ const EXPECTED_URLS: [name: string, url: string][] = [
   ["ride", "#ride"],
   ["hypermile", "#hypermile"],
   ["charge", "#charge"],
-  ["all", "#all"],
   ["faults", "#faults"],
+  ["more", "#more"],
 ];
 
 console.log("\n1. the tab URLs");
@@ -194,7 +171,7 @@ for (let step = 1; step < RIDING_CYCLE.length; step += 1) {
 
 check(
   `${RIDING_CYCLE.length} advances from ${ROUTES[0].name} visit every view exactly once`,
-  new Set(visited).size === RIDING_CYCLE.length && visited.join(",") === "ride,cooling,hypermile,charge,all,faults"
+  new Set(visited).size === RIDING_CYCLE.length && visited.join(",") === "ride,cooling,hypermile,charge,faults"
 );
 check(`one more comes back to ${ROUTES[0].name}`, nextViewAfter(walked) === ROUTES[0].name);
 check(
@@ -216,11 +193,11 @@ for (const [name, hash] of [
     `${hash} is a pinned Charge subview`,
     canonicalHash(hash).view === name && canonicalHash(hash).tab === "charge" && canonicalHash(hash).rewriteTo === null
   );
-  check(`${name} advances to All`, nextViewAfter(name) === "all");
+  check(`${name} advances to Faults`, nextViewAfter(name) === "faults");
 }
 check(
-  "Cells advances to Charge, outside the six-stop cycle",
-  nextViewAfter("cells") === "charge" && RIDING_CYCLE.length === 6
+  "Cells advances to Charge, outside the five-stop cycle",
+  nextViewAfter("cells") === "charge" && RIDING_CYCLE.length === 5
 );
 check(
   "Fault report is a pinned Faults subview and advances to Ride",
@@ -228,6 +205,14 @@ check(
     canonicalHash("#faults/report").tab === "faults" &&
     canonicalHash("#faults/report").rewriteTo === null &&
     nextViewAfter("fault-report") === "ride"
+);
+check(
+  "Legacy All bookmark opens inside More",
+  canonicalHash("#all").view === "all" && canonicalHash("#all").tab === "more"
+);
+check(
+  "The handlebar cycle excludes More",
+  !RIDING_CYCLE.some(view => String(view) === "more") && nextViewAfter("more") === "ride"
 );
 console.log("");
 if (failures > 0) {

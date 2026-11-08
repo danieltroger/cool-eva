@@ -12,8 +12,7 @@ import { armed } from "./arming.js";
 //
 // Every tab change is a pushState — including the ones the bike makes for you, which
 // is the decision most likely to look wrong: replaceState would OVERWRITE the entry the
-// rider made rather than decline to add one. The sheet behind ☰ is deliberately not
-// routed.
+// rider made rather than decline to add one.
 //
 // The full argument for each of those, and for what Back does across a repeat visit:
 // docs/dashboard-decisions.md §Routing.
@@ -23,8 +22,8 @@ export const TABS = /** @type {const} */ ([
   { name: "ride", label: "Ride" },
   { name: "hypermile", label: "Range" },
   { name: "charge", label: "Charge" },
-  { name: "all", label: "All" },
   { name: "faults", label: "Faults" },
+  { name: "more", label: "More" },
 ]);
 
 /** @typedef {(typeof TABS)[number]["name"]} TabName */
@@ -37,13 +36,14 @@ export const ROUTES = /** @type {const} */ ([
   { name: "charge", tab: "charge", label: "Charge", hash: "#charge" },
   { name: "charge-pack", tab: "charge", label: "Pack & cooling", hash: "#charge/pack-cooling" },
   { name: "charge-controls", tab: "charge", label: "Controls", hash: "#charge/controls" },
-  { name: "all", tab: "all", label: "All", hash: "#all" },
+  { name: "all", tab: "more", label: "All signals", hash: "#all" },
   { name: "faults", tab: "faults", label: "Faults", hash: "#faults" },
   { name: "fault-report", tab: "faults", label: "Fault report", hash: "#faults/report" },
+  { name: "more", tab: "more", label: "Settings", hash: "#more" },
 ]);
 /** @typedef {(typeof ROUTES)[number]["name"]} ViewName */
 
-export const RIDING_CYCLE = /** @type {const} */ (["ride", "cooling", "hypermile", "charge", "all", "faults"]);
+export const RIDING_CYCLE = /** @type {const} */ (["ride", "cooling", "hypermile", "charge", "faults"]);
 
 /**
  * Where a URL that names no tab lands, and where one that names something unknown

@@ -1200,6 +1200,11 @@ const CHECKS: SelfCheck[] = [
       "the dashboard's tab URLs — that each tab still lives at the address every bookmark holds, that a fragment naming no tab (empty, unknown, malformed, or a path) lands on the riding screen instead of throwing before the first render, and that the tab ring the high-beam gesture advances through closes",
   },
   {
+    script: "scripts/check-persistent-navigation.ts",
+    covers:
+      "More section routing, legacy panel links, destination exits, modified-click URLs, no-op history and write-confirmation disarming",
+  },
+  {
     script: "scripts/check-theme-contrast.ts",
     covers:
       "both of style.css's palettes, parsed out of the file itself rather than restated: every ink colors.js " +

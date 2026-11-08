@@ -269,7 +269,7 @@ export async function checkFaultReportNavigation(page: HeadlessPage, file: strin
   await evaluateOnPage(page, "document.querySelector('.fault-report-heading button').click()");
   await waitOnPage(page, "!!document.querySelector('.faults-view')", "report origin after reload");
   await evaluateOnPage(page, "ridingPreview('lib/destination.js').openDestination('bike-information')");
-  await waitOnPage(page, "document.querySelector('h2')?.textContent==='Bike information'", "Bike information");
+  await waitOnPage(page, "document.querySelector('h2')?.textContent==='This ride'", "Bike information");
   await evaluateOnPage(
     page,
     "[...document.querySelectorAll('.menu-link')].find(button=>button.textContent.includes('Fault details')).click()"
@@ -280,11 +280,7 @@ export async function checkFaultReportNavigation(page: HeadlessPage, file: strin
     "‹ Bike information"
   );
   await evaluateOnPage(page, "document.querySelector('.fault-report-heading button').click()");
-  await waitOnPage(
-    page,
-    "document.querySelector('h2')?.textContent==='Bike information'",
-    "return to Bike information"
-  );
+  await waitOnPage(page, "document.querySelector('h2')?.textContent==='This ride'", "return to Bike information");
   for (const kind of ["high_beam", "btn_cruise_set"]) {
     await openPreview(page, file, "#faults/report", `report-gesture-${kind}`);
     await waitOnPage(page, "!!document.querySelector('.code-line-text')", "full stored report");
@@ -299,7 +295,7 @@ export async function checkFaultReportNavigation(page: HeadlessPage, file: strin
     assert.equal(await evaluateOnPage(page, "scrollY"), 0);
     await openPreview(page, file, "#charge/pack-cooling", `all-arrival-${kind}`, "&charge-scene=warm");
     await gesture(page, kind);
-    await waitOnPage(page, "!!document.querySelector('.all-landing')", "Charge detail gesture to All snapshot");
+    await waitOnPage(page, "!!document.querySelector('.faults-view')", "Charge detail gesture to Faults");
     assert.equal(await evaluateOnPage(page, "scrollY"), 0);
   }
 }

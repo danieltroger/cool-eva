@@ -241,46 +241,24 @@ body {
 /* ---------- header ---------- */
 
 .header {
-  display: flex;
-  align-items: center;
-  gap: 0.8rem;
-  padding: env(safe-area-inset-top) 0.9rem 8px;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  min-height: calc(var(--size-header) + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) var(--space-3) 0;
+  background: var(--bg);
+  box-shadow: inset 0 -1px 0 var(--tile-edge);
 }
-
-.brand {
-  font-weight: 500;
-  flex: 1;
-  font-size: 0.8rem;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--label);
+.app-title {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  white-space: nowrap;
 }
-
-.menu {
-  background: none;
-  border: 0;
-  color: var(--label);
-  font-size: 1.3rem;
-  line-height: 1;
-  padding: 0.2rem 0.4rem;
-  cursor: pointer;
-}
-
-.status {
-  font-weight: 500;
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.78rem;
-  color: var(--label);
-}
-
 .dot {
-  width: 9px;
-  height: 9px;
+  width: var(--space-2);
+  height: var(--space-2);
   border-radius: 50%;
   background: var(--bad);
-  transition: background 0.3s;
 }
 .dot.live {
   background: var(--good);
@@ -288,14 +266,31 @@ body {
 .dot.connecting {
   background: var(--watch);
 }
-.dot.up {
-  background: var(--good);
+.header-switch {
+  gap: var(--space-1);
 }
-.dot.down {
-  background: var(--bad);
+.header-switch a {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--size-touch);
+  min-height: var(--size-touch);
+  padding: 0 var(--space-2);
+  border-bottom: var(--space-1) solid transparent;
+  color: var(--sub);
+  text-decoration: none;
+  font-size: var(--text-sm);
 }
-.dot.unknown {
-  background: var(--label);
+.header-switch a[aria-current="page"] {
+  color: var(--fg);
+  border-color: var(--good);
+  font-weight: 600;
+}
+.navigation-link {
+  padding: var(--space-3) 0;
+  color: var(--fg);
+  border-bottom: 1px solid var(--tile-edge);
+  text-decoration: none;
 }
 
 /* ---------- layout ---------- */
@@ -603,30 +598,48 @@ body {
 }
 
 .tab {
-  height: 49px;
+  height: calc(var(--size-tabs) - 1px);
   flex: 1;
-  background: none;
-  border: 0;
-  color: var(--label);
-  font: inherit;
-  font-size: 0.76rem;
-  font-weight: 500;
-  letter-spacing: 0.06em;
-  /* Deliberately tall: this is aimed at with a gloved thumb, in motion. */
-  padding: 0 0.2rem;
-  /* The Faults tab widens to "⚠ Faults" when a code sets. With five tabs sharing
-     the width that can wrap on a narrow phone, and --tabs-height is a fixed
-     constant that body's padding-bottom derives from — so a wrapped label makes
-     the real bar taller than the space reserved for it and buries the last tile
-     under your thumb, the exact thing --tabs-height exists to prevent. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--sub);
+  text-decoration: none;
+  font-size: var(--text-xs);
+  border-top: var(--space-1) solid transparent;
   white-space: nowrap;
-  cursor: pointer;
 }
-
 .tab.on {
-  color: var(--fg);
-  font-weight: 600;
-  box-shadow: inset 0 2px 0 var(--good);
+  color: var(--good);
+  border-color: var(--good);
+}
+.tab-symbol {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-5);
+  height: var(--space-5);
+}
+.tab-symbol svg {
+  width: var(--space-5);
+  height: var(--space-5);
+}
+.fault-badge {
+  position: absolute;
+  top: calc(-1 * var(--space-1));
+  right: calc(-1 * var(--space-2));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-4);
+  height: var(--space-4);
+  border-radius: 50%;
+  background: var(--bad);
+  color: var(--bg);
+  font-size: var(--text-xs);
 }
 
 /* ---------- sheet ---------- */
@@ -1848,38 +1861,8 @@ body {
   border-bottom: 1px solid var(--tile-edge);
   font: inherit;
 }
-.can-status-link {
-  display: inline-flex;
-  gap: 5px;
-  align-items: center;
-  min-height: 44px;
-  border: 0;
-  background: transparent;
-  color: var(--sub);
-  font: inherit;
-  padding: 0;
-}
-.header .menu {
-  min-width: 44px;
-  min-height: 44px;
-  width: auto;
-  white-space: nowrap;
-  font-size: 17px;
-}
-.header .brand {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .settings-action {
   margin: 12px 0;
-}
-.destination-header {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  background: var(--bg);
-  border-bottom: 1px solid var(--tile-edge);
 }
 
 /* Fixed riding geometry; the system insets are reserved once by the shell. */
@@ -1924,73 +1907,6 @@ body {
   color: var(--fg);
   font-weight: 600;
 }
-.brand-slot {
-  flex: 1;
-  min-width: 44px;
-  position: relative;
-  display: flex;
-  align-items: center;
-  height: 44px;
-}
-.brand-slot .brand {
-  min-width: 0;
-  overflow: visible;
-  text-overflow: clip;
-}
-.header-notice {
-  width: 100%;
-  min-width: 44px;
-  height: 44px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0;
-  border: 0;
-  background: none;
-  font:
-    500 13px system-ui,
-    sans-serif;
-  letter-spacing: 0;
-  text-transform: none;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.header-notice svg {
-  flex-shrink: 0;
-}
-.header-notice[hidden],
-.brand[hidden],
-.notice-count[hidden] {
-  display: none;
-}
-.header-notice[data-compact="true"] .notice-label {
-  display: none;
-}
-.notice-count {
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-.notice-measure {
-  position: fixed;
-  left: -10000px;
-  visibility: hidden;
-  white-space: nowrap;
-  font:
-    500 13px system-ui,
-    sans-serif;
-  letter-spacing: 0;
-}
-.can-status-link,
-.ble-connect {
-  min-width: 44px;
-  min-height: 44px;
-}
-.destination-header .brand {
-  white-space: normal;
-  overflow-wrap: anywhere;
-  letter-spacing: 0;
-}
-
 .ride-view > .ride-power {
   height: 176px;
   padding: 12px 12px 28px;

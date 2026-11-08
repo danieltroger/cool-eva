@@ -64,11 +64,20 @@ export async function checkSettingsBrowser(page: HeadlessPage, previewFile: stri
   );
   await evaluateOnPage(page, "localStorage.removeItem('cool-eva.setup-seen:synthetic-pi')");
   await gotoPage(page, `file://${previewFile}?scene=parked&notice-check=1#ride`);
+  await waitOnPage(page, "!!document.querySelector('.ride-view')", "Ride before opening More");
+  await evaluateOnPage(page, "document.querySelector('.tabs a[href$=\"#more\"]').click()");
   await waitOnPage(
     page,
-    "!!document.querySelector('.header-notice:not([hidden])')",
-    "the compact first-open riding notice"
+    "document.querySelector('.settings-page')?.innerText.includes('What changed on this Pi')",
+    "the full notes on Settings root"
   );
+  await evaluateOnPage(
+    page,
+    "[...document.querySelectorAll('button')].find(button=>button.textContent==='Got it').click()"
+  );
+  await evaluateOnPage(page, "document.querySelector('.tabs a[href$=\"#ride\"]').click()");
+  await waitOnPage(page, "!!document.querySelector('.ride-view')", "return after acknowledging the notes");
+  assert.equal(await evaluateOnPage(page, "document.querySelector('.app-title').textContent"), "Ride");
   assert.equal(
     await evaluateOnPage(
       page,
@@ -76,39 +85,17 @@ export async function checkSettingsBrowser(page: HeadlessPage, previewFile: stri
     ),
     0
   );
-  await evaluateOnPage(page, "document.querySelector('.header-notice').click()");
-  await waitOnPage(
-    page,
-    "document.body.innerText.includes('What changed on this Pi')",
-    "the full notes on Settings root"
-  );
-  await evaluateOnPage(
-    page,
-    "[...document.querySelectorAll('button')].find(button=>button.textContent==='Got it').click()"
-  );
-  await evaluateOnPage(page, "document.querySelector('.header .menu').click()");
-  await waitOnPage(
-    page,
-    "!!document.querySelector('.view') && document.querySelector('.header-notice').hidden",
-    "return after acknowledging the notes"
-  );
-  assert.equal(await evaluateOnPage(page, "document.querySelector('.brand').textContent"), "Cool Eva");
-  assert.equal(
+  assert.deepEqual(
     await evaluateOnPage(
       page,
-      "Math.round(document.querySelector('.view').getBoundingClientRect().top-document.querySelector('.header').getBoundingClientRect().bottom)"
+      "[innerWidth,document.body.scrollWidth,...[...document.querySelectorAll('.header a')].map(link=>link.getBoundingClientRect().height)]"
     ),
-    0
+    [390, 390, 44, 44]
   );
-  const dimensions = await evaluateOnPage(
-    page,
-    "[innerWidth,document.body.scrollWidth,document.querySelector('.header .menu').getBoundingClientRect().height]"
-  );
-  assert.deepEqual(dimensions, [390, 390, 44]);
   await checkConnectionLayouts(page, previewFile);
   await checkScreenGeometry(page, previewFile);
   console.log(
-    "  ✓ settings: unread choices, fault/CSRF distinction, zero-height dismissal, full-width connection fields, compact actions and the actual Siri repair route"
+    "  ✓ settings: unread choices, fault/CSRF distinction, persistent More access, full-width connection fields, compact actions and the actual Siri repair route"
   );
 }
 
