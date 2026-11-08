@@ -86,7 +86,90 @@
 
   /* The tab bar is fixed; every scrolling surface has to clear it plus the home
      indicator, or the last tile sits permanently under your thumb. */
-  --tabs-height: 50px;
+  --tabs-height: var(--size-tabs);
+}
+
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-md: 16px;
+  --text-lg: 20px;
+  --text-value: 32px;
+  --text-gauge: 48px;
+  --text-hero: 64px;
+  --size-touch: 44px;
+  --size-header: 52px;
+  --size-tabs: 50px;
+  --radius: var(--space-4);
+  --radius-small: var(--space-2);
+}
+
+/* Parents own spacing so a loose status line cannot touch the next card. */
+.layout-page,
+.layout-stack,
+.layout-compact-stack,
+.layout-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.layout-page,
+.layout-stack {
+  gap: var(--space-3);
+}
+
+.layout-page {
+  min-height: 0;
+  padding: var(--space-3);
+  font-size: var(--text-md);
+}
+
+.layout-compact-stack,
+.layout-card {
+  gap: var(--space-2);
+}
+
+.layout-row,
+.layout-between,
+.layout-row-end,
+.layout-list-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.layout-between,
+.layout-list-row {
+  justify-content: space-between;
+}
+
+.layout-row-end {
+  justify-content: flex-end;
+}
+
+.layout-list-row {
+  min-height: var(--size-touch);
+}
+
+.layout-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.layout-card {
+  padding: var(--space-3);
+  border: 1px solid var(--tile-edge);
+  border-radius: var(--radius);
+  background: var(--tile);
 }
 
 /* ---------- the light palette ----------
