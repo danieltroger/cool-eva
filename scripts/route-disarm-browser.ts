@@ -13,7 +13,8 @@ export async function checkRouteDisarmBrowser(page: HeadlessPage, previewFile: s
     const previewFetch = window.fetch;
     window.fetch = (input, options) => {
       const url = new URL(typeof input === "string" ? input : input.url, "http://eva.local/");
-      if (url.pathname === "/vcu-write" && options?.method === "POST") {
+      // The opening SOC read is harmless; returning must never replay a write.
+      if (url.pathname === "/vcu-write" && options?.method === "POST" && url.searchParams.get("action") !== "charge-soc-limit-read") {
         window.routeDisarmWriteRequests += 1;
       }
       return previewFetch(input, options);
@@ -22,7 +23,7 @@ export async function checkRouteDisarmBrowser(page: HeadlessPage, previewFile: s
   );
 
   await evaluateOnPage(page, `${STOP_BUTTON}.click()`);
-  await waitOnPage(page, `${STOP_BUTTON}.textContent.includes("Tap again")`, "Stop to arm");
+  await waitOnPage(page, `${STOP_BUTTON}.textContent === "Confirm stop"`, "Stop to arm");
   // The old confirmation must have passed its dwell, or a stale arm could appear safe by timing alone.
   await evaluateOnPage(page, `new Promise(resolve => setTimeout(resolve, ${ARM_DWELL_MS + 50}))`);
   await clickTab(page, "more");
@@ -33,7 +34,7 @@ export async function checkRouteDisarmBrowser(page: HeadlessPage, previewFile: s
   await evaluateOnPage(page, `${STOP_BUTTON}.click()`);
   await waitOnPage(
     page,
-    `window.routeDisarmWriteRequests > 0 || ${STOP_BUTTON}.textContent.includes("Tap again")`,
+    `window.routeDisarmWriteRequests > 0 || ${STOP_BUTTON}.textContent === "Confirm stop"`,
     "the first Stop tap after returning"
   );
   assert.equal(
@@ -42,7 +43,7 @@ export async function checkRouteDisarmBrowser(page: HeadlessPage, previewFile: s
     "The first Stop tap after returning must not POST the old confirmation."
   );
   assert.equal(typeof returnedCaption, "string");
-  assert.ok(!String(returnedCaption).includes("Tap again"), "Navigation must leave Stop visibly unarmed.");
+  assert.equal(returnedCaption, "Stop charge", "Navigation must leave Stop visibly unarmed.");
   await clickTab(page, "more");
   console.log("  ✓ Charge → More → Charge disarms Stop; the first return tap sends zero write requests");
 }

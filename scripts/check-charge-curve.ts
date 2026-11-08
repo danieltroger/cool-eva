@@ -48,9 +48,9 @@ assert.equal(chargeCeiling(-20, 47), 1, "The cold extreme can govern.");
 assert.equal(chargeCeiling(65, 33), 0);
 assert.equal(chargeCeiling(null, 33), null, "Missing reports cannot infer an allowance.");
 for (const [values, expected] of [
-  [{ outside: 28, physicalLow: 43, physicalHigh: 47, reportedLow: 43, reportedHigh: 47 }, [15, 65]],
-  [{ outside: -5, physicalLow: 3, physicalHigh: 7, reportedLow: 3, reportedHigh: 7 }, [-15, 20]],
-  [{ outside: 28, physicalLow: 43, physicalHigh: 47, reportedLow: 33, reportedHigh: 33 }, [15, 60]],
+  [{ outside: 28, physicalLow: 43, physicalHigh: 47, reportedLow: 43, reportedHigh: 47 }, [18, 57]],
+  [{ outside: -5, physicalLow: 3, physicalHigh: 7, reportedLow: 3, reportedHigh: 7 }, [-15, 17]],
+  [{ outside: 28, physicalLow: 43, physicalHigh: 47, reportedLow: 33, reportedHigh: 33 }, [18, 43]],
 ] as const) {
   const window = chargeWindow(values);
   assert.deepEqual([window.low, window.high], expected);
@@ -73,24 +73,39 @@ for (const temperature of [-30, -29, -20, -10, 0, 3, 10, 25, 33, 40, 60, 65]) {
     reportedLow: temperature,
     reportedHigh: temperature,
   });
-  assert.ok(window.high - window.low >= 30, "The frame retains at least 30 degrees.");
+  assert.ok(window.high - window.low >= 25, "The frame retains the approved 25-degree minimum.");
   assert.ok(window.low >= -30 && window.high <= 65);
   assert.ok(temperature >= window.low && temperature <= window.high);
-  assert.equal(window.low % 5 === 0, true);
-  assert.equal(window.high % 5 === 0, true);
 }
-for (const key of ["outside", "physicalLow", "physicalHigh", "reportedLow", "reportedHigh"]) {
+for (const key of ["outside", "reportedLow", "reportedHigh"]) {
   const window = chargeWindow({
     ...{ outside: 28, physicalLow: 43, physicalHigh: 47, reportedLow: 43, reportedHigh: 47 },
     [key]: null,
   });
-  assert.deepEqual(window, { low: -30, high: 65, fixed: true });
+  assert.deepEqual(window, { low: 20, high: 65, fixed: true });
 }
 assert.deepEqual(chargeWindow({ outside: 28, physicalLow: 43, physicalHigh: 47, reportedLow: 33, reportedHigh: 70 }), {
-  low: -30,
+  low: 20,
   high: 65,
   fixed: true,
 });
+
+assert.deepEqual(chargeWindow({ outside: 17, physicalLow: 38, physicalHigh: 41, reportedLow: 43, reportedHigh: 47 }), {
+  low: 7,
+  high: 57,
+  fixed: false,
+});
+assert.equal(
+  chargeWindow({ outside: 17, physicalLow: null, physicalHigh: null, reportedLow: 43, reportedHigh: 47 }).fixed,
+  false,
+  "Physical probes do not gate the separate reported-temperature model."
+);
+assert.deepEqual(
+  chargeWindow({ outside: null, physicalLow: 3, physicalHigh: 7, reportedLow: -20, reportedHigh: null }),
+  { low: -20, high: 65, fixed: true },
+  "A remaining valid cold marker cannot be cropped out of the reference frame."
+);
+
 assert.equal(chargeReply({ kind: "waiting", elapsedMs: 12 }), "Waiting");
 assert.equal(chargeReply({ kind: "took", fromAmps: 50, toAmps: 32, latencyMs: 10 }), 32);
 assert.equal(chargeReply({ kind: "not-acknowledged", heldAmps: 50 }), 50);

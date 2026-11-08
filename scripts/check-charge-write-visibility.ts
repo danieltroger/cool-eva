@@ -142,13 +142,13 @@ const viewSources = new Map(
 // adds invisible on every ordinary phone. Asserted on the SOURCE because the preview harness pins
 // `enabled: true` (scripts/preview-harness-bike.js), so no screenshot can reach that state.
 const socLimitSource = viewSources.get("charge-soc-limit.js") ?? "";
-if (!socLimitSource.includes("if (!known && !writesEnabled())")) {
+if (!socLimitSource.includes("hidden: () => !socKnown.val && !writesEnabled()")) {
   failures.push(
     "§3 charge-soc-limit.js no longer hides its tile only when BOTH the value is unknown AND writes " +
       "are off — a writes-disabled phone would stop showing a limit it is still receiving"
   );
 }
-if (!socLimitSource.includes("writesEnabled() ? SetRow() : div()")) {
+if (!socLimitSource.includes("hidden: () => !writesEnabled()")) {
   failures.push("§3 charge-soc-limit.js no longer gates only its BUTTONS on writesEnabled()");
 }
 

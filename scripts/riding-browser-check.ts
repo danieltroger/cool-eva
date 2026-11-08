@@ -1,3 +1,4 @@
+import { assertChargeLayout } from "./charge-page-layout.ts";
 import { checkChargeReviewCases } from "./riding-charge-review-browser.ts";
 import { assertFixedLayout, resetLayoutClearance, layoutClearance } from "./riding-layout-browser.ts";
 import { assertChargeContent, checkChargeCases } from "./riding-charge-browser.ts";
@@ -29,9 +30,7 @@ const COVERAGE = {
   cooling: "fixed",
   hypermile: "fixed",
   cells: "scrolling",
-  charge: "fixed",
-  "charge-pack": "scrolling",
-  "charge-controls": "scrolling",
+  charge: "scrolling",
   all: "fixed-landing",
   faults: "fixed",
   "fault-report": "scrolling",
@@ -59,7 +58,7 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
     .map(([name]) => name);
   assert.deepEqual(
     fixedViews,
-    ["ride", "cooling", "hypermile", "charge", "all", "faults"],
+    ["ride", "cooling", "hypermile", "all", "faults"],
     "Fixed-view coverage must match the converted screens."
   );
   for (const geometry of [
@@ -87,8 +86,6 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
         if (fixedViews.includes(route.name)) {
           if (route.name === "ride") {
             await assertRideContent(page);
-          } else if (route.name === "charge") {
-            await assertChargeContent(page);
           } else if (route.name === "hypermile") {
             await assertRangeContent(page);
           } else if (route.name === "all") {
@@ -99,6 +96,8 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
             await assertCoolingContent(page);
           }
           await assertFixedLayout(page, route.name === "all");
+        } else if (route.name === "charge") {
+          await assertChargeContent(page);
         } else if (route.name === "cells") {
           await assertCellsContent(page);
         }
@@ -275,7 +274,11 @@ async function checkNoticeStates(page: HeadlessPage, file: string, theme: string
       null,
       "The header has only the approved parent, connection dot and top switch."
     );
-    await assertFixedLayout(page, hash === "#all");
+    if (hash === "#charge") {
+      await assertChargeLayout(page);
+    } else {
+      await assertFixedLayout(page, hash === "#all");
+    }
   }
 }
 

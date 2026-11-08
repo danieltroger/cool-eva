@@ -1,7 +1,7 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { GOOD, MUTED, WARN, WATCH } from "../lib/colors.js";
+import { MUTED, WARN } from "../lib/colors.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 import {
   applyWriteStatus,
@@ -13,31 +13,13 @@ import {
 } from "../lib/charge-write.js";
 import { request } from "../lib/transport.js";
 
-/**
- * The control, or an empty node when it must not be offered.
- *
- * ⚠️ Hidden — not merely disabled — for a phone that never enabled writes, and only shown while a
- * charge is live (there is nothing to stop otherwise). Visibility is `sessionLive && writesEnabled`,
- * both read off plain states, no serverTime.
- */
-/** @param {{compact?:boolean}} [options] */
-export function ChargeStopControl({ compact = false } = {}) {
-  return div(() => {
-    if (!sessionLive.val || !writesEnabled()) {
-      return div();
-    }
-    return compact
-      ? div(
-          { class: "charge-stop-compact" },
-          StopButton(true),
-          div({ class: "stop-result-summary" }, () =>
-            message.val
-              ? `${lastSent.val === true ? "Sent" : lastRefused.val ? "Refused" : "Uncertain"} · Controls`
-              : ""
-          )
-        )
-      : div({ class: "tile span2" }, div({ class: "label" }, "Stop charging"), StopButton(), Outcome());
-  });
+/** Stop remains a confirmed CAN write; transport constraints: docs/charge-controls.md. */
+export function ChargeStopControl() {
+  return div(
+    { class: "layout-stack charge-stop-control", hidden: () => !sessionLive.val || !writesEnabled() },
+    div({ class: "layout-row-end" }, StopButton()),
+    Outcome()
+  );
 }
 
 const { button, div } = van.tags;
@@ -71,14 +53,13 @@ onChargeSessionEnd(forgetStop);
 
 export const ARMED_KEY = "charge-stop";
 
-/** @param {boolean} [compact] */
-function StopButton(compact = false) {
+function StopButton() {
   return div(
     button(
       {
         // The reversible/amber tier: it changes the bike but is the benign direction and the
         // rider can simply re-start a charge, so it is on-screen and amber, not behind the red fold.
-        class: "action writes",
+        class: "control-button writes",
         "data-charge-action": "stop",
         // One held Enter must not arm and then fire. See ../lib/arming.js.
         onkeydown: refuseKeyRepeat,
@@ -97,50 +78,27 @@ function StopButton(compact = false) {
           void performChargeStop();
         },
       },
-      () => {
-        if (sending.val) {
-          return "⏳  Sending…";
-        }
-        if (busy.val) {
-          return compact ? "Checking…" : "⏳  Checking the charge is still live…";
-        }
-        const type = chargeType.val;
-        const label = type === null ? "the charge" : `the ${type.toUpperCase()} charge`;
-        return compact
-          ? armed.val === ARMED_KEY
-            ? "Tap again · Stop"
-            : "Stop charge"
-          : armed.val === ARMED_KEY
-            ? `⚠️  Tap again to stop ${label}`
-            : `🛑  Stop ${label}`;
-      }
-    ),
-    div({ class: "action-note", style: `color:${MUTED}` }, () =>
-      commandable() && !compact
-        ? "Emulates holding Mode on the bike — the charge winds down over a few seconds; unplug the cable when prompted."
-        : ""
+      () => (sending.val || busy.val ? "Waiting…" : armed.val === ARMED_KEY ? "Confirm stop" : "Stop charge")
     )
   );
 }
 
-/**
- * The last stop's outcome, and — once one has landed — where to look to confirm it wound down.
- * The hint is shown only afterwards: standing at the bike the moment the frames have gone is when
- * "watch mains voltage fall" becomes useful.
- */
 function Outcome() {
-  return div({ class: "action-note" }, () => {
-    const sent = lastSent.val;
-    return div(
-      message.val ? div({ style: `color:${sent ? GOOD : WARN}` }, message.val) : div(),
-      sent
-        ? div(
-            { style: `color:${WATCH}` },
-            "🔍  Sent — the charge should wind down over the next several seconds (mains voltage and charger_enabled fall)."
-          )
-        : div()
-    );
-  });
+  return div(
+    {
+      class: "charge-sub charge-control-status",
+      "data-stop-result": "",
+      role: "status",
+      title: () => message.val,
+      style: () => `color:${lastRefused.val ? WARN : MUTED}`,
+    },
+    () => {
+      if (sending.val || busy.val) return "Waiting for bike…";
+      if (!message.val) return "";
+      if (lastSent.val === true) return "Waiting for bike…";
+      return lastRefused.val ? "Not sent" : "Delivery uncertain";
+    }
+  );
 }
 
 /**
@@ -209,13 +167,5 @@ async function performChargeStop() {
   }
   armed.val = "";
   lastSent.val = payload?.result?.succeeded ?? null;
-  lastRefused.val = payload !== null && payload.result?.succeeded !== true;
-}
-
-export function ChargeStopOutcome() {
-  return div(() =>
-    message.val
-      ? div({ class: "tile stop-operation-result" }, div({ class: "label" }, "Last Stop result"), Outcome())
-      : div()
-  );
+  lastRefused.val = payload !== null && payload.result === undefined;
 }

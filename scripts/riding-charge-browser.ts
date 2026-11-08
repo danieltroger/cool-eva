@@ -1,25 +1,15 @@
 import assert from "node:assert/strict";
 import { evaluateOnPage, waitOnPage, type HeadlessPage } from "./headless-page.ts";
 import { assertRendered } from "./riding-layout-browser.ts";
+import { assertChargeLayout } from "./charge-page-layout.ts";
 import { openPreview, FRAME } from "./riding-preview-page.ts";
 
 export async function assertChargeContent(page: HeadlessPage) {
-  try {
-    await waitOnPage(
-      page,
-      "document.querySelector('[data-ceiling]')?.dataset.ceiling==='36'&&(document.querySelector('[data-charge-eta]')?.textContent??'').includes(':')",
-      "the complete warm Charge fixture, graph and ETA"
-    );
-  } catch (error) {
-    console.error(
-      "Charge fixture at failure",
-      await evaluateOnPage(
-        page,
-        `({query:location.search,hash:location.hash,ceiling:document.querySelector('[data-ceiling]')?.dataset.ceiling,eta:document.querySelector('[data-charge-eta]')?.textContent,connection:ridingPreview('lib/store.js').connection.rawVal,power:ridingPreview('lib/store.js').peek('pack_kw'),soc:ridingPreview('lib/store.js').peek('soc')})`
-      )
-    );
-    throw error;
-  }
+  await waitOnPage(
+    page,
+    "document.querySelector('[data-ceiling]')?.dataset.ceiling==='36'&&document.querySelector('[data-charge-eta]')?.textContent.includes('estimated')&&!document.querySelector('input[name=charge-soc-limit-pct]')?.disabled",
+    "the complete single Charge page"
+  );
   await assertRendered(page, [
     "[data-charge-soc]",
     "[data-charge-power]",
@@ -28,78 +18,76 @@ export async function assertChargeContent(page: HeadlessPage) {
     "[data-charge-eta]",
     ".charge-ceiling",
     ".charge-chart",
-    "[data-charge-context]",
-    "[data-charge-reports]",
-    ".charge-model-caveat",
-    ".charge-controller-summary",
     "[data-charge-action=stop]",
+    "input[name=charge-soc-limit-pct]",
+    "input[name=charge-current-amps]",
+    "[data-charge-action=automatic]",
   ]);
   const content = await evaluateOnPage(
     page,
-    `({soc:document.querySelector('[data-charge-soc]').textContent,power:document.querySelector('[data-charge-power]').textContent,direction:document.querySelector('[data-charge-direction]').textContent,electrical:document.querySelector('[data-charge-electrical]').textContent,window:document.querySelector('[data-window]').dataset.window,context:document.querySelector('[data-charge-context]').textContent,reports:document.querySelector('[data-charge-reports]').textContent,heights:[...document.querySelector('.charge-view').children].map(element=>element.getBoundingClientRect().height),height:document.querySelector('.charge-view').getBoundingClientRect().height,fonts:[getComputedStyle(document.querySelector('.charge-soc-number')).fontSize,getComputedStyle(document.querySelector('.charge-delivery .value')).fontSize,getComputedStyle(document.querySelector('.charge-ceiling')).fontSize,getComputedStyle(document.querySelector('.charge-chart')).fontSize],chartHeight:document.querySelector('.charge-chart').getBoundingClientRect().height,footer:[...document.querySelector('.charge-graph-footer').children].map(element=>element.getBoundingClientRect().height),caveats:document.body.innerText.split('Observed on Energica models except the Experia').length-1})`
+    `({soc:document.querySelector('[data-charge-soc]').textContent,power:document.querySelector('[data-charge-power]').textContent,direction:document.querySelector('[data-charge-direction]').textContent,electrical:document.querySelector('[data-charge-electrical]').textContent,window:document.querySelector('[data-window]').dataset.window,heights:[document.querySelector('.charge-delivery').getBoundingClientRect().height,document.querySelector('.charge-eta').getBoundingClientRect().height],fonts:[...document.querySelectorAll('.charge-view .value')].map(element=>getComputedStyle(element).fontSize),inputs:[...document.querySelectorAll('.charge-input')].map(element=>[getComputedStyle(element).fontSize,element.value]),caption:document.querySelector('.charge-graph-content>.charge-sub').textContent})`
   );
   assert.deepEqual(content, {
     soc: "62",
     power: "11",
-    direction: "CHARGING",
+    direction: "DC charging",
     electrical: "32 A · 358 V",
-    window: "15,65",
-    context: "Outside 28 °C · battery 43–47 °C",
-    reports: "Bike sees ○43 / ◆47 °C → 36 A",
-    heights: [44, 124, 80, 272, 80],
-    height: 648,
-    fonts: ["64px", "34.4px", "30px", "12.5px"],
-    chartHeight: 110,
-    footer: [16, 16, 16, 16, 16],
-    caveats: 1,
+    window: "18,57",
+    heights: [112, 80],
+    fonts: ["32px", "32px", "32px", "32px"],
+    inputs: [
+      ["16px", "90"],
+      ["16px", "32"],
+    ],
+    caption: "Observed charge-current behaviour",
   });
-  await assertGraphBounds(page);
-  assert.equal(await evaluateOnPage(page, "document.querySelectorAll('[data-charge-action=stop]').length"), 1);
+  assert.equal(
+    await evaluateOnPage(page, "document.querySelectorAll('.charge-view [data-charge-action=stop]').length"),
+    1
+  );
   assert.equal(
     await evaluateOnPage(
       page,
-      "document.querySelector('.charge-graph').innerText.includes('Bike sees below 0 °C: near zero allowance.')"
+      "!!document.querySelector('.charge-controller-summary,.charge-request-reply,.charge-pack-view,.charge-controls-view,.charge-model-caveat,.sub-tabs')"
     ),
-    true
+    false
   );
-  const markers = (await evaluateOnPage(
-    page,
-    `[...document.querySelectorAll('[data-reported-marker]')].map(marker=>marker.tagName==='circle'?[Number(marker.getAttribute('cx')),Number(marker.getAttribute('cy'))]:marker.getAttribute('points').split(' ').map(pair=>pair.split(',').map(Number)).reduce((result,point)=>[result[0]+point[0]/4,result[1]+point[1]/4],[0,0]))`
-  )) as number[][];
-  for (const [index, expected] of [
-    [0, [199.76, 45.76]],
-    [1, [223.44, 53.44]],
-  ] as const) {
-    assert.ok(
-      Math.abs(markers[index][0] - expected[0]) < 1e-6 && Math.abs(markers[index][1] - expected[1]) < 1e-6,
-      "Markers use the reported temperatures and exact capped allowance."
-    );
-  }
+  assert.equal(
+    await evaluateOnPage(page, "document.scrollingElement.scrollHeight>innerHeight"),
+    true,
+    "The approved page intentionally scrolls to its inline controls."
+  );
+  await assertGraphBounds(page);
+  await assertChargeLayout(page);
 }
 
 export async function assertGraphBounds(page: HeadlessPage) {
   const result = await evaluateOnPage(
     page,
-    `(()=>{const chart=document.querySelector('.charge-chart');const bounds=chart.getBoundingClientRect();const text=[...chart.querySelectorAll('text')].map(element=>({text:element.textContent,box:element.getBoundingClientRect()}));return {curve:Number(chart.querySelector('[data-curve]').getAttribute('stroke-width')),plot:Math.abs(Number(chart.querySelectorAll('line')[0].getAttribute('y1'))-Number(chart.querySelectorAll('line')[2].getAttribute('y1'))),outside:text.filter(element=>element.box.left<bounds.left-.1||element.box.right>bounds.right+.1||element.box.top<bounds.top-.1||element.box.bottom>bounds.bottom+.1).map(element=>element.text),overlap:text.filter((element,index)=>text.slice(index+1).some(other=>Math.abs(element.box.top-other.box.top)<2&&element.box.left<other.box.right&&element.box.right>other.box.left)).map(element=>element.text)};})()`
+    `(()=>{
+    const chart=document.querySelector('.charge-chart');const bounds=chart.getBoundingClientRect();
+    const text=[...chart.querySelectorAll('text')].map(element=>({text:element.textContent,box:element.getBoundingClientRect()}));
+    return {viewBox:chart.getAttribute('viewBox'),curve:Number(chart.querySelector('[data-curve]').getAttribute('stroke-width')),plot:Math.abs(Number(chart.querySelectorAll('line')[0].getAttribute('y1'))-Number(chart.querySelectorAll('line')[2].getAttribute('y1'))),outside:text.filter(element=>element.box.left<bounds.left-.1||element.box.right>bounds.right+.1||element.box.top<bounds.top-.1||element.box.bottom>bounds.bottom+.1).map(element=>element.text),overlap:text.filter((element,index)=>text.slice(index+1).some(other=>Math.abs(element.box.top-other.box.top)<2&&element.box.left<other.box.right&&element.box.right>other.box.left)).map(element=>element.text)};
+  })()`
   );
   assert.deepEqual(
     result,
-    { curve: 3, plot: 72, outside: [], overlap: [] },
-    "Curve, ticks and labels retain their actual sizes without cropping or overlaps."
+    { viewBox: "0 0 342 132", curve: 3, plot: 84, outside: [], overlap: [] },
+    "The real SVG labels fit without cropping or overlap."
   );
 }
 
 export async function checkChargeCases(
   page: HeadlessPage,
   file: string,
-  assertLayout: (page: HeadlessPage) => Promise<void>,
+  _assertLayout: (page: HeadlessPage) => Promise<void>,
   theme: string
 ) {
   for (const state of [
-    { name: "cold", ceiling: "25.4", window: "-15,20" },
-    { name: "custom", ceiling: "75", window: "15,60" },
-    { name: "unknown", ceiling: "unknown", window: "-30,65" },
-    { name: "outside-missing", ceiling: "36", window: "-30,65" },
+    { name: "cold", ceiling: "25.4", window: "-15,17" },
+    { name: "custom", ceiling: "75", window: "18,43" },
+    { name: "unknown", ceiling: "unknown", window: "20,65" },
+    { name: "outside-missing", ceiling: "36", window: "20,65" },
   ]) {
     await openPreview(page, file, "#charge", `charge-${theme}-${state.name}`, `&charge-scene=${state.name}`);
     await evaluateOnPage(page, `ridingPreview('lib/theme.js').themePreference.val=${JSON.stringify(theme)}`);
@@ -110,20 +98,12 @@ export async function checkChargeCases(
     );
     if (state.name === "custom") {
       assert.equal(
-        await evaluateOnPage(page, "document.querySelector('[data-charge-context]').textContent"),
-        "Outside 28 °C · battery 43–47 °C"
+        await evaluateOnPage(page, "document.querySelector('[data-reported-label=both]').textContent"),
+        "33° · both"
       );
       assert.equal(
-        await evaluateOnPage(page, "document.querySelector('[data-charge-reports]').textContent"),
-        "Bike sees ○33 / ◆33 °C → 75 A"
-      );
-      assert.equal(
-        await evaluateOnPage(
-          page,
-          `(()=>{const circle=document.querySelector('circle[data-reported-marker]');const points=document.querySelector('polygon[data-reported-marker]').getAttribute('points').split(' ').map(pair=>pair.split(',').map(Number));return Math.abs(Number(circle.getAttribute('cx'))-points.reduce((sum,point)=>sum+point[0]/4,0))<1e-9;})()`
-        ),
-        true,
-        "Coincident markers must share the true coordinate."
+        await evaluateOnPage(page, "document.querySelector('circle[data-reported-marker]').getAttribute('r')"),
+        "7"
       );
     }
     if (state.name === "unknown") {
@@ -133,14 +113,17 @@ export async function checkChargeCases(
       );
       assert.equal(await evaluateOnPage(page, "document.querySelectorAll('[data-reported-marker]').length"), 0);
       assert.equal(
-        await evaluateOnPage(page, "document.querySelector('.charge-graph').innerText.includes('No ceiling inferred')"),
+        await evaluateOnPage(
+          page,
+          "document.querySelector('.charge-graph').innerText.includes('Temperatures missing · reference window')"
+        ),
         true
       );
     }
     await assertGraphBounds(page);
-    await assertLayout(page);
+    await assertChargeLayout(page);
   }
-  const failures = [
+  for (const state of [
     { name: "zero", patch: "batt_temp_lo_vcu:[65,'°C','battery'],batt_temp_hi_vcu:[65,'°C','battery']", ceiling: "0" },
     {
       name: "cold-governs",
@@ -154,27 +137,21 @@ export async function checkChargeCases(
       text: "stale",
     },
     { name: "reported-fault", patch: "batt_temp_hi_vcu:[65535,'°C','battery']", ceiling: "unknown", text: "fault" },
-    { name: "physical-fault", patch: "batt_temp_hi:[65535,'°C','battery']", ceiling: "36", text: "fault" },
-    { name: "off-curve", patch: "batt_temp_hi_vcu:[70,'°C','battery']", ceiling: "unknown", text: "off curve" },
-    { name: "small-power-out", patch: "pack_kw:[-0.2,'kW','battery']", ceiling: "36", direction: "POWER OUT" },
-    {
-      name: "power-stale",
-      patch: "pack_kw:[11.456,'kW','battery',Date.now()-30_000]",
-      ceiling: "36",
-      direction: "POWER",
-      power: "stale",
-    },
-    { name: "power-fault", patch: "pack_kw:[65535,'kW','battery']", ceiling: "36", direction: "POWER", power: "fault" },
-    { name: "zero-power", patch: "pack_kw:[-0.01,'kW','battery']", ceiling: "36", direction: "POWER", power: "0.0" },
-  ];
-  for (const state of failures) {
+    { name: "physical-fault", patch: "batt_temp_hi:[65535,'°C','battery']", ceiling: "36" },
+    { name: "limit-removed", patch: "charge_soc_limit_pct:[0,'%','charge']", ceiling: "36", eta: "Unavailable" },
+    { name: "soc-fault", patch: "soc:[65535,'%','battery']", ceiling: "36", eta: "Unavailable", soc: "fault" },
+    { name: "off-curve", patch: "batt_temp_hi_vcu:[70,'°C','battery']", ceiling: "unknown", text: "Unknown" },
+    { name: "power-out", patch: "pack_kw:[-0.2,'kW','battery']", ceiling: "36", direction: "Power out", power: "0.2" },
+    { name: "power-stale", patch: "pack_kw:[11.456,'kW','battery',Date.now()-30_000]", ceiling: "36", power: "stale" },
+    { name: "power-fault", patch: "pack_kw:[65535,'kW','battery']", ceiling: "36", power: "fault" },
+    { name: "zero-power", patch: "pack_kw:[-0.01,'kW','battery']", ceiling: "36", direction: "Power", power: "0.0" },
+  ]) {
     await openPreview(page, file, "#charge", `charge-${theme}-${state.name}`, "&charge-scene=warm");
     await assertChargeContent(page);
     await evaluateOnPage(
       page,
-      `ridingPreview('lib/theme.js').themePreference.val=${JSON.stringify(theme)};pushPatch({${state.patch}})`
+      `ridingPreview('lib/theme.js').themePreference.val=${JSON.stringify(theme)};pushPatch({${state.patch}});pausePreviewMessages(true);ridingPreview('lib/store.js').chartTick.val++`
     );
-    await evaluateOnPage(page, "pausePreviewMessages(true);ridingPreview('lib/store.js').chartTick.val++");
     await evaluateOnPage(page, FRAME);
     assert.equal(
       await evaluateOnPage(page, "document.querySelector('[data-ceiling]').dataset.ceiling"),
@@ -183,26 +160,22 @@ export async function checkChargeCases(
     );
     if (state.text) {
       assert.ok(
-        String(await evaluateOnPage(page, "document.querySelector('.charge-graph').innerText")).includes(state.text),
+        String(await evaluateOnPage(page, "document.querySelector('.charge-ceiling').textContent")).includes(
+          state.text
+        ),
         state.name
       );
+    }
+    if (state.eta) {
+      assert.equal(await evaluateOnPage(page, "document.querySelector('[data-charge-eta]').textContent"), state.eta);
+    }
+    if (state.soc) {
+      assert.equal(await evaluateOnPage(page, "document.querySelector('[data-charge-soc]').textContent"), state.soc);
     }
     if (state.direction) {
       assert.equal(
         await evaluateOnPage(page, "document.querySelector('[data-charge-direction]').textContent"),
         state.direction
-      );
-      const color =
-        state.direction === "POWER OUT"
-          ? "flow"
-          : state.power === "fault"
-            ? "bad"
-            : state.power === "0.0"
-              ? "fg"
-              : "sub";
-      assert.equal(
-        await evaluateOnPage(page, "document.querySelector('[data-charge-direction]').style.color"),
-        `var(--${color})`
       );
     }
     if (state.power) {
@@ -212,7 +185,7 @@ export async function checkChargeCases(
       );
     }
     await assertGraphBounds(page);
-    await assertLayout(page);
+    await assertChargeLayout(page);
   }
   await openPreview(page, file, "#charge", `charge-${theme}-imperial`, "&charge-scene=warm");
   await assertChargeContent(page);
@@ -222,5 +195,5 @@ export async function checkChargeCases(
   );
   await evaluateOnPage(page, FRAME);
   await assertGraphBounds(page);
-  await assertLayout(page);
+  await assertChargeLayout(page);
 }

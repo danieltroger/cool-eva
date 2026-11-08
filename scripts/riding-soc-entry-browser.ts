@@ -4,10 +4,10 @@ import { openPreview, FRAME } from "./riding-preview-page.ts";
 
 export async function checkSocEntryBrowser(page: HeadlessPage, file: string) {
   for (const theme of ["dark", "light"]) {
-    await openPreview(page, file, "#charge/controls", `soc-entry-${theme}`, "&charge-scene=warm");
+    await openPreview(page, file, "#charge", `soc-entry-${theme}`, "&charge-scene=warm");
     await evaluateOnPage(page, `ridingPreview('lib/theme.js').themePreference.val=${JSON.stringify(theme)}`);
     await readCompleted(page);
-    assert.equal(await reads(page), 1, "Opening Controls reads even when an old saved limit is already held.");
+    assert.equal(await reads(page), 1, "Opening Charge reads even when an old saved limit is already held.");
     assert.equal(
       await evaluateOnPage(page, "document.getElementById('pv-toast')?.classList.contains('on')"),
       false,
@@ -15,9 +15,9 @@ export async function checkSocEntryBrowser(page: HeadlessPage, file: string) {
     );
     assert.equal(await evaluateOnPage(page, "document.querySelector('[data-charge-action=limit-read]')"), null);
     assert.equal(
-      await evaluateOnPage(page, "document.querySelector('.charge-soc-control .action-note').textContent.trim()"),
-      "",
-      "A successful opening read adds no success/verification prose."
+      await evaluateOnPage(page, "document.querySelector('[data-limit-status]').textContent"),
+      "Read from bike",
+      "A successful opening read uses the approved inline status."
     );
     await evaluateOnPage(
       page,
@@ -49,12 +49,12 @@ export async function checkSocEntryBrowser(page: HeadlessPage, file: string) {
     assert.equal(await reads(page), 2, "Settings→back is one new entry/read.");
     assert.equal(await statusGets(page), getCount, "Re-entry reuses held permission without a GET.");
 
-    await openPreview(page, file, "#charge/controls", `soc-pending-${theme}`, "&charge-scene=warm&soc-reply=pending");
+    await openPreview(page, file, "#charge", `soc-pending-${theme}`, "&charge-scene=warm&soc-reply=pending");
     await waitOnPage(page, "!!window.releaseChargePreview", "Opening read held in flight");
     assert.equal(await reads(page), 1);
     assert.equal(
-      await evaluateOnPage(page, "document.querySelector('[data-saved-charge-limit]').textContent"),
-      "Reading…"
+      await evaluateOnPage(page, "document.querySelector('[data-limit-status]').textContent"),
+      "Reading from bike…"
     );
     assert.equal(
       await evaluateOnPage(
@@ -68,7 +68,7 @@ export async function checkSocEntryBrowser(page: HeadlessPage, file: string) {
       "SOC_LIMIT.pct=80;window.chargePreviewReplyMode='success';window.releaseChargePreview()"
     );
     await readCompleted(page);
-    assert.equal(await evaluateOnPage(page, "document.querySelector('[data-saved-charge-limit]').textContent"), "80 %");
+    assert.equal(await evaluateOnPage(page, "document.querySelector('input[name=charge-soc-limit-pct]').value"), "80");
     await evaluateOnPage(page, FRAME);
     assert.equal(await reads(page), 1);
 
@@ -76,8 +76,7 @@ export async function checkSocEntryBrowser(page: HeadlessPage, file: string) {
     await waitOnPage(page, "window.chargePreviewStatusWaiters.length>0", "Permission GET held");
     await evaluateOnPage(page, FRAME);
     const pendingGetCount = await statusGets(page);
-    await evaluateOnPage(page, "ridingPreview('lib/router.js').showView('charge-controls')");
-    await waitOnPage(page, "!!document.querySelector('.charge-controls-view')", "Controls joins a pre-existing GET");
+    await evaluateOnPage(page, "ridingPreview('views/charge-soc-limit.js').ChargeSocLimitControl()");
     await evaluateOnPage(page, FRAME);
     assert.equal(await statusGets(page), pendingGetCount, "Entry joins the existing owner without another GET.");
     assert.equal(await reads(page), 0, "No POST before the actual permission response.");
@@ -89,7 +88,7 @@ export async function checkSocEntryBrowser(page: HeadlessPage, file: string) {
       await openPreview(
         page,
         file,
-        "#charge/controls",
+        "#charge",
         `soc-${mode}-${theme}`,
         mode === "denied" ? "&charge-scene=readonly" : "&charge-scene=warm&write-status=failed"
       );
@@ -97,13 +96,13 @@ export async function checkSocEntryBrowser(page: HeadlessPage, file: string) {
       await evaluateOnPage(page, FRAME);
       assert.equal(await reads(page), 0, `${mode} permission sends no read.`);
     }
-    await openPreview(page, file, "#charge/controls", `soc-leave-${theme}`, "&charge-scene=warm&write-status=pending");
+    await openPreview(page, file, "#charge", `soc-leave-${theme}`, "&charge-scene=warm&write-status=pending");
     await waitOnPage(page, "window.chargePreviewStatusWaiters.length>0", "Permission before leaving");
-    await evaluateOnPage(page, "ridingPreview('lib/router.js').showView('charge')");
+    await evaluateOnPage(page, "ridingPreview('lib/router.js').showView('ride')");
     await evaluateOnPage(page, FRAME);
     await evaluateOnPage(page, "window.releaseChargeStatus(true)");
     await evaluateOnPage(page, FRAME);
-    assert.equal(await reads(page), 0, "Leaving Controls cancels the delayed opening read.");
+    assert.equal(await reads(page), 0, "Leaving Charge cancels the delayed opening read.");
   }
   console.log(
     "  ✓ SOC reads once per route entry after real permission, with no reply/heartbeat/permission loop or Read button"
@@ -113,7 +112,7 @@ export async function checkSocEntryBrowser(page: HeadlessPage, file: string) {
 async function readCompleted(page: HeadlessPage) {
   await waitOnPage(
     page,
-    "!!document.querySelector('.charge-controls-view')&&document.querySelector('[data-saved-charge-limit]')?.textContent!=='Reading…'&&!!document.querySelector('input[name=charge-soc-limit-pct]')&&!document.querySelector('input[name=charge-soc-limit-pct]').disabled",
+    "!!document.querySelector('.charge-view')&&document.querySelector('[data-limit-status]')?.textContent!=='Reading from bike…'&&!!document.querySelector('input[name=charge-soc-limit-pct]')&&!document.querySelector('input[name=charge-soc-limit-pct]').disabled",
     "Opening SOC read completes"
   );
   await evaluateOnPage(page, FRAME);

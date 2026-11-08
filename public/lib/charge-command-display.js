@@ -28,3 +28,17 @@ export function chargeAttemptText(amps, payload) {
     ? `${amps} A request NOT sent. ${detail}`
     : `${amps} A request: delivery uncertain. ${detail} Check the bike before retrying.`;
 }
+
+/** @param {number|null} attemptedAmps @param {number|null} latestRequest @param {import("../../src/charge/ack-watch.ts").ChargeAckState|null} acknowledgement */
+export function chargeConfirmationText(attemptedAmps, latestRequest, acknowledgement) {
+  if (attemptedAmps === null || latestRequest !== attemptedAmps || acknowledgement === null) return "Waiting for bike…";
+  const verdict = acknowledgement.verdict;
+  if (verdict.kind === "took")
+    return verdict.toAmps === attemptedAmps ? `Bike confirmed ${verdict.toAmps} A` : "Waiting for bike…";
+  if (verdict.kind === "no-change-expected")
+    return verdict.atAmps === attemptedAmps ? `Bike confirmed ${verdict.atAmps} A` : "Waiting for bike…";
+  if (verdict.kind === "not-acknowledged") return `${attemptedAmps} A · Not confirmed`;
+  if (verdict.kind === "station-limited") return "Station limited";
+  if (verdict.kind === "no-evidence" || verdict.kind === "superseded") return "Delivery uncertain";
+  return "Waiting for bike…";
+}
