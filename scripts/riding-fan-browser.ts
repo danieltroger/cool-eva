@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { FAN_REASON } from "../src/fan/curve.ts";
 import { evaluateOnPage, type HeadlessPage } from "./headless-page.ts";
 import { openPreview, FRAME } from "./riding-preview-page.ts";
+import { checkFanCommands } from "./riding-fan-commands-browser.ts";
 
 export async function checkCoolingFan(
   page: HeadlessPage,
@@ -19,7 +21,7 @@ export async function checkCoolingFan(
       await evaluateOnPage(page, FRAME);
       assert.equal(
         await evaluateOnPage(page, "document.querySelector('[data-fan-status]').textContent"),
-        `${label} · driving`,
+        label === "Fun" ? "Fun · driving" : `${label} control`,
         "Cooling must respect the published fan mode codes."
       );
       await assertLayout(page);
@@ -30,11 +32,19 @@ export async function checkCoolingFan(
       { duty: 0, target: 68, enabled: 1, text: "Braking fault · cut fan power", fault: true },
       { duty: 68, target: 0, enabled: 1, text: "Stop failed · still driving", fault: true },
       { duty: 100, target: 68, enabled: 1, text: "Automatic · kick-starting", fault: false },
-      { duty: 68, target: 68, enabled: 1, text: "Automatic · driving", fault: false },
+      {
+        duty: 100,
+        target: 30,
+        enabled: 1,
+        reason: FAN_REASON.TEMPERATURE_FAULT,
+        text: "Fan status fault",
+        fault: true,
+      },
+      { duty: 68, target: 68, enabled: 1, text: "Automatic control", fault: false },
     ]) {
       await evaluateOnPage(
         page,
-        `(() => { const changedAt=Date.now()-60_000; pushPatch({fan_auto_mode:[1,'','fan',changedAt],fan_duty_pct:[${state.duty},'%','fan',changedAt],fan_target_pct:[${state.target},'%','fan',changedAt],fan_driver_enabled:[${state.enabled},'','fan',changedAt]}); })()`
+        `(() => { const changedAt=Date.now()-60_000; pushPatch({fan_auto_mode:[1,'','fan',changedAt],fan_auto_reason:[${state.reason ?? FAN_REASON.PACK_TEMPERATURE},'','fan',changedAt],fan_duty_pct:[${state.duty},'%','fan',changedAt],fan_target_pct:[${state.target},'%','fan',changedAt],fan_driver_enabled:[${state.enabled},'','fan',changedAt]}); })()`
       );
       await evaluateOnPage(page, FRAME);
       assert.equal(
@@ -44,7 +54,7 @@ export async function checkCoolingFan(
       );
       if (state.fault) {
         assert.equal(
-          await evaluateOnPage(page, "document.querySelector('[data-fan-status] span').style.color === 'var(--bad)'"),
+          await evaluateOnPage(page, "document.querySelector('[data-fan-status]').style.color === 'var(--bad)'"),
           true,
           "Unsafe fan states must use fault ink."
         );
@@ -77,7 +87,7 @@ export async function checkCoolingFan(
     );
     assert.equal(
       await evaluateOnPage(page, "document.querySelector('[data-fan-status]').textContent"),
-      "Automatic · driving"
+      "Automatic control"
     );
   }
   for (const key of ["fan_auto_mode", "fan_driver_enabled", "fan_duty_pct", "fan_target_pct"]) {
@@ -118,4 +128,5 @@ export async function checkCoolingFan(
   );
   assert.equal(await evaluateOnPage(page, "document.querySelector('[data-signal=fan_target_pct]').textContent"), "68");
   await assertLayout(page);
+  await checkFanCommands(page, file);
 }

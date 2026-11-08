@@ -1,5 +1,4 @@
-import { HATCH_DUTY } from "../public/lib/power-edge.js";
-import { contrast, contrastOf, luminance, readPalettes, separation } from "./palette.ts";
+import { contrast, readPalettes, separation } from "./palette.ts";
 
 // Measures both palettes in public/style.css against the floors that file commits to,
 // so "if you darken any of these, measure it first" is enforced rather than hoped for.
@@ -41,9 +40,8 @@ const MARK_FLOORS: Record<string, number> = { "track": 1.5 };
 /** Marks sized by visibility rather than readability — see docs/ride-power.md. */
 const MARK_TOKENS = Object.keys(MARK_FLOORS);
 
-// Hatch-duty weighting and historical texture failures: docs/ride-power.md.
-const DASHED_ON_GROUND_FLOOR = 1.25;
-const DASHED_VS_SOLID_FLOOR = 1.15;
+// The approved locked stretches are a dashed centreline on the track; history: docs/ride-power.md.
+const LOCKED_DASH_FLOOR = 3;
 
 /**
  * ⚠️ --flow against EVERY other ink, not against one named partner.
@@ -105,16 +103,6 @@ if (incomplete.length > 0) {
   process.exit(1);
 }
 
-/**
- * The LUMINANCE two colours average to at a coverage fraction — what a dashed run of one
- * over the other looks like at a glance. Linear rather than sRGB because that is what the
- * eye integrates, and returned as a luminance rather than as a hex grey so contrastOf()
- * can measure it without an 8-bit rounding step in between.
- */
-function mix(ink: string, ground: string, coverage: number): number {
-  return coverage * luminance(ink) + (1 - coverage) * luminance(ground);
-}
-
 /** Every ink --flow has to stay away from, nearest first. */
 function flowSeparations(palette: Record<string, string>): Array<{ token: string; apart: number }> {
   return INK_TOKENS.filter(token => token !== "flow")
@@ -153,19 +141,11 @@ for (const [themeName, palette] of palettes) {
   if (separation(palette["flow"], palette["good"]) < 90) {
     failures.push(`${themeName}: drive/regen power fills are under 90 apart in a*b*`);
   }
-  // The dashed stretch, duty-weighted — see DASHED_ON_GROUND_FLOOR.
-  const dashed = mix(palette["track"], palette["tile"], HATCH_DUTY);
-  for (const against of [
-    { what: "the tile it is drawn on", token: "tile", floor: DASHED_ON_GROUND_FLOOR },
-    { what: "the solid track beside it", token: "track", floor: DASHED_VS_SOLID_FLOOR },
-  ]) {
-    const measured = contrastOf(dashed, luminance(palette[against.token]));
-    if (measured < against.floor) {
-      failures.push(
-        `${themeName}: a dashed stretch averages ${measured.toFixed(3)}:1 against ${against.what}, under ` +
-          `${against.floor}:1 — a derate would not read`
-      );
-    }
+  const lockedDash = contrast(palette["sub"], palette["track"]);
+  if (lockedDash < LOCKED_DASH_FLOOR) {
+    failures.push(
+      `${themeName}: the locked-power dash is ${lockedDash.toFixed(2)}:1 on track, under ${LOCKED_DASH_FLOOR}:1`
+    );
   }
   for (const { token, apart } of flowSeparations(palette)) {
     if (apart < FLOW_SEPARATION_FLOOR) {
@@ -193,13 +173,12 @@ for (const [themeName, palette] of palettes) {
     const row = INK_TOKENS.map(token => `${token} ${contrast(palette[token], palette[ground]).toFixed(1)}`).join("  ");
     console.log(`  on --${ground.padEnd(4)} ${row}`);
   }
-  const dashed = mix(palette["track"], palette["tile"], HATCH_DUTY);
+  const lockedDash = contrast(palette["sub"], palette["track"]);
   const [nearest] = flowSeparations(palette);
   console.log(
     `  marks on --tile   ` +
       MARK_TOKENS.map(token => `${token} ${contrast(palette[token], palette["tile"]).toFixed(2)}`).join("  ") +
-      `  dashed ${contrastOf(dashed, luminance(palette["tile"])).toFixed(3)} on tile` +
-      ` / ${contrastOf(dashed, luminance(palette["track"])).toFixed(3)} vs solid` +
+      `  locked dash ${lockedDash.toFixed(2)} on track` +
       `   --flow's nearest ink ${nearest.token} ${nearest.apart.toFixed(1)}`
   );
   const steps = RAMP.slice(0, -1)

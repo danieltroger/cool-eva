@@ -1,4 +1,16 @@
-# Ride Edge instrument
+# Ride power instrument
+
+The approved Ride hero is 224 px high with 64 px GPS speed, 32 px unsigned power, and 20 px SOC. Its 24 px power bar sits inside the padded card, between the numerals and the GPS/wheel footer. The axis stays fixed at 36 kW regen left and 130 kW drive right. Negative `pack_kw` grows right in drive blue; positive riding power grows left in regen green. The unchanged pure state/display helpers retain zero, direction, allowance, freshness and over-limit semantics.
+
+The band is 12 px high at y=6 within the 24 px SVG. Its ends are rounded and clipped independently of the ceiling ticks. A known locked stretch is a 2 px dashed line over the track, using `--sub` ink and a `4 4` pattern. The palette gate measures that actual ink against its track at a 3:1 floor. Unknown limits have no invented ceiling tick and retain a dashed neutral side. Fresh zero is a real limit. Measured excess remains red and the existing one-line status reports it; off-scale readings keep their full number while the finite bar ends at its fixed axis.
+
+Zero has short reference marks above and below the band. Fresh allowance ticks extend from y=3 through y=21. They paint after the band and remain outside its rounded clip. There is no diagonal hatch, full-height zero gap, edge attachment, or visible ceiling legend in the approved instrument.
+
+While charging, Ride keeps speed and GPS/wheel context; power direction, magnitude, bar and SOC are hidden, as in the approved charging-state sketch. The hidden band retains its space. The Charge area owns those readings during that state. Hardware and thermal allocation are described in [ride-thermal.md](ride-thermal.md).
+
+## Earlier instrument findings
+
+The text below records the previous Edge and vertical designs. Their geometry and texture policy are historical, rather than requirements for the approved inset bar. In particular, the old diagonal texture used coverage `(3 × √2) / 8`, with duty-weighted contrast floors of 1.25 against tile and 1.15 against solid track. Those measurements cannot verify the new dashed line; its actual ink/ground pair is checked instead.
 
 The Ride panel has a 176 px envelope with 64 px GPS speed, 34.4 px unsigned power magnitude, GPS/wheel context and SOC. The full-width bottom Edge is 18 CSS pixels plus a 2 px upper tick extension. Negative pack power is drive and grows right; positive riding power is regen and grows left. Direction is explicit: DRIVE or REGEN with confirmed motion, POWER IN for incoming power while parked or motion is unconfirmed, CHARGING for confirmed incoming charge, POWER OUT for outgoing power while parked or charging, and POWER for displayed zero. POWER IN uses the same green as REGEN, including small values. The internal signed reading still drives the unchanged Edge; a charging band stays inactive and neutral.
 
@@ -50,3 +62,7 @@ The retired bar check’s fill contrast floor of 4:1 against the track and blue/
 The rider-facing number is unsigned, using the existing precision. Its heading and accessible description carry the direction. Incoming power is green at every nonzero displayed magnitude, including 0.2 kW; outgoing power is blue. A value rounded to 0.0 is POWER in foreground ink, with no negative zero. Fault placeholders and wording use bad ink; missing/stale values use sub ink. This is local to Ride in PR 2: Charge follows in PR 4 and All remains raw/signed until its explicit raw label in PR 5.
 
 DRIVE requires a fresh positive wheel/OBD speed (GPS fallback). When stationary or motion is unavailable, outgoing power says POWER OUT. Confirmed charging always takes priority over motion for the label, and a negative reading is never labelled CHARGING. Signed readings remain intact in the store and all physical calculations.
+
+## Retired track-token note
+
+The unfilled part of every bar and ring, and the power meter's own grey, was sized by visibility rather than readability. It was the one mark not held to the 6:1 floor, but `MARK_FLOORS` in `scripts/check-theme-contrast.ts` held it to its own visibility floor after 2026-09-08: walking `--track` towards `--tile` had previously passed every check while making the meter invisible. It also set the old derate's legibility because the limited stretch was that same grey dashed against tile. Raising it strengthened the texture and weakened the fill edge. At 1.53:1 against tile, the drive fill still cleared its 4:1 floor at 4.44:1.

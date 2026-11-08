@@ -54,10 +54,21 @@ export async function checkPowerWords(
       `(() => {
       const label=document.querySelector('[data-power-direction]');
       const number=document.querySelector('.ride-kilowatts');
-      return {label:label.textContent,magnitude:number.querySelector('[data-signal=pack_kw]').textContent,labelInk:label.style.color,numberInk:number.style.color,accessible:document.querySelector('.power-edge').getAttribute('aria-label'),status:document.querySelector('.ride-power-status').textContent};
+      return {label:label.textContent,magnitude:number.querySelector('[data-signal=pack_kw]').textContent,labelInk:label.style.color,numberInk:number.style.color,accessible:document.querySelector('.power-edge').getAttribute('aria-label'),status:document.querySelector('.ride-power-status').textContent,numberVisible:number.getBoundingClientRect().height>0,socVisible:document.querySelector('.ride-soc').getBoundingClientRect().height>0};
     })()`
-    )) as { label: string; magnitude: string; labelInk: string; numberInk: string; accessible: string; status: string };
-    assert.equal(actual.label, state.label, `${state.name}: explicit direction`);
+    )) as {
+      label: string;
+      magnitude: string;
+      labelInk: string;
+      numberInk: string;
+      accessible: string;
+      status: string;
+      numberVisible: boolean;
+      socVisible: boolean;
+    };
+    assert.equal(actual.label, state.charging ? "" : state.label, `${state.name}: explicit riding direction`);
+    assert.equal(actual.numberVisible, !state.charging, "Charge owns measured power while charging.");
+    assert.equal(actual.socVisible, !state.charging, "Charge owns SOC while charging.");
     assert.equal(actual.magnitude, state.magnitude, `${state.name}: unsigned magnitude and no negative zero`);
     assert.equal(actual.labelInk, `var(--${state.color})`, `${state.name}: direction colours include small readings`);
     assert.equal(actual.numberInk, actual.labelInk);
@@ -66,7 +77,7 @@ export async function checkPowerWords(
       "The accessible label must name the same direction and magnitude."
     );
     if (state.name === "charge-power-out") {
-      assert.equal(actual.status, "Power out · riding limits off");
+      assert.equal(actual.status, "GPS · wheel 0");
     }
     await assertLayout(page);
     if (capture && ["drive", "regen", "zero"].includes(state.name)) {

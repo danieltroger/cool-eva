@@ -1033,6 +1033,11 @@ const CHECKS: SelfCheck[] = [
       "not fail",
   },
   {
+    script: "scripts/check-ride-dashboard.ts",
+    covers:
+      "approved Ride thermal estimates: live resistance, signed coolant difference/removal, independent input quality, disabled probes and bounded comparison meter without clamping readings",
+  },
+  {
     script: "scripts/check-ride-power.ts",
     covers:
       "Ride's fixed horizontal power axis, sign, voltage-derived limits, genuine zero, partial unknown/fault/stale limits and charging presentation",

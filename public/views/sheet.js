@@ -8,7 +8,6 @@ import * as units from "../lib/units.js";
 import * as theme from "../lib/theme.js";
 import { saveWaypoint } from "../lib/waypoint.js";
 import { armed } from "../lib/arming.js";
-import { FanControl, refreshFanStatus } from "./fan.js";
 import { TripStats } from "./trip-stats.js";
 import { WaypointList, collapseWaypointList } from "./waypoints.js";
 import { blankWaypointMemory, shouldRefreshOnWaypoint } from "../lib/waypoint-list.js";
@@ -48,7 +47,6 @@ export function openSheet() {
   // sheet down by however long the ride was. ./waypoints.js says it there too.
   collapseWaypointList();
   void refreshStatus();
-  void refreshFanStatus();
 }
 
 export const status = van.state(/** @type {StatusPayload | null} */ (null));
@@ -87,7 +85,6 @@ export function Sheet() {
       h2({ class: "sheet-heading" }, "Units"),
       UnitsToggle(),
       MenuLink("Settings", "settings"),
-      FanControl(),
       WaypointButton(),
       MenuLink("This session & waypoints", "session"),
       DownloadButton(),
