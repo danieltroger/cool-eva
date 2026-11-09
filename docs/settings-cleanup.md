@@ -8,9 +8,11 @@ The removed empty-history prose previously led with an in-app read path and then
 
 Download all ride logs performs the existing flush/download action, including when current recording is off. An action-looking download button no longer navigates to Settings. The endpoint concatenates saved sealed logs; the label does not imply only the current ride.
 
-## Remaining full-sketch API gap
+## Current Settings scope
 
-This PR is limited to the six cleanup items requested by the coordinator. The existing Settings model still uses subpages and per-field saves. The complete approved Settings sketch also requires Wi-Fi provisioning with trial/rollback, independent recording enable/disable and per-phone authorization. `StartupSettings` in `src/settings/schema.ts`, the redacted `PublicSettings` in `src/settings/view.ts`, and the routes in `src/http/settings.ts` contain no such network-password/purpose, recording-enable or per-phone-permission fields. A hotspot name is only used for connection checks; a configured recording public key is not an independent recording switch. Those controls need separate backend work before the UI can make their promises.
+The [inline Settings page](settings-batch.md) replaces the subpages and per-field saves with one draft and one Save/Cancel row. It uses existing settings only. Recording readiness and folders are read-only; public-key replacement and the existing global automatic-current permission remain available. There is no independent recording switch or per-phone control preference.
+
+The hotspot name remains a connection-monitoring choice. It does not provision Wi-Fi. Network/password editing will reuse #337 after its real-network acceptance, preserving its trial/rollback behavior and applying that change last in a shared Save.
 
 The former raw-stamp formatter header recorded why raw words mattered: the server phrases the decoded outcome, while the audit journal records the decoded date and odometer rather than all four raw words. On the first 2026-09-08 read those words were not retained in the journal or page. The diagnostic formatter remains available; [service-stamp.md](service-stamp.md) preserves the complete evidence and market-dependent odometer-unit limitation.
 

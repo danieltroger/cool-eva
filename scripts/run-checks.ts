@@ -1178,6 +1178,11 @@ const CHECKS: SelfCheck[] = [
       "the retained Settings destinations, removal of Motorcycle/CAN summary choices, and short Bike service dates that reject missing, empty and malformed stamps; real layout/help/download behavior runs in the phone browser gate",
   },
   {
+    script: "scripts/check-settings-batch.ts",
+    covers:
+      "one revision-checked Settings PATCH, reversible phone previews, complete Cancel, stale/failed/missing readback retention, single-flight saves and existing key handover confirmations",
+  },
+  {
     script: "scripts/check-settings-phone.ts",
     covers:
       "phone drafts scoped to the confirmed Pi, stale edit CAS, active/learned revision semantics and disarm on process changes",

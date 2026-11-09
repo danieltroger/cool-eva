@@ -13,5 +13,4 @@ export const SETTINGS_MAP = [
 /** @type {Record<string, string>} */
 export const SETTINGS_PAGE_TITLES = {
   ...Object.fromEntries(SETTINGS_MAP.map(item => [item.key, item.title])),
-  access: "Who can control my bike?",
 };

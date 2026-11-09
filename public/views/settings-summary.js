@@ -25,7 +25,6 @@ export function MigrationSummary(dismissible, riding = false) {
           current.saved.automaticDcChargingEnabled
             ? "Automatic DC current reduction is allowed. Review it under Charging."
             : "Your automatic DC current reduction OFF choice was preserved.",
-          "Anyone on this network or holding the Bluetooth key can control the bike. See Who can control my bike?",
           current.notices.includes("ride-log-directory-empty")
             ? "The empty recording directory was treated as unset. Recordings use the default location."
             : "",
@@ -50,7 +49,6 @@ export function MigrationSummary(dismissible, riding = false) {
         { class: "settings-links" },
         current.notices.includes("coolant-default-off") ? summaryLink("Bike setup", "bike") : null,
         summaryLink("Charging", "charging"),
-        summaryLink("Who can control my bike?", "access"),
         legacy ? SiriShortcutLink() : null
       ),
       dismissible

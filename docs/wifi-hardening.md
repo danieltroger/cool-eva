@@ -4,6 +4,12 @@ The Pi serves the dashboard to **anyone on the bike's wifi**, unauthenticated, a
 
 Written while closing #92, #150, #130 and #129, which are four descriptions of the same surface.
 
+## Who can control my bike?
+
+Cool Eva does not have individual user accounts. Anyone who can reach it over your Wi-Fi or phone hotspot can change settings and request changes to the motorcycle. Anyone with your Cool Eva Bluetooth access code has the same access over Bluetooth. Confirmations help prevent accidental taps; they do not stop another device from sending its own requests. Use a network you trust and do not make Cool Eva accessible from the public internet. Motorcycle commands still pass the app’s checks and are recorded in its change history.
+
+The former setup summary also said: “Anyone on this network or holding the Bluetooth key can control the bike. See Who can control my bike?” This wording now lives here rather than in a separate Settings page. The dashboard's licence link remains in its software section.
+
 ## The one mechanism, and its exact limit
 
 Every endpoint that changes something requires a header: **`X-Cool-Eva: <its own value>`**.

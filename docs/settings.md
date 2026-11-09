@@ -1,6 +1,6 @@
 # Settings storage contract
 
-The runtime cutover activates the storage foundation from #331. The service loads one active snapshot before starting configurable components. Dashboard saves persist choices for the next explicit restart; they do not replace live components. See [first boot and deployment](settings-cutover.md) for the exact move, visible states and failure behaviour.
+The runtime cutover activates the storage foundation from #331. The service loads one active snapshot before starting configurable components. Dashboard saves persist choices for the next explicit restart; they do not replace live components. The [inline Settings transaction](settings-batch.md) batches the existing editable choices in one revision-checked request. See [first boot and deployment](settings-cutover.md) for the exact move, visible states and failure behaviour.
 
 The shared paths and permissions, including capture cleanup, are in [data-layout.md](data-layout.md). The settings service is the sole data mover. The installer may invoke/wait for it and verify completion, but cannot run a second move or keep another move journal. Stop all archive writers and install the non-interactive capture pruner before moving captures. `beforeDataMove` is the integration hook for those prerequisites; production cannot use a no-op there.
 
@@ -18,7 +18,7 @@ The store serialises all writes and requires an acquired OS writer lock. Linux u
 
 - Network candidates are inactive (`autoconnect=no`) with bounded authentication retries, never the existing profiles' unlimited `auth-retries=0`. Only an explicit armed, motion-checked apply authorises one trial. Persist a confirmed, failed or interrupted outcome; failed/interrupted trials never switch networks at a later start until the owner explicitly retries/edits. Bring up the retained profile explicitly. A failed trial followed by two starts must not drop the hotspot again. Network UI is a later phase, using the approved compact action row.
 - The motion predicate comes from service-gate.ts's rule table with unknowns accepted; do not maintain another list/windows. Restart uses the process generation and bounded reservation, without restart receipts or operation IDs.
-- Data root and Wi-Fi diagnostic location are display-only. Only ride-log and service-data locations are editable.
+- Folders are display-only in the dashboard. The existing validated storage-path API and offline configuration writer remain available for administration.
 - The legacy-name cutover check scans executable string/template literals and UI text, **not comments**. Comments follow the repo's “block you touch” obligation; this check does not force an unrelated comment migration into the cutover PR.
 - Keep an existing migrated Bluetooth server as-is. Creating/rotating its code requires the saved-copy confirmation and pending/active handover; reconnect readback confirms the active key.
 

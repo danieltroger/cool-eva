@@ -6,6 +6,7 @@ import { BLE_MODE, onBleStatus, storedSecret } from "./ble-link.js";
 import { connection } from "./store.js";
 import { armed } from "./arming.js";
 import { destination } from "./destination.js";
+import { peekTab } from "./router.js";
 
 /** @typedef {import("../../src/settings/view.ts").SettingsReply} SettingsReply */
 /** @typedef {import("../../src/settings/view.ts").SettingsActionReply} SettingsActionReply */
@@ -219,7 +220,10 @@ export function watchSettings() {
   }
   void refreshSettings();
   setInterval(() => {
-    if (destination.rawVal === "settings" && connection.rawVal === "live") {
+    if (
+      (destination.rawVal === "settings" || (!destination.rawVal && peekTab() === "more")) &&
+      connection.rawVal === "live"
+    ) {
       void refreshSettings();
     }
   }, 2_500);
