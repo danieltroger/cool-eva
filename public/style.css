@@ -284,7 +284,7 @@
 .layout-accordion-body.service-action-list {
   gap: var(--space-5);
 }
-.service-operations {
+.layout-card.service-operations {
   padding: 0;
   gap: 0;
   overflow: hidden;

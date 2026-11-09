@@ -22,6 +22,8 @@ export async function checkServiceRegroupBrowser(page: HeadlessPage) {
           heading:parameters.querySelector(':scope > .label').innerText,
           parameterChildren:[...parameters.children].map(node=>node.className),
           operations:[...operations.querySelectorAll(':scope > details > summary')].map(node=>node.textContent),
+          operationsPadding:getComputedStyle(operations).padding,
+          operationsGap:getComputedStyle(operations).gap,
           signals:document.querySelector('.service-page > .all-signals > summary').textContent,
           readiness:document.querySelector('.service-page').innerText.includes('Bike controls ready'),
           pageChildren:document.querySelector('.service-page').children.length
@@ -32,6 +34,8 @@ export async function checkServiceRegroupBrowser(page: HeadlessPage) {
       heading: "WRITE PARAMETERS",
       parameterChildren: ["label", "layout-stack service-parameters", "layout-stack service-backup"],
       operations: ["Service actions", "Recent changes"],
+      operationsPadding: "0px",
+      operationsGap: "0px",
       signals: "Current CAN values",
       readiness: false,
       pageChildren: 3,
