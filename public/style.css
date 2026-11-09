@@ -1991,10 +1991,10 @@ body {
 }
 
 .range-view > .range-margin {
-  height: 140px;
+  height: calc(var(--space-4) * 7);
 }
 .range-view > .range-timer {
-  height: 96px;
+  height: calc(var(--space-4) * 4);
 }
 .range-view > .range-consumption {
   height: 108px;
@@ -2039,10 +2039,6 @@ body {
 .range-availability[data-state]:not([data-state="fresh"]) {
   background: none;
   border: 1px dashed var(--sub);
-}
-.range-rule {
-  height: 1px;
-  background: var(--tile-edge);
 }
 .cells-view .value {
   margin: 0;

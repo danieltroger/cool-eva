@@ -4,18 +4,8 @@ import van from "../vendor/van-1.6.1.js";
 import { chartTick, peek } from "../lib/store.js";
 import { readingStatus, worstStatus, statusWord, freshValue } from "../lib/reading-status.js";
 import { REGEN_CEILING_A, rangeDistanceKey, rangeEnergyKey } from "../lib/range-readings.js";
-import {
-  headroomMv,
-  restingHeadroomMv,
-  sagPerCellMv,
-  limitFraction,
-  remainingWh,
-  rollingConsumption,
-  rollingRangeKm,
-} from "../lib/derive.js";
-import { CUTOFF_TIMER_S, dwellSeconds, secondsRemaining } from "../lib/dwell.js";
-import { packResistance } from "../lib/pack-resistance-live.js";
-import { resistanceNote } from "../lib/pack-resistance.js";
+import { headroomMv, limitFraction, remainingWh, rollingConsumption, rollingRangeKm } from "../lib/derive.js";
+import { dwellSeconds, secondsRemaining } from "../lib/dwell.js";
 import { monotonicNow } from "../lib/clock.js";
 import * as colors from "../lib/colors.js";
 import * as units from "../lib/units.js";
@@ -53,25 +43,13 @@ function MarginCard() {
         worstStatus(keys) === "fresh" ? String(Math.round(headroomMv() ?? 0)) : statusWord(worstStatus(keys))
       ),
       span({ class: "hero-unit" }, () => (worstStatus(keys) === "fresh" ? "mV" : ""))
-    ),
-    div({ class: "sub", "data-reading": "rest-sag" }, () => {
-      const status = worstStatus([...keys, "pack_a"]);
-      return status === "fresh"
-        ? `${Math.round(restingHeadroomMv() ?? 0)} mV at rest · ${Math.round(sagPerCellMv() ?? 0)} mV sag`
-        : `Rest/sag ${statusWord(status)}`;
-    }),
-    div({ class: "sub", "data-reading": "cutoff" }, () => {
-      const cutoff = freshValue("cell_cutoff_mv");
-      const identity = freshValue("cell_lowest_v_idx");
-      const note = resistanceNote(packResistance.val) || "measured R";
-      return `Cut-off ${cutoff === null ? statusWord(readingStatus("cell_cutoff_mv")) : `${cutoff.toFixed(0)} mV`} · BMS index ${identity === null ? statusWord(readingStatus("cell_lowest_v_idx")) : String(identity)} · ${note}`;
-    })
+    )
   );
 }
 
 function TimerCard() {
   return div(
-    { class: "tile range-timer" },
+    { class: "tile layout-card layout-between range-timer" },
     div({ class: "label" }, "Estimated cut-off timer"),
     div(
       {
@@ -87,9 +65,7 @@ function TimerCard() {
           ? "clear"
           : `${Math.round(secondsRemaining())} s`;
       }
-    ),
-    div({ class: "range-rule" }),
-    div({ class: "sub" }, `${CUTOFF_TIMER_S} s allowed below cut-off; drains above it`)
+    )
   );
 }
 
