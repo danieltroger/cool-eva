@@ -1,10 +1,18 @@
 # Range and Cells
 
-Range keeps its existing #hypermile URL. Its 648 px fixed layout includes a 44 px selector, 140 px weakest-cell card, 96 px estimated timer, 112 px allowance pair, 108 px rolling-consumption card, 92 px energy/spread pair and 56 px gaps/padding. Amp readings remain 34.4 px, their configured-ceiling/share captions 16 px and bars 8 px. The weakest-cell value remains 64 px.
+Range keeps its existing #hypermile URL. Its compact 536 px card stack includes a 112 px weakest-cell card, 64 px estimated timer row, 112 px allowance pair, 108 px rolling-consumption card, 92 px energy/range pair and 48 px gaps/padding. Amp readings remain 34.4 px, their configured-ceiling/share captions 16 px and bars 8 px. The weakest-cell value remains 64 px.
+
+The earlier 648 px fixed layout included a separate 44 px selector, 140 px weakest-cell card, 96 px timer, the same 112/108/92 px lower cards and 56 px gaps/padding. That budget and the older energy/spread composition are historical; the selector now lives in the header.
 
 Missing, stale and rejected inputs retain their cards and explicit states. Zero current allowance is a real empty allowance; unknown allowance gets a dashed outline without a capacity fill. Derivations require fresh accepted inputs. Fault memory is shared with Ride, Cooling and ordinary tiles. The cut-off timer never says clear when its inputs are unavailable.
 
 The approved [option C module map](cell-module-map.md) now owns Cells at #hypermile/cells. It replaces the strip, per-LMU tables and history trace described below.
+
+## Explanations kept off the riding screen
+
+The removed margin lines showed the rest-compensated headroom and current-induced sag in millivolts, then the configured cut-off, the reported weakest-cell BMS index and the resistance estimate's provenance (measured, modelled or assumed). The displayed large margin remains the instantaneous weakest-cell voltage above cut-off. Removing those lines changes no calculation or sensor validation. A reported BMS index is not a physical position; [the module map](cell-module-map.md) retains that distinction.
+
+The removed timer sentence said that 60 seconds were allowed below cut-off and drained above it. The countdown remains an estimate: it fills below the threshold and drains at the same rate above it, bounded to 0–60 seconds. Symmetric drain is the existing model because this bike's actual BMS reset behavior has not been observed. Background gaps contribute at most two seconds per update. See [the dwell model](dashboard-decisions.md) under “The under-voltage dwell” for the assumptions; the compact row retains its Estimated label.
 
 **Retired Cells composition:** Cells was a scrolling URL subview outside the riding cycle. Its next gesture selected Charge. The strip and list retained all 81 physical positions in module order; missing or rejected readings could not shift later cells or retain a plausible coloured bar. Full readings followed the strip and weakest/strongest identities. Battery & cooling was a menu page, reached from Bike information, with the same gesture/automatic exclusions as other menu pages. Browser history retained actual origin for Cells and fell back to Range on a direct entry.
 

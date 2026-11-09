@@ -12,13 +12,12 @@ export async function assertRangeContent(page: HeadlessPage) {
     page,
     `(() => {
     const view=document.querySelector('.range-view');const field=name=>view.querySelector('[data-reading="'+name+'"]').textContent;
-    return {labels:[...view.querySelectorAll('.label')].map(element=>element.textContent),margin:field('margin'),rest:field('rest-sag'),cutoff:field('cutoff'),timer:field('dwell'),drive:field('allowed_discharge_a'),regen:field('allowed_regen_a'),energy:field('energy'),range:field('range-estimate'),horizon:field('consumption-horizon'),shares:[...view.querySelectorAll('.range-share')].map(element=>element.textContent),sizes:[...view.querySelectorAll(':scope > .range-margin,:scope > .range-timer,:scope > .range-pair,:scope > .range-consumption')].map(element=>element.getBoundingClientRect().height),height:view.getBoundingClientRect().height,fonts:[getComputedStyle(view.querySelector('.range-margin-number')).fontSize,getComputedStyle(view.querySelector('.range-allowance .value')).fontSize,getComputedStyle(view.querySelector('.range-share')).fontSize],bars:[...view.querySelectorAll('.range-availability')].map(element=>({height:element.getBoundingClientRect().height,state:element.dataset.state,width:parseFloat(element.firstElementChild.style.width)})),hidden:[...view.querySelectorAll('[data-reading]')].filter(element=>{if(element.getBoundingClientRect().width<=0||element.getBoundingClientRect().height<=0)return true;for(let parent=element;parent;parent=parent.parentElement){const style=getComputedStyle(parent);if(style.display==='none'||style.visibility!=='visible'||Number(style.opacity)===0)return true;}return false;}).map(element=>element.dataset.reading),instantPower:!!view.querySelector('[data-signal=pack_kw]')};
+    return {labels:[...view.querySelectorAll('.label')].map(element=>element.textContent),margin:field('margin'),explanations:!!view.querySelector('[data-reading=rest-sag],[data-reading=cutoff],.range-timer .sub,.range-rule')||/BMS index|modelled R|at rest|mV sag|allowed below cut-off|drains above/.test(view.innerText),timer:field('dwell'),drive:field('allowed_discharge_a'),regen:field('allowed_regen_a'),energy:field('energy'),range:field('range-estimate'),horizon:field('consumption-horizon'),shares:[...view.querySelectorAll('.range-share')].map(element=>element.textContent),sizes:[...view.querySelectorAll(':scope > .range-margin,:scope > .range-timer,:scope > .range-pair,:scope > .range-consumption')].map(element=>element.getBoundingClientRect().height),height:view.getBoundingClientRect().height,fonts:[getComputedStyle(view.querySelector('.range-margin-number')).fontSize,getComputedStyle(view.querySelector('.range-allowance .value')).fontSize,getComputedStyle(view.querySelector('.range-share')).fontSize],bars:[...view.querySelectorAll('.range-availability')].map(element=>({height:element.getBoundingClientRect().height,state:element.dataset.state,width:parseFloat(element.firstElementChild.style.width)})),hidden:[...view.querySelectorAll('[data-reading]')].filter(element=>{if(element.getBoundingClientRect().width<=0||element.getBoundingClientRect().height<=0)return true;for(let parent=element;parent;parent=parent.parentElement){const style=getComputedStyle(parent);if(style.display==='none'||style.visibility!=='visible'||Number(style.opacity)===0)return true;}return false;}).map(element=>element.dataset.reading),instantPower:!!view.querySelector('[data-signal=pack_kw]')};
   })()`
   )) as {
     labels: string[];
     margin: string;
-    rest: string;
-    cutoff: string;
+    explanations: boolean;
     timer: string;
     drive: string;
     regen: string;
@@ -43,12 +42,7 @@ export async function assertRangeContent(page: HeadlessPage) {
     "Range at this rate",
   ]);
   assert.equal(content.margin, "120");
-  assert.match(content.rest, /\d+ mV at rest · \d+ mV sag/);
-  assert.ok(
-    content.cutoff.includes("3000 mV") &&
-      content.cutoff.includes("modelled R") &&
-      content.cutoff.includes("BMS index 1")
-  );
+  assert.equal(content.explanations, false, "Range keeps derivation and provenance in the docs.");
   assert.equal(content.timer, "clear");
   assert.equal(content.drive, "210");
   assert.equal(content.regen, "55");
@@ -66,8 +60,8 @@ export async function assertRangeContent(page: HeadlessPage) {
   );
   assert.match(content.horizon, /^Last [\d.]+ km$/);
   assert.deepEqual(content.shares, ["53% of 400 A", "46% of 120 A"]);
-  assert.deepEqual(content.sizes, [140, 96, 112, 108, 92]);
-  assert.equal(content.height, 596);
+  assert.deepEqual(content.sizes, [112, 64, 112, 108, 92]);
+  assert.equal(content.height, 536);
   assert.deepEqual(content.fonts, ["64px", "34.4px", "16px"]);
   assert.deepEqual(
     content.bars.map(bar => [bar.height, bar.state]),
@@ -119,31 +113,7 @@ export async function checkRangeCases(
       state: "fault",
     },
     { name: "missing-cutoff", clear: "cell_cutoff_mv", field: "dwell", text: "—" },
-    {
-      name: "fault-cell-identity",
-      patch: "cell_lowest_v_idx:[NaN,'','cells']",
-      field: "cutoff",
-      text: "Cut-off 3000 mV · BMS index fault · modelled R",
-    },
-    {
-      name: "stale-cell-identity",
-      patch: "cell_lowest_v_idx:[1,'','cells',Date.now()-30_000]",
-      field: "cutoff",
-      text: "Cut-off 3000 mV · BMS index stale · modelled R",
-    },
-    {
-      name: "missing-cell-identity",
-      clear: "cell_lowest_v_idx",
-      field: "cutoff",
-      text: "Cut-off 3000 mV · BMS index — · modelled R",
-    },
     { name: "fault-minimum", patch: "cell_min_mv:[65535,'mV','battery']", field: "margin", text: "fault" },
-    {
-      name: "stale-current",
-      patch: "pack_a:[-142,'A','battery',Date.now()-30_000]",
-      field: "rest-sag",
-      text: "Rest/sag stale",
-    },
     { name: "energy-fault", patch: "bms_remaining_energy_wh:[-1,'Wh','battery']", field: "energy", text: "fault" },
     {
       name: "range-energy-fault",
