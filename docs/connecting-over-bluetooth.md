@@ -77,7 +77,6 @@ In Bluefy and Chrome, open the page while you still have signal and leave the ta
 | **The list stays empty** | The Pi is not advertising. Check the journal for `advertising dashboard service` (step 1.3). If it shows `Operation already in progress` over and over, the Pi's Bluetooth adapter is wedged ([`ble-adapter-wedge.md`](ble-adapter-wedge.md)). Restarting the service does **not** clear that; the service power-cycles the adapter itself after a few failures, so give it a minute, and `sudo reboot` if it persists. Also check you are in range. |
 | **Connection attempt refused: wrong secret** | Use the owner’s saved current Bluetooth key and import it again if needed. A refused attempt does not blacklist the key; the connection policy retries. |
 | **Connection attempt refused: another phone is connected** | The Pi serves one authenticated phone at a time. Disconnect that phone, then retry. |
-| **Bluetooth needs its own address** | This page’s exact origin is not allowed. Use the configured hosted URL or the native app; fork owners configure their exclusive origin in `public/lib/ble-origin.js`. |
 | **Bluetooth permission is off** (app) | iPhone Settings → Cool Eva → Bluetooth. |
 | **Link lost: …** that keeps coming back | Range, or the Pi's one radio also holding the Connectivity Hub link. Leave `journalctl -u cool-eva -f` running while it happens; the `ble-server:` lines say why. |
 | Live tiles work but a download crawls | BLE can be much slower than wifi; throughput on the Pi is still unmeasured. The ride log shows its progress under its button. |
@@ -90,7 +89,7 @@ Only a phone that knows the generated key. Anyone in range can see the dashboard
 
 The key lives in the Pi’s private settings and in the browser/app or saved copy on your devices. To revoke a phone, create and save a new key in Settings, then explicitly Restart.
 
-The dashboard has its own Worker origin, separate from the key generator and other sites. Browser storage is shared by origin, not by project path. See [the exact-origin allowlist and fork instructions](ble-server.md#hosted-pages-and-origin-isolation). Address privacy remains an optional, unverified choice: [phone reconnect and hub enrolment trade-offs](ble-server.md#address-privacy-is-optional-and-remains-off-pending-hardware-verification) explain why it stays off until hardware checks pass.
+The dashboard has its own Worker origin, separate from the key generator and other sites. Browser storage is shared by origin, not by project path. The dashboard can use Bluetooth on any page where the browser provides Web Bluetooth. Address privacy remains an optional, unverified choice: [phone reconnect and hub enrolment trade-offs](ble-server.md#address-privacy-is-optional-and-remains-off-pending-hardware-verification) explain why it stays off until hardware checks pass.
 
 ## Earlier branch instructions
 

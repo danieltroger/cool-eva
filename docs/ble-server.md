@@ -37,7 +37,7 @@ BlueZ broadcasts notifications to every subscribed device, so possession of the 
 
 Web Bluetooth requires a secure context. The ordinary Pi dashboard at `http://cool-eva.local` cannot open Web Bluetooth, so browser BLE needs a second copy of `public/` over HTTPS. `.github/workflows/workers.yml` publishes those files as-is to the `cool-eva-dashboard` Worker on pushes to `main` or manual dispatch on `main`. The iOS app instead bundles `public/`, the native bridge and a file-sharing interface, so it can load without reception. There is one BLE link per loaded page. A browser device chooser requires a tap, which is why initial selection is an explicit Connect action rather than an automatic retry.
 
-`BLE_MODE` is fixed by the page's source: Pi HTTP uses fetch/WebSocket; HTTPS and the native app have no Pi at their origin and use BLE, subject to the exact-origin gate. Explicit localhost `?transport=ble` supports development. The hosted page comes from Cloudflare; subsequent dashboard data travels directly between phone and Pi over BLE.
+`BLE_MODE` is fixed by the page's source: Pi HTTP uses fetch/WebSocket; HTTPS and the native app have no Pi at their origin and use BLE. Explicit localhost `?transport=ble` supports development. The hosted page comes from Cloudflare; subsequent dashboard data travels directly between phone and Pi over BLE.
 
 Assets in `index.html`, `params.html` and the manifest use relative paths. The Worker serves them at its root. The original BLE-server documentation recorded a headless Chrome check of the former Pages `/cool-eva/` path: modules, stylesheet and manifest resolved below that path, nothing escaped it, and the page entered BLE mode. That remains historical validation. The current local checks and hardware/deployment limits are listed below.
 
@@ -45,13 +45,11 @@ Every endpoint call must go through **`request()` in `public/lib/transport.js`**
 
 ## Hosted pages and origin isolation
 
-The hosted dashboard is enabled at **`https://cool-eva-dashboard.cool-eva.workers.dev`**. Its exact origin is dedicated to this dashboard; the key page has a different Worker origin. Browser localStorage is shared by **origin**, not by project path. The old shared GitHub Pages origin is no longer allowed. Riders must **re-enter their saved Bluetooth access code** at the new address; storage cannot move across origins. Update bookmarks and keep a recoverable copy.
+The hosted dashboard is enabled at **`https://cool-eva-dashboard.cool-eva.workers.dev`**. Its exact origin is dedicated to this dashboard; the key page has a different Worker origin. Browser localStorage is shared by **origin**, not by project path. Riders must **re-enter their saved Bluetooth access code** at the new address; storage cannot move across origins. Update bookmarks and keep a recoverable copy.
 
 Unpublishing leaves riders' saved Bluetooth codes in browser storage under `danieltroger.github.io`, so do not publish another GitHub Pages site on that account unless the Pi's Bluetooth code has been rotated first. After re-entering the code at the new address, riders may clear the old site's data in their browser.
 
-The exact HTTPS origin allowlist is committed in **`public/lib/ble-origin.js`**. Fork owners add their own exact origin (for example, `https://your-exclusive-host.example`) only when that whole origin is dedicated to the dashboard. Use `new URL(yourDashboardURL).origin` to identify it, with no path or trailing slash. Do not allow the key page, sibling Workers, deployment previews or wildcard hosts. No build step or runtime environment variable is involved. See [the cutover order](hosted-pages.md#ordered-cutover-and-pages-retirement) before unpublishing the old Pages deployment.
-
-On an unlisted HTTPS host the page says **“Bluetooth needs its own address”**, offers no BLE connection or key form, and removes the legacy key from that origin without reading it. Namespacing a storage key or using a different project path does not isolate it. The genuine bundled `cooleva://app/` URL with its native bridge is allowed separately; custom-scheme origins may serialize as `null`, so protocol and host are checked directly. Explicit `?transport=ble` on localhost is supported for development. A native-bridge object on an unlisted HTTPS page cannot bypass the gate.
+The dashboard can use Bluetooth on any page where the browser provides Web Bluetooth.
 
 The Pi's ordinary HTTP dashboard continues to use fetch/WebSocket. Hosted HTTPS and the native app use BLE. The browser chooser is filtered by the common service UUID; it need not find an advertised name. Native discovery falls back to **Unnamed Pi**. An unnamed device does not establish its identity; the sealed WELCOME verifies the shared key.
 

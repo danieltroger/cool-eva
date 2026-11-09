@@ -8,89 +8,40 @@ import { createRig, helloFrame, KEY } from "./ble-check-rig.ts";
 
 export async function checkBleKeys(): Promise<void> {
   await startupKeys();
-  await originsAndKeys();
+  await clientKeys();
   await productionReplay();
 }
 
-async function originsAndKeys(): Promise<void> {
-  for (const url of [
-    "https://danieltroger.github.io/",
-    "https://danieltroger.github.io/cool-eva/",
-    "https://danieltroger.github.io/another/",
-    "https://unconfigured.invalid/cool-eva/",
-    "https://unconfigured.invalid/another/",
-    "https://cool-eva-keys.cool-eva.workers.dev/",
-    "https://other.cool-eva.workers.dev/",
-    "https://preview-cool-eva-dashboard.cool-eva.workers.dev/",
-    "https://cool-eva-dashboard.cool-eva.workers.dev.evil.invalid/",
-    "http://cool-eva-dashboard.cool-eva.workers.dev/",
-    "https://cool-eva-dashboard.cool-eva.workers.dev:8443/",
-    "cooleva://other/index.html",
-    "cooleva://app:8443/index.html",
-    "file:///index.html",
-  ]) {
-    let storageRead = 0;
-    let requested = 0;
-    let removed = 0;
-    const client = createBleLink({
-      url: new URL(url),
-      storage: {
-        getItem: () => {
-          storageRead++;
-          return KEY;
-        },
-        setItem: () => {
-          throw new Error("unsafe origin stored a key");
-        },
-        removeItem: () => {
-          removed++;
-        },
+async function clientKeys(): Promise<void> {
+  const values = new Map<string, string>();
+  let chooserCalls = 0;
+  const client = createBleLink({
+    storage: {
+      getItem: key => values.get(key) ?? null,
+      setItem: (key, value) => {
+        values.set(key, value);
       },
-      bluetooth: () => ({
-        requestDevice: async () => {
-          requested++;
-          throw new Error("unsafe chooser");
-        },
-      }),
-      shell: () => ({ platform: "ios", saveFile: async () => undefined }),
-    });
-    assert.equal(client.originAllowed(), false, `origin policy accepted ${url}`);
-    assert.equal(client.storedSecret(), "");
-    assert.throws(() => client.rememberSecret(KEY), /Bluetooth needs its own address/);
-    await assert.rejects(client.chooseAndConnect(), /Bluetooth needs its own address/);
-    assert.equal(storageRead, 0);
-    assert.equal(requested, 0);
-    assert.ok(removed > 0);
-  }
-  for (const url of [
-    "https://cool-eva-dashboard.cool-eva.workers.dev/",
-    "https://cool-eva-dashboard.cool-eva.workers.dev:443/index.html",
-    "http://localhost:8172/?transport=ble",
-    "cooleva://app/index.html",
-  ]) {
-    const values = new Map<string, string>();
-    const client = createBleLink({
-      url: new URL(url),
-      storage: {
-        getItem: key => values.get(key) ?? null,
-        setItem: (key, value) => {
-          values.set(key, value);
-        },
-        removeItem: key => {
-          values.delete(key);
-        },
+      removeItem: key => {
+        values.delete(key);
       },
-      shell: () => ({ platform: "ios", saveFile: async () => undefined }),
-    });
-    assert.equal(client.originAllowed(), true, `allowed origin rejected ${url}`);
-    values.set("cool-eva.ble-secret", "a legacy typed phrase");
-    assert.equal(client.storedSecret(), "", "legacy phrase was offered for authentication");
-    client.rememberSecret(`\n ${KEY.toUpperCase()} \n`);
-    assert.equal(client.storedSecret(), KEY);
-    assert.throws(() => client.rememberSecret("not a generated key"));
-    assert.equal(client.storedSecret(), KEY, "invalid paste replaced the saved key");
-  }
-  assert.equal(new URL("cooleva://app/index.html").origin, "null");
+    },
+    secure: () => true,
+    bluetooth: () => ({
+      requestDevice: async () => {
+        chooserCalls++;
+        throw new Error("synthetic chooser cancelled");
+      },
+    }),
+  });
+  values.set("cool-eva.ble-secret", "a legacy typed phrase");
+  assert.equal(client.storedSecret(), "", "legacy phrase was offered for authentication");
+  client.rememberSecret(`\n ${KEY.toUpperCase()} \n`);
+  assert.equal(client.storedSecret(), KEY);
+  assert.throws(() => client.rememberSecret("not a generated key"));
+  assert.equal(client.storedSecret(), KEY, "invalid paste replaced the saved key");
+  assert.equal(client.bluetoothAvailable(), true);
+  await assert.rejects(client.chooseAndConnect(), /synthetic chooser cancelled/);
+  assert.equal(chooserCalls, 1);
   const first = generateBleSecret();
   const second = generateBleSecret();
   assert.ok(validBleSecret(first) && validBleSecret(second));

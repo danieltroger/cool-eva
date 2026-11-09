@@ -1,7 +1,6 @@
 // @ts-check
 import { FrameAssembler } from "./ble-wire.js";
 import { createBleRequests } from "./ble-requests.js";
-import { allowedBleOrigin } from "./ble-origin.js";
 import { monotonicNow } from "./clock.js";
 
 /** @param {Partial<BleEnvironment>} options */
@@ -11,7 +10,6 @@ export function createBleState(options) {
     now: monotonicNow,
     setTimer: (callback, milliseconds) => setTimeout(callback, milliseconds),
     clearTimer: timer => clearTimeout(timer),
-    url: new URL(typeof location === "undefined" ? "http://localhost/" : location.href),
     storage: {
       getItem: key => localStorage.getItem(key),
       setItem: (key, value) => localStorage.setItem(key, value),
@@ -25,7 +23,6 @@ export function createBleState(options) {
   /** @type {BleState} */
   const state = {
     environment,
-    allowed: allowedBleOrigin(environment.url),
     device: null,
     session: null,
     pendingSession: null,
@@ -99,7 +96,6 @@ const MAX_INBOUND_MESSAGE_BYTES = 256 * 1024;
  * @property {() => number} now
  * @property {(callback: () => void, milliseconds: number) => TimerHandle} setTimer
  * @property {(timer: TimerHandle) => void} clearTimer
- * @property {URL} url
  * @property {BleStorage} storage
  * @property {() => WebBluetooth | undefined} bluetooth
  * @property {() => boolean} secure
@@ -115,7 +111,6 @@ const MAX_INBOUND_MESSAGE_BYTES = 256 * 1024;
 /**
  * @typedef {object} BleTransportState
  * @property {BleEnvironment} environment
- * @property {boolean} allowed
  * @property {BleDevice | null} device
  * @property {Session | null} session
  * @property {Session | null} pendingSession

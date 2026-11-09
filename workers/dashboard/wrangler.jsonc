@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/wrangler/config-schema.json",
-  // #318's stable origin: https://cool-eva-dashboard.cool-eva.workers.dev (no path or trailing slash).
+  // Hosted dashboard: https://cool-eva-dashboard.cool-eva.workers.dev
   "name": "cool-eva-dashboard",
   "compatibility_date": "2026-11-03",
   "workers_dev": true,

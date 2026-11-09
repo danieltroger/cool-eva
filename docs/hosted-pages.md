@@ -36,13 +36,13 @@ The author lane must never access a Cloudflare account or token. Daniel authoris
 2. Complete independent diff review of `.github/workflows/workers.yml` before adding deployment credentials. Only after approval and the two naming checks above, create an API token with **Account → Workers Scripts → Edit**, restricted to this one personal account. Use **no TTL/expiration and no IP filter**, so hosted runners and next year's deployment remain usable. Do not grant DNS, Routes, Pages, KV, R2 or general account administration permissions. This is an account-scoped permission, not a restriction to just the two named Workers.
 3. After that approval, set GitHub Actions repository secrets **`CLOUDFLARE_API_TOKEN`** and **`CLOUDFLARE_ACCOUNT_ID`**. Never put their values into configs, Git, issues, PRs, receipts, command output or the coordination events file.
 
-Keep both Worker names and the account subdomain stable. Changing either changes the origin and loses the dashboard's stored Bluetooth code at that address. The exact origin passed through the coordinator to #318 is:
+Keep both Worker names and the account subdomain stable. Changing either changes the origin and loses the dashboard's stored Bluetooth code at that address. The hosted dashboard address is:
 
 ```text
 https://cool-eva-dashboard.cool-eva.workers.dev
 ```
 
-There is **no path or trailing slash**. `public/lib/ble-origin.js` permits only this hosted HTTPS origin. Do not permit the key-page origin, wildcard workers.dev hosts, sibling Workers, deployment previews or the shared account GitHub Pages origin. The #318 gate still checks the genuine native `cooleva://app/` URL separately because its origin can serialize as `null`; the native bridge requirement and legacy storage cleanup are unchanged.
+The dashboard can use Bluetooth on any page where the browser provides Web Bluetooth.
 
 The account subdomain is `cool-eva`. Wrangler derives the addresses from each Worker name and this subdomain; the config comments record both canonical origins. The key page is `https://cool-eva-keys.cool-eva.workers.dev`.
 
@@ -100,10 +100,10 @@ Use **synthetic keys only**. Record the platform/version, each observed result, 
 
 ## Ordered cutover and Pages retirement
 
-The hosting PR (#330) deployed both Workers before this cutover. The cutover replaces #318's hosted allowlist entry, switches rider links and deletes `.github/workflows/pages.yml`. Deleting that workflow stops future Pages publishing; it **does not remove the existing Pages deployment**. The coordinator merges; the author lane never merges or deploys locally.
+The hosting PR (#330) deployed both Workers before this cutover. The cutover switches rider links and deletes `.github/workflows/pages.yml`. Deleting that workflow stops future Pages publishing; it **does not remove the existing Pages deployment**. The coordinator merges; the author lane never merges or deploys locally.
 
 1. Merge the cutover and wait for **Hosted pages → deploy** to finish on the **cutover main SHA**. Check that the revision guard did not skip its deploy steps and that both Worker deployments succeeded. If main advanced, verify the newer SHA that contains the cutover instead; dispatch the workflow on main if needed. Record that exact deployed SHA and Actions run URL. A green PR check or the first hosting SHA `849ad29` alone is insufficient.
-2. Verify the live dashboard and `app.js` return 200, a missing asset returns 404, and `/lib/ble-origin.js` matches that deployed SHA with exactly `https://cool-eva-dashboard.cool-eva.workers.dev` as its hosted entry. Verify the key page still returns 200 with its CSP (`connect-src 'none'`, `worker-src 'none'`), `nosniff`, `no-referrer` and permissions policy. Read the deploy log and record the result. Leave Pages published if deployment or live verification fails.
+2. Verify the live dashboard and `app.js` return 200, a missing asset returns 404. Verify the key page still returns 200 with its CSP (`connect-src 'none'`, `worker-src 'none'`), `nosniff`, `no-referrer` and permissions policy. Read the deploy log and record the result. Leave Pages published if deployment or live verification fails.
 3. **Only after step 2, the coordinator unpublishes Pages.** The coordinator uses repository admin/maintainer access to open **[repository Settings → Pages](https://github.com/danieltroger/cool-eva/settings/pages)**, opens the menu beside **Your site is live at**, then selects **Unpublish site**. This removes the existing deployment; no replacement Pages workflow is needed. [GitHub's unpublishing instructions](https://docs.github.com/en/pages/getting-started-with-github-pages/unpublishing-a-github-pages-site) explain that a later successful Pages deployment could publish it again, which is why the workflow is removed first.
 4. The coordinator checks the former `https://danieltroger.github.io/cool-eva/` URL no longer serves the dashboard and records Pages retirement separately from the Worker deploy. Remind riders to update bookmarks and re-enter their saved Bluetooth code on the Worker origin. No browser-storage transfer or redirect migrates that code.
 
