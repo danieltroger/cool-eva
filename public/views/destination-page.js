@@ -41,19 +41,7 @@ export function DestinationPage() {
         button({ class: "menu-link", onclick: () => openDestination("battery-cooling") }, "Battery & cooling"),
         LifetimeBlock(true),
         LifetimeReadButton(() => bikeReadState.val),
-        LastServiceRead(),
-        van.tags.a(
-          {
-            class: "layout-list-row navigation-link",
-            href: "#faults",
-            onclick: event => {
-              if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-              event.preventDefault();
-              openRidingView("faults");
-            },
-          },
-          "Faults"
-        )
+        LastServiceRead()
       );
     case "battery-cooling":
       return BatteryCoolingPage();

@@ -1,6 +1,6 @@
 # Faults and recorded values
 
-The approved Faults page is one scrolling `#faults` screen. Active codes have expandable rows; the remaining stored codes live in the Stored faults disclosure. Each component/symptom appears once. Every row keeps its Expected checkbox and its own recorded values. The bottom bar stays present. The old `#faults/report` bookmark normalises to this page, and Bike uses a plain Faults link. Browser history retains the actual origin.
+The approved Faults page is one scrolling `#faults` screen. Active codes have expandable rows; the remaining stored codes live in the Stored faults disclosure. Each component/symptom appears once. Every row keeps its Expected checkbox and its own recorded values. The bottom bar stays present. The old `#faults/report` bookmark normalises to this page, and Bike uses the persistent Faults tab. Browser history retains the actual origin.
 
 The former count/previews/report split, counters and explanatory paragraphs are retired. Their implementation constraints and negative results are preserved here and in [the retired implementation notes](fault-report-legacy.md).
 

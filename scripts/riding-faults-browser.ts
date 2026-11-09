@@ -276,8 +276,13 @@ export async function checkFaultNavigation(page: HeadlessPage, file: string) {
   await evaluateOnPage(page, "history.forward()");
   await waitOnPage(page, "!!document.querySelector('.ride-view')", "Forward to Ride");
   await evaluateOnPage(page, "ridingPreview('lib/destination.js').openDestination('bike-information')");
-  await waitOnPage(page, "!!document.querySelector('a[href=\"#faults\"]')", "plain Faults link on Bike");
-  await evaluateOnPage(page, "document.querySelector('a[href=\"#faults\"]').click()");
+  await waitOnPage(page, "document.querySelector('h2')?.textContent==='This ride'", "Bike information");
+  assert.equal(
+    await evaluateOnPage(page, "document.querySelector('.settings-page a[href=\"#faults\"]')"),
+    null,
+    "Bike uses the persistent Faults tab without an extra navigation row."
+  );
+  await evaluateOnPage(page, "document.querySelector('.tabs a[href$=\"#faults\"]').click()");
   await waitOnPage(
     page,
     "!!document.querySelector('.faults-view')&&!location.search.includes('panel=')",
@@ -304,7 +309,7 @@ export async function checkFaultNavigation(page: HeadlessPage, file: string) {
       "both gestures leave the scrolled Faults page for Ride"
     );
   }
-  console.log("  ✓ Faults: one route, legacy URL, browser history, Bike link and both handlebar gestures");
+  console.log("  ✓ Faults: one route, legacy URL, browser history, Bike bottom tab and both handlebar gestures");
 }
 
 async function openFaults(page: HeadlessPage, file: string, theme: string, variant: string) {
