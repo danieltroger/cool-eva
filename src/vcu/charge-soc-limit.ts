@@ -85,7 +85,7 @@ export async function performChargeSocLimit(
       after: null,
       note: sent.reason,
     });
-    return { ok: false, reason: sent.reason };
+    return { ok: false, reason: sent.reason, mayHaveSent: true };
   }
   await delay(WRITE_SETTLE_MS);
   const after = await readSocLimit(channel);

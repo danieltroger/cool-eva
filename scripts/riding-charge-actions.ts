@@ -148,10 +148,18 @@ export async function checkChargeActions(page: HeadlessPage, file: string) {
 
     await openPreview(page, file, "#charge", `stop-${theme}`, "&charge-scene=warm");
     await ready(page);
+    await evaluateOnPage(page, "chargePreviewReplyMode='refused'");
+    await confirm(page, "stop", "charge-stop");
+    await waitOnPage(
+      page,
+      "document.querySelector('[data-stop-result]').textContent==='Not sent: bike busy'",
+      "a known Stop refusal is visible with its reason"
+    );
+    await evaluateOnPage(page, "chargePreviewReplyMode='success'");
     await click(page, "stop");
     await waitOnPage(page, "ridingPreview('lib/arming.js').armed.rawVal==='charge-stop'", "Stop arm");
     await click(page, "stop");
-    assert.equal(await posts(page, "charge-stop"), 0, "Stop retains its dwell.");
+    assert.equal(await posts(page, "charge-stop"), 1, "Stop retains its dwell after a refused attempt.");
     await dwell(page);
     await click(page, "stop");
     await waitOnPage(
@@ -159,7 +167,7 @@ export async function checkChargeActions(page: HeadlessPage, file: string) {
       "document.querySelector('[data-stop-result]').textContent==='Waiting for bike…'&&chargePreviewRequests.some(entry=>entry.action==='charge-stop')",
       "sending Stop does not claim the charge ended"
     );
-    assert.equal(await posts(page, "charge-stop"), 1);
+    assert.equal(await posts(page, "charge-stop"), 2);
     await assertChargeLayout(page);
 
     await openPreview(page, file, "#charge", `timeout-${theme}`, "&charge-scene=warm");

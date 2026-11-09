@@ -155,6 +155,7 @@ if (ridingFixture.get("fixture") === "all-installed" && chargeScene) {
           status: writeStatus(url.searchParams),
           result: null,
           chargeCurrentAttempt: action === "charge-current" ? "not-sent" : undefined,
+          chargeWriteAttempt: ["charge-stop", "charge-soc-limit"].includes(action) ? "not-sent" : undefined,
           message:
             "Synthetic refusal: the bus lease is busy. The request was not sent; wait for the current operation and check the bike’s live state before trying again.",
         });

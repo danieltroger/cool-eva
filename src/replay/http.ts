@@ -85,7 +85,9 @@ const BUILDERS = {
       url,
       null,
       SIMULATOR_MESSAGE,
-      url.searchParams.get("action") === "charge-current" ? "not-sent" : undefined
+      ["charge-current", "charge-stop", "charge-soc-limit"].includes(url.searchParams.get("action") ?? "")
+        ? "not-sent"
+        : undefined
     ),
   lifetime: (context: SimulatorHttpContext) => lifetimeReadReply(context.read, { message: SIMULATOR_MESSAGE }),
   freeze: (context: SimulatorHttpContext) => freezeFrameReadReply(context.read, { message: SIMULATOR_MESSAGE }),

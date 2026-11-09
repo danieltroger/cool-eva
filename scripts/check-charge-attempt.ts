@@ -121,6 +121,14 @@ async function checkChargeAttempt() {
     const malformed = await post(url.replace("amps=40&", "amps=0&"));
     assert.equal(malformed.chargeCurrentAttempt, "not-sent");
     assert.equal(attempts, 0);
+
+    const stopUrl = url.replace(/action=charge-current.*/, "action=charge-stop&confirm=charge-stop");
+    channelAvailable = false;
+    assert.equal((await post(stopUrl)).chargeWriteAttempt, "not-sent");
+    assert.equal(attempts, 0, "A refused Stop sends no frame.");
+    channelAvailable = true;
+    failOnAttempt = 1;
+    assert.equal((await post(stopUrl)).chargeWriteAttempt, "unknown", "A failed Stop sender stays uncertain.");
   } finally {
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
