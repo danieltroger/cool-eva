@@ -39,6 +39,7 @@ export async function checkFanCommands(page: HeadlessPage, file: string) {
     "!document.querySelector('.fan-slider').hidden&&document.querySelector('[data-fan-status]').textContent==='Manual control'",
     "manual mode acknowledged"
   );
+  await assertInlineFanFeedback(page);
   const sliderStyle = (await evaluateOnPage(
     page,
     `(() => {
@@ -111,12 +112,14 @@ export async function checkFanCommands(page: HeadlessPage, file: string) {
     "document.querySelector('[data-signal=fan_target_pct]').textContent==='75'",
     "latest duty confirmed"
   );
+  await assertInlineFanFeedback(page);
   await evaluateOnPage(page, "document.querySelector('[data-fan-mode=automatic]').click()");
   await waitOnPage(
     page,
     "window.fanRequests.length===4&&FAN.mode==='automatic'&&document.querySelector('.fan-slider').hidden&&document.querySelector('[data-fan-status]').textContent==='Automatic control'",
     "automatic mode restored"
   );
+  await assertInlineFanFeedback(page);
   assert.deepEqual(await evaluateOnPage(page, "window.fanRequests"), [
     ["POST", "mode=manual", "fan"],
     ["POST", "duty=0", "fan"],
@@ -136,4 +139,25 @@ export async function checkFanCommands(page: HeadlessPage, file: string) {
     "a confirmed read recovers command uncertainty"
   );
   assert.deepEqual(await evaluateOnPage(page, "window.fanRequests.at(-1)"), ["GET", "", null]);
+}
+
+async function assertInlineFanFeedback(page: HeadlessPage) {
+  await evaluateOnPage(page, FRAME);
+  assert.equal(
+    await evaluateOnPage(page, "!!document.querySelector('.toast.on')"),
+    false,
+    "Fan feedback must leave the Cooling header visible."
+  );
+  assert.equal(
+    await evaluateOnPage(page, "document.querySelector('.cooling-fan').innerText.match(/\\d+\\s*%/g)?.length"),
+    1,
+    "Cooling shows the fan percentage once."
+  );
+  assert.equal(
+    await evaluateOnPage(
+      page,
+      "document.querySelector('.header-switch [data-view=cooling]').checkVisibility()&&document.querySelectorAll('.tabs a').length===5"
+    ),
+    true
+  );
 }

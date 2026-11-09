@@ -10,6 +10,14 @@ Commands retain the `X-Cool-Eva: fan` header. The query spelling for the automat
 
 The one status line retains unavailable/fault, standby, braking, failed-stop and kick-start states. It reads live signal quality, including the 60-second fault memory, rather than treating the last HTTP reply as a live sensor. Steady fan command timestamps do not expire on a live link; real temperature inputs retain their age gate. A zero-duty enabled bridge is a braking fault, and an active bridge after a requested stop is a failed stop. Automatic temperature failures remain faults.
 
+## Inline feedback and announcement memory
+
+While Cooling is visible, its fan percentage and status line own feedback for mode and duty changes. Fan banners are suppressed there, preserving the header and top switch and avoiding a repeated percentage. The announcement fold still remembers each change, including its off-state, so leaving Cooling cannot replay it. Other screens retain fan announcements; waypoint and Wi-Fi announcements keep their existing behavior.
+
+This samples the visible route rather than guessing whether a change came from this phone. The live patch normally precedes the HTTP reply, so tracking the request's origin would require a timing window that can swallow a real handlebar event. The inline exception depends only on the existing visible fan control.
+
+The announcement fold stays pure and shared with the real watcher and the fan-banner checks. The former replica in the hold-gesture check fed the same percentage to both key and text, asserting a pair that could never disagree; it stayed green through #199, where mode and duty arrived separately and the banner named the previous duty. Keeping the real fold and ordered patch tests preserves that finding while changing presentation.
+
 ## Preserved constraints from the former menu view
 
 The fan moves a GPIO on the Pi, not the motorcycle's CAN bus. It has no motorcycle arm/confirm gate: the next command reverses the change, and watching the fan while dragging is the intended interaction. The manual control remains live on `input`; only transport is paced, so the Pi does not spawn a GPIO write for every thumb event.
