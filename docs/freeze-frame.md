@@ -2,6 +2,8 @@
 
 What the VCU recorded at the moment a code latched, read over KWP `0x17` and shown under that code on the Faults tab. The protocol, its provenance and what the 29 captured replies settled live in [`docs/diagnostics-and-checks.md` §5 and §11.3.1](diagnostics-and-checks.md); this file is about the READ, the store and the rendering — everything #226 added.
 
+The [2026-11-09 field audit](freeze-frame-field-audit.md) compares all 120 definitions with both manufacturer dictionary editions. It finds no proven decode error: low recorded rails remain genuine values rather than being rescaled or rejected for being unusual.
+
 **⚠️ Two different things on one tab are called a freeze frame, and only one of them is named that on screen.** OBD mode 01 PID 02 returns the DTC that was set when the bike captured _its_ freeze frame — the code that lit the lamp. `public/views/faults.js` has shown that since the tab existed, tagged `· freeze frame`. What this document is about is the KWP per-component record, a different thing read a different way, and the copy for it never uses the phrase: it says **"Recorded when this code set"**. The wire, the store and the code keep the protocol's name, because that is what every other file in the repo calls it.
 
 ## The read
