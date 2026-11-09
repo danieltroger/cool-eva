@@ -5,14 +5,14 @@ import { openPreview, FRAME } from "./riding-preview-page.ts";
 export async function assertRangeContent(page: HeadlessPage) {
   await waitOnPage(
     page,
-    "/^\\d+$/.test(document.querySelector('[data-reading=consumption]')?.textContent??'')",
-    "populated rolling-consumption history"
+    "['consumption','range-estimate'].every(name=>/^\\d+$/.test(document.querySelector('[data-reading='+name+']')?.textContent??''))",
+    "populated rolling-consumption and range estimate"
   );
   const content = (await evaluateOnPage(
     page,
     `(() => {
     const view=document.querySelector('.range-view');const field=name=>view.querySelector('[data-reading="'+name+'"]').textContent;
-    return {labels:[...view.querySelectorAll('.label')].map(element=>element.textContent),margin:field('margin'),rest:field('rest-sag'),cutoff:field('cutoff'),timer:field('dwell'),drive:field('allowed_discharge_a'),regen:field('allowed_regen_a'),energy:field('energy'),spread:field('spread'),horizon:field('consumption-horizon'),shares:[...view.querySelectorAll('.range-share')].map(element=>element.textContent),sizes:[...view.querySelectorAll(':scope > .range-margin,:scope > .range-timer,:scope > .range-pair,:scope > .range-consumption')].map(element=>element.getBoundingClientRect().height),height:view.getBoundingClientRect().height,fonts:[getComputedStyle(view.querySelector('.range-margin-number')).fontSize,getComputedStyle(view.querySelector('.range-allowance .value')).fontSize,getComputedStyle(view.querySelector('.range-share')).fontSize],bars:[...view.querySelectorAll('.range-availability')].map(element=>({height:element.getBoundingClientRect().height,state:element.dataset.state,width:parseFloat(element.firstElementChild.style.width)})),hidden:[...view.querySelectorAll('[data-reading]')].filter(element=>{if(element.getBoundingClientRect().width<=0||element.getBoundingClientRect().height<=0)return true;for(let parent=element;parent;parent=parent.parentElement){const style=getComputedStyle(parent);if(style.display==='none'||style.visibility!=='visible'||Number(style.opacity)===0)return true;}return false;}).map(element=>element.dataset.reading),instantPower:!!view.querySelector('[data-signal=pack_kw]')};
+    return {labels:[...view.querySelectorAll('.label')].map(element=>element.textContent),margin:field('margin'),rest:field('rest-sag'),cutoff:field('cutoff'),timer:field('dwell'),drive:field('allowed_discharge_a'),regen:field('allowed_regen_a'),energy:field('energy'),range:field('range-estimate'),horizon:field('consumption-horizon'),shares:[...view.querySelectorAll('.range-share')].map(element=>element.textContent),sizes:[...view.querySelectorAll(':scope > .range-margin,:scope > .range-timer,:scope > .range-pair,:scope > .range-consumption')].map(element=>element.getBoundingClientRect().height),height:view.getBoundingClientRect().height,fonts:[getComputedStyle(view.querySelector('.range-margin-number')).fontSize,getComputedStyle(view.querySelector('.range-allowance .value')).fontSize,getComputedStyle(view.querySelector('.range-share')).fontSize],bars:[...view.querySelectorAll('.range-availability')].map(element=>({height:element.getBoundingClientRect().height,state:element.dataset.state,width:parseFloat(element.firstElementChild.style.width)})),hidden:[...view.querySelectorAll('[data-reading]')].filter(element=>{if(element.getBoundingClientRect().width<=0||element.getBoundingClientRect().height<=0)return true;for(let parent=element;parent;parent=parent.parentElement){const style=getComputedStyle(parent);if(style.display==='none'||style.visibility!=='visible'||Number(style.opacity)===0)return true;}return false;}).map(element=>element.dataset.reading),instantPower:!!view.querySelector('[data-signal=pack_kw]')};
   })()`
   )) as {
     labels: string[];
@@ -23,7 +23,7 @@ export async function assertRangeContent(page: HeadlessPage) {
     drive: string;
     regen: string;
     energy: string;
-    spread: string;
+    range: string;
     horizon: string;
     shares: string[];
     sizes: number[];
@@ -40,7 +40,7 @@ export async function assertRangeContent(page: HeadlessPage) {
     "Regen available",
     "Rolling consumption",
     "Energy left",
-    "Cell spread",
+    "Range at this rate",
   ]);
   assert.equal(content.margin, "120");
   assert.match(content.rest, /\d+ mV at rest · \d+ mV sag/);
@@ -53,8 +53,18 @@ export async function assertRangeContent(page: HeadlessPage) {
   assert.equal(content.drive, "210");
   assert.equal(content.regen, "55");
   assert.equal(content.energy, "4.8");
-  assert.equal(content.spread, "38");
-  assert.match(content.horizon, /Last [\d.]+ km · about \d+ km left at this rate/);
+  assert.match(content.range, /^\d+$/);
+  const valueTops = (await evaluateOnPage(
+    page,
+    "[...document.querySelectorAll('.range-bottom .value')].map(element=>element.getBoundingClientRect().top)"
+  )) as number[];
+  assert.equal(valueTops[0], valueTops[1], "The approved Energy left and Range at this rate values align.");
+  assert.equal(
+    await evaluateOnPage(page, "document.querySelector('.range-spread,[data-reading=spread]')"),
+    null,
+    "Cell spread has one home in Cells."
+  );
+  assert.match(content.horizon, /^Last [\d.]+ km$/);
   assert.deepEqual(content.shares, ["53% of 400 A", "46% of 120 A"]);
   assert.deepEqual(content.sizes, [140, 96, 112, 108, 92]);
   assert.equal(content.height, 596);
@@ -135,7 +145,12 @@ export async function checkRangeCases(
       text: "Rest/sag stale",
     },
     { name: "energy-fault", patch: "bms_remaining_energy_wh:[-1,'Wh','battery']", field: "energy", text: "fault" },
-    { name: "spread-fault", patch: "cell_spread_mv:[65535,'mV','battery']", field: "spread", text: "fault" },
+    {
+      name: "range-energy-fault",
+      patch: "bms_remaining_energy_wh:[-1,'Wh','battery']",
+      field: "range-estimate",
+      text: "fault",
+    },
   ];
   for (const state of cases) {
     await openPreview(page, file, "#hypermile", `range-${theme}-${state.name}`);
@@ -147,6 +162,7 @@ export async function checkRangeCases(
     if (state.clear) {
       await evaluateOnPage(page, `ridingPreview('lib/store.js').signalState(${JSON.stringify(state.clear)}).val=null`);
     }
+    await evaluateOnPage(page, "ridingPreview('lib/store.js').chartTick.val++");
     await evaluateOnPage(page, FRAME);
     assert.equal(
       await evaluateOnPage(page, `document.querySelector('[data-reading="${state.field}"]').textContent`),
@@ -189,12 +205,14 @@ export async function checkRangeCases(
     (await evaluateOnPage(page, "document.querySelector('[data-reading=consumption-horizon]').textContent")) as string,
     /Needs about 200 m/
   );
+  assert.equal(await evaluateOnPage(page, "document.querySelector('[data-reading=range-estimate]').textContent"), "—");
   await assertLayout(page);
   await openPreview(page, file, "#hypermile", `range-${theme}-net-regen`, "&range-history=regen");
   await evaluateOnPage(page, `ridingPreview('lib/theme.js').themePreference.val=${JSON.stringify(theme)}`);
   await evaluateOnPage(page, FRAME);
   assert.equal(await evaluateOnPage(page, "document.querySelector('[data-reading=consumption]').textContent"), "Regen");
   assert.equal(await evaluateOnPage(page, "document.querySelector('.range-consumption .unit').textContent"), "");
+  assert.equal(await evaluateOnPage(page, "document.querySelector('[data-reading=range-estimate]').textContent"), "—");
   await assertLayout(page);
   await openPreview(page, file, "#hypermile", `range-${theme}-dwell`);
   await evaluateOnPage(

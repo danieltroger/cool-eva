@@ -4,10 +4,12 @@ import { readingStatus } from "./reading-status.js";
 
 export const REGEN_CEILING_A = 120;
 
-export function rangeEnergyKey() {
-  return readingStatus("bms_remaining_energy_wh") === "fault" || (valueOf("bms_remaining_energy_wh") ?? 0) > 0
+/** @param {boolean} [sampled] */
+export function rangeEnergyKey(sampled = false) {
+  const read = sampled ? peek : valueOf;
+  return readingStatus("bms_remaining_energy_wh", sampled) === "fault" || (read("bms_remaining_energy_wh") ?? 0) > 0
     ? "bms_remaining_energy_wh"
-    : (valueOf("residual_energy_wh") ?? 0) > 0
+    : (read("residual_energy_wh") ?? 0) > 0
       ? "residual_energy_wh"
       : "bms_remaining_energy_wh";
 }

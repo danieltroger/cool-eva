@@ -29,7 +29,7 @@ const COVERAGE = {
   ride: "fixed",
   cooling: "fixed",
   hypermile: "fixed",
-  cells: "scrolling",
+  cells: "fixed",
   charge: "scrolling",
   all: "fixed-landing",
   faults: "fixed",
@@ -58,7 +58,7 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
     .map(([name]) => name);
   assert.deepEqual(
     fixedViews,
-    ["ride", "cooling", "hypermile", "all", "faults"],
+    ["ride", "cooling", "hypermile", "cells", "all", "faults"],
     "Fixed-view coverage must match the converted screens."
   );
   for (const geometry of [
@@ -88,6 +88,8 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
             await assertRideContent(page);
           } else if (route.name === "hypermile") {
             await assertRangeContent(page);
+          } else if (route.name === "cells") {
+            await assertCellsContent(page);
           } else if (route.name === "all") {
             await assertAllContent(page);
           } else if (route.name === "faults") {
@@ -98,8 +100,6 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
           await assertFixedLayout(page, route.name === "all");
         } else if (route.name === "charge") {
           await assertChargeContent(page);
-        } else if (route.name === "cells") {
-          await assertCellsContent(page);
         }
       }
       assert.deepEqual(
