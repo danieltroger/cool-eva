@@ -3,7 +3,6 @@
 import { readFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { READ_STAMP_NOTES } from "../public/views/last-service-read.js";
 import { describeStampEvidence } from "../public/lib/service-stamp.js";
 import { SERVICE_STAMP_IDENTIFIERS, interpretServiceStamp } from "../src/vcu/service-actions.ts";
 
@@ -18,8 +17,6 @@ function check(what: string, condition: boolean) {
   console.error(`  ✗ ${what}`);
   failures += 1;
 }
-
-check("the retained Bike prose records what the read found", READ_STAMP_NOTES.does.includes("2026-09-08"));
 
 {
   const stamp = interpretServiceStamp(

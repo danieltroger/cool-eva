@@ -25,23 +25,10 @@ import { bytesFromHex } from "./snapshot.ts";
 
 const LATEST_FILE = "lifetime.json";
 
-/**
- * How a reading is taken today, shown on a Pi that has never taken one.
- *
- * ⚠️ It is no longer a shell command, and that is the point. #177 made the read a button
- * in the service sheet and this sentence did not move with it, so the only instruction on
- * screen was one you cannot follow on the phone that is showing it. The script is still
- * the answer when the service IS stopped, so it stays below rather than being deleted.
- *
- * ⚠️ The comma is load-bearing. This parses as *parked, with (the drive down OR plugged
- * in)*, which is the gate's own shape. Without it, *(parked with the drive down) or
- * (plugged in)* sanctions a moving bike on a cable — the one thing it exists to prevent.
- *
- * Why "plugged in" and not "charging", and why #187's wording had to change once the
- * charging escape actually ran: docs/vcu-parameters.md §12.
- */
-export const HOW_TO_READ =
-  'menu → Service mode → "Read the lifetime battery statistics", parked, with the drive down or plugged in';
+/** HTTP diagnostic hint; the dashboard keeps its local read control.
+ * The comma means parked AND (drive down OR plugged in), matching the service gate.
+ * Instruction history: docs/settings-cleanup.md; charging behavior: docs/vcu-parameters.md §12. */
+export const HOW_TO_READ = 'More → Bike → "Read bike history", parked, with the drive down or plugged in';
 
 /**
  * The same read from a shell, for a Pi whose service is stopped.

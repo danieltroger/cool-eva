@@ -16,8 +16,7 @@ import { AccessExplanation } from "./settings-access.js";
 import { SettingsRecovery } from "./settings-recovery.js";
 import { SettingsRestart } from "./settings-restart.js";
 import { DashboardBluetooth } from "./settings-bluetooth.js";
-import { MotorcycleConnection } from "./settings-hub.js";
-import { CanRestartButton, UpdateButton } from "./pi-actions.js";
+import { UpdateButton } from "./pi-actions.js";
 import { ScreenGeometry } from "./screen-geometry.js";
 
 const { a, button, div, h2 } = van.tags;
@@ -128,13 +127,6 @@ function SettingsContent(section) {
           )
         ),
         DashboardBluetooth(),
-        MotorcycleConnection(),
-        SettingsCard(
-          "Bike data / CAN adapter",
-          "No recognised traffic may mean the bike is asleep, an unplugged USB adapter or wrong wiring. Check those first. A bus restart closes CAN sockets; restart Cool Eva afterward if readings remain unavailable.",
-          Readiness("can"),
-          CanRestartButton()
-        ),
         AccessExplanation()
       );
     case "recording":

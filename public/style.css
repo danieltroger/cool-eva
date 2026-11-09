@@ -2424,3 +2424,38 @@ body {
 .fault-field-value.record-raw {
   color: var(--warn);
 }
+
+.settings-page .toggle-row button,
+.settings-page select {
+  text-align: left;
+}
+.setting-control select {
+  flex: 1;
+}
+.setting-help {
+  position: relative;
+  flex: none;
+}
+.setting-help > summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  list-style: none;
+  min-width: var(--size-touch);
+  min-height: var(--size-touch);
+  cursor: pointer;
+  color: var(--sub);
+}
+.setting-help > summary::-webkit-details-marker {
+  display: none;
+}
+.setting-help[open] > .settings-note {
+  position: absolute;
+  z-index: 25;
+  right: 0;
+  width: min(280px, calc(100vw - 48px));
+  padding: var(--space-3);
+  border: 1px solid var(--tile-edge);
+  border-radius: var(--radius-small);
+  background: var(--tile);
+}

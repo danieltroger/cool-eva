@@ -212,13 +212,17 @@ async function checkStampPlacement(page: HeadlessPage, file: string) {
   await evaluateOnPage(page, "document.querySelector('.action-block button').click()");
   await waitOnPage(page, "ridingPreview('lib/arming.js').armDwellElapsed()", "stamp read dwell");
   await evaluateOnPage(page, "document.querySelector('.action-block button').click()");
-  await waitOnPage(page, "document.querySelector('.action-block .action-note.output')", "stamp raw evidence");
+  await waitOnPage(
+    page,
+    "document.querySelector('.action-block [role=status]')?.textContent==='fault'",
+    "honest empty service stamp"
+  );
   assert.equal(
     await evaluateOnPage(
       page,
-      "(()=>{const block=document.querySelector('.action-block');const answer=block.querySelector('.caution');const prose=[...block.querySelectorAll('.action-note')].find(node=>node.textContent.startsWith('Reads four'));return answer.getBoundingClientRect().top<prose.getBoundingClientRect().top&&block.querySelector('.output').textContent.includes('dateHigh 0x0000');})()"
+      "/Reads four|0x0000|A8 answered/.test(document.querySelector('.action-block').innerText)"
     ),
-    true
+    false
   );
 }
 

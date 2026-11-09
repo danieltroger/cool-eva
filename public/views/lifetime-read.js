@@ -3,7 +3,6 @@
 import van from "../vendor/van-1.6.1.js";
 import { OwnerActionRow } from "./owner-action.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
-import { MUTED } from "../lib/colors.js";
 import { serviceRefusal, serviceRefused } from "../lib/service-gate-caption.js";
 import { request } from "../lib/transport.js";
 
@@ -33,6 +32,7 @@ const { button, div } = van.tags;
 export const ARMED_KEY = "lifetime-read";
 const busy = van.state(false);
 const message = van.state("");
+const messageTitle = van.state("");
 
 /**
  * The button, and whatever the last read said.
@@ -67,25 +67,21 @@ export function LifetimeReadButton(readState) {
         },
         () => {
           if (busy.val) {
-            return "⏳  Reading components 51 and 52…";
+            return "Reading bike history…";
           }
           const refusal = serviceRefusal(readState());
           if (refusal !== null) {
             return refusal;
           }
           if (armed.val === ARMED_KEY) {
-            return "⚠  Tap again — this parks the OBD poller while it reads";
+            return "Confirm history read";
           }
-          return "🔎  Read the lifetime battery statistics";
+          return "Read bike history";
         }
       ),
       () => (armed.val === ARMED_KEY ? "Confirm read" : "Read")
     ),
-    () => (message.val ? div({ class: "action-note" }, message.val) : div()),
-    div(
-      { class: "action-note", style: `color:${MUTED}` },
-      "Components 51 and 52 — charges, charge moved, pack health. Shown on the All tab with the age of the reading."
-    )
+    () => (message.val ? div({ class: "action-note", title: messageTitle.val }, message.val) : div())
   );
 }
 
@@ -107,21 +103,15 @@ async function performLifetimeRead() {
     // ⚠️ Both the measurement and the message, never one instead of the other: a run
     // refused storage still took a measurement, and that measurement is the point of
     // the in-service path. docs/lifetime-battery-statistics.md.
-    message.val = [
-      payload.answered === null ? null : `Read ${payload.answered}/2 components`,
-      payload.measurement,
-      payload.message,
-    ]
-      .filter(Boolean)
-      .join(" · ");
+    messageTitle.val = [payload.measurement, payload.message].filter(Boolean).join(" · ");
+    message.val = response.ok && payload.answered === 2 ? "Read complete." : "—";
   } catch (error) {
     // ⚠️ A request that did not come back may still have reached the bike — the frames
     // go out before the response — and the reading may well be stored. Says so rather
     // than implying nothing happened.
     console.warn("lifetime-read: request failed", error);
-    message.val =
-      `Could not reach the Pi — ${error instanceof Error ? error.message : String(error)}. ` +
-      "The read may have completed anyway; the All tab shows the age of what is stored.";
+    messageTitle.val = error instanceof Error ? error.message : String(error);
+    message.val = "—";
   } finally {
     busy.val = false;
   }

@@ -190,8 +190,6 @@ async function checkActions(page: HeadlessPage, theme: string, shots?: string): 
   await destination(page, "settings", "software");
   await refused(page, "/update", () => button(page, "Update", true), "update", theme, shots);
   await destination(page, "settings", "connections");
-  await refused(page, "/can-restart", () => button(page, "Restart CAN", true), "can-restart", theme, shots);
-  await refused(page, "/settings/hub-candidates", () => button(page, "Scan"), "hub-scan", theme, shots);
   await destination(page, "settings", "bike");
   await waitOnPage(page, "!!document.querySelector('select[aria-label=\"Coolant probes\"]')", "settings draft");
   await evaluateOnPage(
@@ -247,10 +245,11 @@ async function checkActions(page: HeadlessPage, theme: string, shots?: string): 
   await refused(
     page,
     "/lifetime-read",
-    () => button(page, "Read the lifetime battery statistics", true),
+    () => button(page, "Read bike history", true),
     "lifetime-read",
     theme,
-    shots
+    shots,
+    "—"
   );
   await evaluateOnPage(page, `simDestination.openRidingView('charge')`);
   await evaluateOnPage(
