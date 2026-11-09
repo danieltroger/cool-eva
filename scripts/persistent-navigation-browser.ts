@@ -37,12 +37,12 @@ export async function checkPersistentNavigation(page: HeadlessPage, file: string
       if (section === "service") {
         assert.equal(
           await evaluateOnPage(page, "document.querySelector('.all-signals > summary').textContent"),
-          "All signals"
+          "Current CAN values"
         );
         assert.equal(
           await evaluateOnPage(page, "document.querySelector('.all-signals').open"),
           false,
-          "All signals is an inline browsable row inside Service."
+          "Current CAN values is an inline browsable row inside Service."
         );
       }
       assert.equal(await evaluateOnPage(page, "ridingPreview('lib/arming.js').armed.rawVal"), "");

@@ -3,18 +3,13 @@ import { evaluateOnPage, gotoPage, waitOnPage, type HeadlessPage } from "./headl
 import { FRAME, openPreview } from "./riding-preview-page.ts";
 import { checkServiceParameterBrowser } from "./service-parameter-browser.ts";
 import { checkServiceActionBrowser } from "./service-action-browser.ts";
+import { checkServiceRegroupBrowser } from "./service-regroup-browser.ts";
 
 export async function checkServiceBrowser(page: HeadlessPage, file: string) {
   for (const theme of ["dark", "light"]) {
     await openServicePreview(page, file, theme);
     await assertServiceLayout(page);
-    assert.deepEqual(
-      await evaluateOnPage(
-        page,
-        "[...document.querySelectorAll('.service-page > details > summary')].map(node=>node.textContent)"
-      ),
-      ["Service actions", "Recent changes", "All signals"]
-    );
+    await checkServiceRegroupBrowser(page);
     assert.equal(
       await evaluateOnPage(page, "document.querySelectorAll('.parameter-browser [data-select-parameter]').length"),
       277

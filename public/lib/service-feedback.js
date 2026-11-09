@@ -10,6 +10,19 @@ export function backupImportFailureText(reason) {
   return `Import failed: ${shortReason(reason)}`;
 }
 
+/** @param {boolean} canWrite @param {import("../../src/vcu/write-runner.ts").VcuWriteStatus|null} status */
+export function parameterWriteBlockText(canWrite, status) {
+  if (canWrite) return "";
+  if (!status) return "Bike unavailable";
+  if (!status.enabled) return "Writes disabled";
+  if (!status.gate.safe) return "Park to confirm";
+  if (status.busHeldBy !== null) return "Bike busy";
+  if (!status.tableGate.writesAllowed) {
+    return status.tableGate.noReadWillHelp ? "Table unsupported" : "Table unconfirmed";
+  }
+  return "Write unavailable";
+}
+
 /** @param {string} reason */
 function shortReason(reason) {
   if (/simulator/i.test(reason)) return "disabled in simulator";

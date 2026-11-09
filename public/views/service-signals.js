@@ -13,7 +13,7 @@ export function ServiceSignals(open = false) {
   const query = van.state("");
   return details(
     { class: "layout-accordion all-signals", open },
-    summary(span({ class: "service-title" }, "All signals")),
+    summary(span({ class: "service-title" }, "Current CAN values")),
     div(
       { class: "layout-accordion-body" },
       input({

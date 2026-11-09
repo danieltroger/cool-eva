@@ -3,8 +3,14 @@ import van from "../vendor/van-1.6.1.js";
 import { armed, refuseKeyRepeat } from "../lib/arming.js";
 import { ageInWords } from "../lib/format.js";
 import { parameterInput, parameterValue, serviceGroupLabel } from "../lib/parameter-backup.js";
-import { parameterReadFailureText } from "../lib/service-feedback.js";
-import { currentParameterReading, serviceBusy, serviceCanWrite, serviceCatalogue } from "../lib/service-client.js";
+import { parameterReadFailureText, parameterWriteBlockText } from "../lib/service-feedback.js";
+import {
+  currentParameterReading,
+  serviceBusy,
+  serviceCanWrite,
+  serviceCatalogue,
+  serviceStatus,
+} from "../lib/service-client.js";
 import {
   changeNewParameterValue,
   changeParameterSearch,
@@ -155,28 +161,39 @@ function ParameterEditor(parameter) {
           }
         },
       }),
-      button(
-        {
-          class: "service-button service-write",
-          disabled: () => {
-            const value = parameterInput(parameter, newParameterValue.val);
-            const current = currentParameterReading(parameter);
-            return (
-              !parameter.writable ||
-              serviceBusy.val ||
-              !serviceCanWrite() ||
-              value === null ||
-              !current ||
-              value === current.value
-            );
+      div(
+        { class: "layout-row-end parameter-confirm" },
+        span(
+          {
+            class: "service-feedback bad parameter-write-block",
+            hidden: () => !parameterBlockReason(parameter),
+            "aria-live": "polite",
           },
-          onkeydown: refuseKeyRepeat,
-          onclick: () => void setSelectedParameter(parameter, key),
-        },
-        () =>
-          armed.val === key
-            ? `Confirm ${parameterValue(parameter, parameterInput(parameter, newParameterValue.val) ?? 0)}`
-            : "Set"
+          () => parameterBlockReason(parameter)
+        ),
+        button(
+          {
+            class: "service-button service-write",
+            disabled: () => {
+              const value = parameterInput(parameter, newParameterValue.val);
+              const current = currentParameterReading(parameter);
+              return (
+                !parameter.writable ||
+                serviceBusy.val ||
+                !serviceCanWrite() ||
+                value === null ||
+                !current ||
+                value === current.value
+              );
+            },
+            onkeydown: refuseKeyRepeat,
+            onclick: () => void setSelectedParameter(parameter, key),
+          },
+          () =>
+            armed.val === key || parameterBlockReason(parameter)
+              ? `Confirm ${parameterValue(parameter, parameterInput(parameter, newParameterValue.val) ?? 0)}`
+              : "Set"
+        )
       )
     ),
     span(
@@ -203,6 +220,14 @@ function ParameterEditor(parameter) {
       }
     )
   );
+}
+
+/** @param {ServiceParameter} parameter */
+function parameterBlockReason(parameter) {
+  const value = parameterInput(parameter, newParameterValue.val);
+  const current = currentParameterReading(parameter);
+  if (!parameter.writable || serviceBusy.val || value === null || !current || value === current.value) return "";
+  return parameterWriteBlockText(serviceCanWrite(), serviceStatus.val);
 }
 
 /** @param {ServiceParameter} parameter @param {string} key */

@@ -2,7 +2,7 @@
 import van from "../vendor/van-1.6.1.js";
 import { destination } from "../lib/destination.js";
 import { peekView } from "../lib/router.js";
-import { openService, serviceCanWrite, serviceProblem, serviceStatus } from "../lib/service-client.js";
+import { openService } from "../lib/service-client.js";
 import { resetServiceEditor } from "../lib/service-edits.js";
 import { resetServiceBackup } from "../lib/service-backup.js";
 import { refreshLightsState } from "../lib/service-lights.js";
@@ -24,22 +24,12 @@ export function ServiceMode(showSignals = false) {
   return div(
     { class: "settings-page service-page layout-page" },
     div(
-      { class: "layout-between" },
-      span({ class: "label" }, "Parameters"),
-      span(
-        { class: "service-tiny", title: () => serviceProblem.val || serviceStatus.val?.tableGate.reason || "" },
-        () =>
-          serviceCanWrite()
-            ? "Bike controls ready"
-            : serviceStatus.val?.gate.safe === false
-              ? "Park to change parameters"
-              : "Read only"
-      )
+      { class: "layout-card layout-stack service-parameter-section" },
+      span({ class: "label" }, "Write parameters"),
+      ServiceParameters(),
+      ServiceBackup()
     ),
-    ServiceParameters(),
-    ServiceBackup(),
-    ServiceActions(),
-    ServiceRecent(),
+    div({ class: "layout-card service-operations" }, ServiceActions(), ServiceRecent()),
     signals
   );
 }
