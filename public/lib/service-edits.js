@@ -18,7 +18,7 @@ import {
 } from "./service-client.js";
 
 /** @typedef {import("../../src/http/service-catalogue.ts").ServiceParameter} ServiceParameter */
-/** @typedef {{kind:"armed"|"unchanged"|"updated"|"confirmed"|"unconfirmed",reason?:string}} ParameterAttempt */
+/** @typedef {{kind:"armed"|"unchanged"|"updated"|"confirmed"|"unconfirmed"|"read-failed",reason?:string}} ParameterAttempt */
 /** @typedef {{key:string,parameter:ServiceParameter,value:number,expected:number,table:number}} ParameterConfirmation */
 
 export function resetServiceEditor() {
@@ -63,7 +63,7 @@ export async function selectServiceParameter(parameter) {
   await serviceOperation(async () => {
     const reading = await readServiceParameter(parameter);
     if (version === selectionVersion && !reading) {
-      parameterOutcome.val = { kind: "unconfirmed", reason: serviceProblem.rawVal };
+      parameterOutcome.val = { kind: "read-failed", reason: serviceProblem.rawVal };
     }
     if (version === selectionVersion && !dirty && reading) {
       newParameterValue.val = String(reading.value * parameter.scale);

@@ -1454,6 +1454,10 @@ const CHECKS: SelfCheck[] = [
       "zero instead of one",
   },
   {
+    script: "scripts/check-service-feedback.ts",
+    covers: "short visible reasons from refused parameter reads and backup imports",
+  },
+  {
     script: "scripts/check-service-parameters.ts",
     covers:
       "approved Service parameter and CSV flows: exact identities, confirmed active table, engineering units, synchronous operation lock, shared arm/dwell, fresh compare-and-swap, own write/readback response, lost responses, differing backup rows with one write each, status ordering and metadata replacement",

@@ -3,6 +3,7 @@ import van from "../vendor/van-1.6.1.js";
 import { armed, refuseKeyRepeat } from "../lib/arming.js";
 import { ageInWords } from "../lib/format.js";
 import { parameterInput, parameterValue, serviceGroupLabel } from "../lib/parameter-backup.js";
+import { parameterReadFailureText } from "../lib/service-feedback.js";
 import { currentParameterReading, serviceBusy, serviceCanWrite, serviceCatalogue } from "../lib/service-client.js";
 import {
   changeNewParameterValue,
@@ -180,11 +181,14 @@ function ParameterEditor(parameter) {
     ),
     span(
       {
-        class: () => `service-feedback${parameterOutcome.val?.kind === "unconfirmed" ? " bad" : ""}`,
+        class: () =>
+          `service-feedback${["unconfirmed", "read-failed"].includes(parameterOutcome.val?.kind ?? "") ? " bad" : ""}`,
         role: "status",
         title: () => parameterOutcome.val?.reason ?? "",
       },
       () => {
+        const failure = parameterReadFailureText(parameterOutcome.val);
+        if (failure) return failure;
         if (!parameter.writable) {
           return "Read only";
         }

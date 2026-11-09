@@ -1,6 +1,7 @@
 // @ts-check
 import van from "../vendor/van-1.6.1.js";
 import { armed } from "./arming.js";
+import { backupImportFailureText } from "./service-feedback.js";
 import { parseParameterBackup, parameterBackupCsv } from "./parameter-backup.js";
 import {
   currentParameterReading,
@@ -48,8 +49,9 @@ export async function importServiceBackup(file) {
       return;
     }
     backupDifferences.val = [];
-    backupStatus.val = error instanceof Error ? error.message : String(error);
-    backupProblem.val = backupStatus.rawVal;
+    const reason = error instanceof Error ? error.message : String(error);
+    backupStatus.val = backupImportFailureText(reason);
+    backupProblem.val = reason;
     console.warn("service: backup import failed", error);
   }
 }
@@ -119,7 +121,7 @@ async function compareServiceBackup(entries, version) {
       return null;
     }
     if (!reading) {
-      backupStatus.val = "—";
+      backupStatus.val = backupImportFailureText(serviceProblem.rawVal);
       backupProblem.val = serviceProblem.rawVal;
       return null;
     }
