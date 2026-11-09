@@ -62,7 +62,9 @@ function FaultRows(readRows) {
   const rows = van.derive(() => JSON.stringify(readRows()));
   /** @type {Map<string,HTMLDetailsElement>} */
   const cache = new Map();
-  return () => {
+  return (/** @type {Node|undefined} */ previous) => {
+    // Property derives belong to this wrapper; replacing it strands reused rows' bindings.
+    const container = previous instanceof HTMLDivElement ? previous : div({ class: "layout-stack fault-list" });
     const entries = /** @type {FaultIdentity[]} */ (JSON.parse(rows.val));
     const identities = new Set(entries.map(row => JSON.stringify(row)));
     for (const identity of cache.keys()) {
@@ -70,8 +72,7 @@ function FaultRows(readRows) {
         cache.delete(identity);
       }
     }
-    return div(
-      { class: "layout-stack fault-list" },
+    container.replaceChildren(
       ...entries.map(row => {
         const identity = JSON.stringify(row);
         let element = cache.get(identity);
@@ -82,6 +83,7 @@ function FaultRows(readRows) {
         return element;
       })
     );
+    return container;
   };
 }
 

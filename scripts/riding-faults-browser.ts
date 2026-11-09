@@ -82,6 +82,23 @@ export async function checkFaultsCases(page: HeadlessPage, file: string, theme: 
     true,
     "Telemetry, age ticks and stored refreshes cannot collapse an opened record."
   );
+  await evaluateOnPage(page, "pushPatch({dtc_0003_0:[1,'','diagnostics'],dtc_list_count:[4,'','diagnostics']})");
+  await waitOnPage(
+    page,
+    "document.querySelectorAll('.faults-view > .fault-list > .fault-row').length===4",
+    "another active fault arrives"
+  );
+  await evaluateOnPage(page, "pushPatch({dtc_0003_0:[0,'','diagnostics'],dtc_list_count:[3,'','diagnostics']})");
+  await waitOnPage(
+    page,
+    "document.querySelectorAll('.faults-view > .fault-list > .fault-row').length===3",
+    "the extra fault clears"
+  );
+  assert.equal(
+    await evaluateOnPage(page, "pumpCheckbox===document.querySelector('[data-code=P0A07] input')&&pumpNode.open"),
+    true,
+    "Membership changes preserve the opened record and its input."
+  );
   await evaluateOnPage(page, "document.querySelector('.stored-faults').open=true");
   await evaluateOnPage(page, FRAME);
   assert.equal(
@@ -137,7 +154,22 @@ export async function checkFaultsCases(page: HeadlessPage, file: string, theme: 
     false,
     "Expected stays at the confirmed value while the reply is pending."
   );
-  assert.equal(await evaluateOnPage(page, "pumpCheckbox.disabled"), true);
+  try {
+    await waitOnPage(page, "pumpCheckbox.disabled || !pumpCheckbox.isConnected", "pending Expected control render");
+  } catch (error) {
+    const pending = await evaluateOnPage(
+      page,
+      "({connected:pumpCheckbox.isConnected,same:pumpCheckbox===document.querySelector('[data-code=P0A07] input'),disabled:pumpCheckbox.disabled,checked:pumpCheckbox.checked,writes:refusedWrites,release:typeof window.releaseExpected})"
+    );
+    assert.fail(`Pending Expected control: ${JSON.stringify(pending)}; ${error}`);
+  }
+  assert.equal(
+    await evaluateOnPage(
+      page,
+      "pumpCheckbox.isConnected&&pumpCheckbox===document.querySelector('[data-code=P0A07] input')&&pumpCheckbox.disabled"
+    ),
+    true
+  );
   await evaluateOnPage(page, "pumpCheckbox.click();window.releaseExpected()");
   await waitOnPage(
     page,
