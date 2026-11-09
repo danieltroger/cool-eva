@@ -29,9 +29,11 @@ export const unitSystem = van.state(/** @type {UnitSystem} */ (loadPreference())
 /**
  * Set and persist the unit system. The only writer of `unitSystem`.
  * @param {UnitSystem} system
+ * @param {boolean} [persist] False previews an unsaved Settings choice.
  */
-export function setUnitSystem(system) {
+export function setUnitSystem(system, persist = true) {
   unitSystem.val = system;
+  if (!persist) return;
   try {
     localStorage.setItem(STORAGE_KEY, system);
   } catch (error) {

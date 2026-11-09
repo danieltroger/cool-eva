@@ -70,9 +70,11 @@ const activeTheme = van.derive(() => {
 /**
  * Set and persist the rider's choice.
  * @param {ThemePreference} preference
+ * @param {boolean} [persist] False previews an unsaved Settings choice.
  */
-export function setThemePreference(preference) {
+export function setThemePreference(preference, persist = true) {
   themePreference.val = preference;
+  if (!persist) return;
   try {
     localStorage.setItem(STORAGE_KEY, preference);
   } catch (error) {

@@ -1,6 +1,5 @@
 // @ts-check
 import van from "../vendor/van-1.6.1.js";
-import { pendingChoiceDescriptions } from "../lib/settings-state.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 import {
   settings,
@@ -17,37 +16,25 @@ const RESTART_KEY = "settings-restart:apply";
 /** @param {boolean} [maintenance] */
 export function SettingsRestart(maintenance = true) {
   return div(
-    { class: "settings-card", hidden: () => !maintenance && !settings.val?.pending.length && !settings.val?.fault },
+    {
+      class: "layout-compact-stack settings-restart",
+      hidden: () => !maintenance && !settings.val?.pending.length && !settings.val?.fault,
+    },
     () =>
       div(
         { class: "settings-note" },
         settings.val?.pending.length
-          ? `${settingsError.val ? "Pi unconfirmed. Last confirmed saved choices" : "Saved for next start"}: ${pendingChoiceDescriptions(settings.val).join("; ")}.`
+          ? "Saved. Applies at next restart."
           : settings.val?.fault
-            ? "Repair the reported problem before retrying. The original document is retained."
-            : settingsError.val
-              ? "Pi unconfirmed. Reconnect to read pending choices."
-              : "No saved changes waiting."
+            ? "Retry settings after repair"
+            : "No saved changes waiting."
       ),
-    () =>
-      settings.val?.pending.some(key => key === "hubAddress" || key === "discoverHubOnce")
-        ? div(
-            { class: "settings-note" },
-            "Connecting Cool Eva may replace this motorcycle’s existing Bluetooth pairing."
-          )
-        : div(),
     div(
-      { class: "settings-row" },
-      div(
-        () => (settings.val?.fault ? "Retry settings after repair" : "Restart Cool Eva"),
-        div(
-          { class: "settings-note" },
-          "Restart uses saved choices, never unsaved drafts. Readings and recording pause. Wi-Fi or Bluetooth may disconnect. Reconnect to confirm what is active."
-        )
-      ),
+      { class: "layout-row settings-footer-actions" },
       button(
         {
-          class: "settings-button",
+          class: "settings-button settings-primary",
+          title: "Restart uses saved choices, never unsaved drafts. Reconnect to confirm what is active.",
           onkeydown: refuseKeyRepeat,
           disabled: () =>
             !!settingsBusy.val ||
@@ -73,7 +60,7 @@ export function SettingsRestart(maintenance = true) {
               : "Confirm restart"
             : settings.val?.fault
               ? "Retry settings"
-              : "Restart"
+              : "Restart now"
       )
     ),
     () =>

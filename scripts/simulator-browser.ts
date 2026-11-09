@@ -98,6 +98,7 @@ async function installObservation(page: HeadlessPage): Promise<void> {
     `(async()=>{
     window.simDestination=await import('/lib/destination.js');
     window.simSettings=await import('/lib/settings.js');
+    window.simBatch=await import('/lib/settings-batch.js');
     window.simArming=await import('/lib/arming.js');
     window.simStore=await import('/lib/store.js');
     window.simReload=await import('/lib/page-reload.js');
@@ -188,23 +189,38 @@ async function refused(
 
 async function checkActions(page: HeadlessPage, theme: string, shots?: string): Promise<void> {
   await destination(page, "settings", "software");
-  await refused(page, "/update", () => button(page, "Update", true), "update", theme, shots);
+  await refused(page, "/update", () => button(page, "Install update", true), "update", theme, shots);
   await destination(page, "settings", "connections");
   await destination(page, "settings", "bike");
-  await waitOnPage(page, "!!document.querySelector('select[aria-label=\"Coolant probes\"]')", "settings draft");
-  await evaluateOnPage(
+  await waitOnPage(
     page,
-    `const input=document.querySelector('select[aria-label="Coolant probes"]');input.value='true';input.dispatchEvent(new Event('change',{bubbles:true}));input.closest('.settings-card').id='sim-save'`
+    "!!document.querySelector('[role=switch][aria-label=\"Coolant probes fitted\"]')",
+    "settings draft"
   );
+  await evaluateOnPage(page, "document.querySelector('[role=switch][aria-label=\"Coolant probes fitted\"]').click()");
   await refused(
     page,
     "/settings",
-    () => button(page, "Save", false, "document.querySelector('#sim-save')"),
+    () => button(page, "Save", false, "document.querySelector('.settings-footer')"),
     "settings-save",
     theme,
     shots
   );
-  await refused(page, "/settings/apply", () => button(page, "Restart", true), "settings-apply", theme, shots);
+  await evaluateOnPage(page, "document.querySelector('[data-settings-cancel]').click()");
+  // The pristine page has no restart prompt; exercise the actual transport control in a test-only host.
+  await evaluateOnPage(
+    page,
+    "(async()=>{const view=await import('/views/settings-restart.js');const host=document.createElement('section');host.id='sim-settings-restart';host.append(view.SettingsRestart());document.body.append(host);})()"
+  );
+  await refused(
+    page,
+    "/settings/apply",
+    () => button(page, "Restart now", true, "document.querySelector('#sim-settings-restart')"),
+    "settings-apply",
+    theme,
+    shots
+  );
+  await evaluateOnPage(page, "document.querySelector('#sim-settings-restart').remove()");
   await destination(page, "advanced-service");
   await waitOnPage(
     page,
@@ -351,7 +367,7 @@ async function checkDraftAcrossLoop(page: HeadlessPage): Promise<void> {
     await gotoPage(page, `http://127.0.0.1:${pass.port}`);
     await installObservation(page);
     await destination(page, "settings", "connections");
-    await evaluateOnPage(page, "simSettings.editSetting('phoneHotspotSsid','Synthetic unsaved hotspot')");
+    await evaluateOnPage(page, "simBatch.editHotspotName('Synthetic unsaved hotspot')");
     const before = (await evaluateOnPage(
       page,
       "({instanceId:simSettings.settings.rawVal.instanceId,generation:simSettings.settings.rawVal.processGeneration})"
@@ -362,10 +378,7 @@ async function checkDraftAcrossLoop(page: HeadlessPage): Promise<void> {
       "real EOF restart and reconnect"
     );
     assert.equal(await evaluateOnPage(page, "simSettings.settings.rawVal.instanceId"), before.instanceId);
-    assert.equal(
-      await evaluateOnPage(page, "simSettings.settingDraft('phoneHotspotSsid','').rawVal"),
-      "Synthetic unsaved hotspot"
-    );
+    assert.equal(await evaluateOnPage(page, "simBatch.changes.rawVal.phoneHotspotSsid"), "Synthetic unsaved hotspot");
     assert.equal(await evaluateOnPage(page, "new URL(location.href).searchParams.get('section')"), "connections");
     await evaluateOnPage(page, "simDestination.openDestination('settings','bike');history.back()");
     await waitOnPage(page, "new URL(location.href).searchParams.get('section')==='connections'", "history return");

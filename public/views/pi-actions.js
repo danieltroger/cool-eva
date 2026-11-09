@@ -5,6 +5,7 @@ import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 import { request } from "../lib/transport.js";
 import { followUpdate } from "../lib/update-progress.js";
 import { restartRequest, acceptSettings, settingsConfirmed, settingsError, settings } from "../lib/settings.js";
+import { batchIsDirty, batchMessage } from "../lib/settings-batch.js";
 
 const { button, div } = van.tags;
 
@@ -97,17 +98,19 @@ export function UpdateButton() {
   return div(
     { class: "settings-action" },
     div(
-      { class: "settings-row" },
-      div(
-        { class: "settings-note" },
-        "Install new code, then restart. Readings and recording pause; Wi-Fi or Bluetooth may disconnect."
-      ),
+      { class: "layout-row settings-footer-actions" },
       button(
         {
           class: "settings-button",
-          disabled: () => updating.val || !settingsConfirmed.val || !!settingsError.val,
+          title: "Install new code, then restart. Readings and recording pause; Wi-Fi or Bluetooth may disconnect.",
+          "data-settings-update": "",
+          disabled: () => updating.val || !settingsConfirmed.val || !!settingsError.val || batchIsDirty(),
           onkeydown: refuseKeyRepeat,
           onclick: () => {
+            if (batchIsDirty()) {
+              batchMessage.val = "Save or cancel your edits first.";
+              return;
+            }
             if (armed.val !== UPDATE_KEY) {
               arm(UPDATE_KEY);
               return;
@@ -119,7 +122,7 @@ export function UpdateButton() {
             void performUpdate();
           },
         },
-        () => (armed.val === UPDATE_KEY ? "Confirm update" : "Update")
+        () => (armed.val === UPDATE_KEY ? "Confirm update" : "Install update")
       )
     ),
     () =>

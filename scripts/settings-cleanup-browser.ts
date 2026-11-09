@@ -4,36 +4,49 @@ import { evaluateOnPage, gotoPage, waitOnPage, type HeadlessPage } from "./headl
 export async function checkSettingsCleanupBrowser(page: HeadlessPage, previewFile: string): Promise<void> {
   for (const theme of ["dark", "light"]) {
     await gotoPage(page, `file://${previewFile}?scene=parked&panel=settings&section=phone&cleanup=${theme}`);
-    await waitOnPage(page, "!!document.querySelector('.settings-page .toggle-row button')", "phone preferences");
+    await waitOnPage(page, "!!document.querySelector('.settings-page select[aria-label=Units]')", "phone preferences");
     await evaluateOnPage(page, `ridingPreview('lib/theme.js').setThemePreference(${JSON.stringify(theme)})`);
     await waitOnPage(page, `document.documentElement.dataset.theme===${JSON.stringify(theme)}`, "the cleanup theme");
     assert.equal(
       await evaluateOnPage(
         page,
-        "[...document.querySelectorAll('.settings-page .toggle-row button')].every(control=>getComputedStyle(control).textAlign==='left')"
+        "[...document.querySelectorAll('.settings-page select')].every(control=>getComputedStyle(control).textAlign==='left')"
       ),
       true,
       "Phone preference values align left."
     );
     await gotoPage(page, `file://${previewFile}?scene=parked&panel=settings&section=bike&cleanup=${theme}`);
-    await waitOnPage(page, "document.querySelectorAll('.setting-help').length===3", "Bike setup help");
+    await waitOnPage(
+      page,
+      "document.querySelectorAll('[data-settings-section=bike] .setting-help').length===3",
+      "Bike setup help"
+    );
     await checkBikeSetupStatus(page);
-    assert.equal(await evaluateOnPage(page, "document.querySelectorAll('.setting-help').length"), 3);
+    assert.equal(
+      await evaluateOnPage(page, "document.querySelectorAll('[data-settings-section=bike] .setting-help').length"),
+      3
+    );
     assert.equal(
       await evaluateOnPage(
         page,
-        "[...document.querySelectorAll('.setting-control')].every(row=>{const control=row.querySelector('select').getBoundingClientRect();const help=row.querySelector('summary').getBoundingClientRect();return help.left-control.right>=0&&help.left-control.right<=12&&help.height>=44&&help.width>=44;})"
+        "[...document.querySelectorAll('[data-settings-section=bike] .settings-field')].every(field=>{const control=field.querySelector('[role=switch]').getBoundingClientRect();const help=field.querySelector('summary').getBoundingClientRect();return control.left-help.right>=0&&control.left-help.right<=12&&help.height>=44&&help.width>=44;})"
       ),
       true,
       "Each Bike setup field owns adjacent help."
     );
-    await evaluateOnPage(page, "document.querySelector('.setting-help > summary').click()");
+    await evaluateOnPage(page, "document.querySelector('[role=switch][aria-label=\"Coolant probes fitted\"]').click()");
+    await waitOnPage(page, "!!document.querySelector('[data-settings-save]')", "B4: editing before opening help");
+    await evaluateOnPage(
+      page,
+      "document.querySelector('[data-settings-section=bike] .setting-help > summary').click()"
+    );
     assert.equal(
       await evaluateOnPage(
         page,
         "(()=>{const help=document.querySelector('.setting-help[open] .settings-note').getBoundingClientRect();return help.width>0&&help.left>=0&&help.right<=390;})()"
       ),
-      true
+      true,
+      "B4: help stays inside the viewport while editing."
     );
     assert.equal(
       await evaluateOnPage(
@@ -43,6 +56,7 @@ export async function checkSettingsCleanupBrowser(page: HeadlessPage, previewFil
       true,
       "Bike setup values align left."
     );
+    await evaluateOnPage(page, "document.querySelector('[data-settings-cancel]').click()");
     await gotoPage(page, `file://${previewFile}?scene=parked&panel=settings&section=connections&cleanup=${theme}`);
     await waitOnPage(page, "!!document.querySelector('.settings-page input')", "Connections");
     assert.equal(
@@ -57,7 +71,11 @@ export async function checkSettingsCleanupBrowser(page: HeadlessPage, previewFil
       page,
       "(async()=>{SETTINGS.notices=['hub-address-invalid','hub-discover-once'];SETTINGS.revision++;await ridingPreview('lib/settings.js').refreshSettings();ridingPreview('lib/destination.js').openDestination('settings','advanced');})()"
     );
-    await waitOnPage(page, "document.querySelector('h2')?.textContent==='Advanced'", "Advanced setup notes");
+    await waitOnPage(
+      page,
+      "document.querySelector('[data-settings-section=advanced]')?.open===true",
+      "Advanced setup notes"
+    );
     assert.equal(
       await evaluateOnPage(
         page,
@@ -122,7 +140,7 @@ export async function checkBikeSetupStatus(page: HeadlessPage): Promise<void> {
     await bikeSetupStatuses(page),
     [
       {
-        owner: "Radiator fan installed",
+        owner: "Radiator fan fitted",
         text: "Active: Driver ready; no rotation sensor",
         inside: true,
         oneLine: true,
@@ -136,7 +154,7 @@ export async function checkBikeSetupStatus(page: HeadlessPage): Promise<void> {
   );
   await waitOnPage(
     page,
-    "[...document.querySelector('h2').parentElement.querySelectorAll('[role=status]')].every(node=>!node.textContent)",
+    "[...document.querySelectorAll('[data-settings-section=bike] [role=status]')].every(node=>!node.textContent)",
     "fan Off readback"
   );
   assert.deepEqual(await bikeSetupStatuses(page), [], "A fan Off status must not repeat its active choice.");
@@ -152,9 +170,9 @@ export async function checkBikeSetupStatus(page: HeadlessPage): Promise<void> {
   assert.deepEqual(
     await bikeSetupStatuses(page),
     [
-      { owner: "Coolant probes", text: "Active: Unavailable", inside: true, oneLine: true },
+      { owner: "Coolant probes fitted", text: "Active: Unavailable", inside: true, oneLine: true },
       {
-        owner: "Radiator fan installed",
+        owner: "Radiator fan fitted",
         text: "Active: Driver ready — rotation is not measured",
         inside: true,
         oneLine: true,
@@ -173,6 +191,6 @@ export async function checkBikeSetupStatus(page: HeadlessPage): Promise<void> {
 async function bikeSetupStatuses(page: HeadlessPage) {
   return evaluateOnPage(
     page,
-    "[...document.querySelector('h2').parentElement.querySelectorAll('[role=status]')].filter(node=>node.textContent).map(node=>{const card=node.closest('.settings-card');const bounds=node.getBoundingClientRect();const parent=card?.getBoundingClientRect();return {owner:card?.querySelector('h3')?.textContent??null,text:node.textContent,inside:!!parent&&bounds.left>=parent.left&&bounds.right<=parent.right&&bounds.top>=parent.top&&bounds.bottom<=parent.bottom,oneLine:bounds.height<=parseFloat(getComputedStyle(node).lineHeight)+1};})"
+    "[...document.querySelectorAll('[data-settings-section=bike] [role=status]')].filter(node=>node.textContent).map(node=>{const card=node.closest('.settings-field');const bounds=node.getBoundingClientRect();const parent=card?.getBoundingClientRect();return {owner:card?.querySelector('.settings-field-label')?.textContent??null,text:node.textContent,inside:!!parent&&bounds.left>=parent.left&&bounds.right<=parent.right&&bounds.top>=parent.top&&bounds.bottom<=parent.bottom,oneLine:bounds.height<=parseFloat(getComputedStyle(node).lineHeight)+1};})"
   );
 }
