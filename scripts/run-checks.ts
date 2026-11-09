@@ -568,6 +568,10 @@ const CHECKS: SelfCheck[] = [
       "gets one aimed at an interface no machine has, so `ip link` runs against nothing and can0 is never touched",
   },
   {
+    script: "scripts/check-cooling-feedback.ts",
+    covers: "inline fan feedback on Cooling, suppressed-event memory and later announcements on other screens",
+  },
+  {
     script: "scripts/check-fan-banner.ts",
     covers:
       "that the phone's fan banner names the duty the fan was actually ASKED for. `fan_auto_mode` and " +

@@ -4,6 +4,8 @@ import van from "../vendor/van-1.6.1.js";
 import { connection, peek, valueOf } from "./store.js";
 import { FAN_OFF_STATE_CODE, fanAnnouncementKey, fanAnnouncementText } from "./fan-display.js";
 import { showToast } from "./toast.js";
+import { peekView } from "./router.js";
+import { destination } from "./destination.js";
 
 // Banners for things the BIKE did, which nothing on this screen asked for.
 //
@@ -18,6 +20,8 @@ import { showToast } from "./toast.js";
 // window — and a window that misfires swallows the banner for a real gesture, which is
 // the one failure the banner exists to prevent. A redundant banner is the cheaper wrong.
 // docs/dashboard-decisions.md §"The toast banner".
+// Fan changes use the existing inline feedback while Cooling is visible; other
+// screens retain fan announcements. No guess about which control sent the change.
 
 /**
  * One sentence per WAYPOINT_REFUSAL in src/gps/waypoint.ts, keyed by its code.
@@ -98,22 +102,15 @@ function blank() {
  */
 
 /**
- * One reading of the fan's two signals, folded into a banner or into nothing.
- *
- * Pure, and exported so scripts/check-fan-banner.ts drives THE WORDING THE PHONE USES
- * rather than a replica of it. ⚠️ That is the whole reason this is a function and not
- * three lines inside the derive below: the replica in scripts/check-hold-gestures.ts fed
- * the same percentage to the key and to the text, so it asserted a pair that cannot come
- * apart — and stayed green through the whole of #199, whose defect is precisely a pair
- * that came apart.
- *
+ * Pure announcement fold; pairing and presentation constraints: docs/fan-dashboard.md.
  * @param {FanAnnouncementMemory} state
  * @param {number | null} modeCode `fan_auto_mode`
  * @param {number | null} targetPercent `fan_target_pct`, read in the same pass as the mode
  * @param {number | null} [offState] `fan_off_state`, peeked to word two of the four
+ * @param {boolean} [inlineFeedback] the visible fan control already reports this change
  * @returns {{ state: FanAnnouncementMemory, banner: string | null }}
  */
-export function foldFanAnnouncement(state, modeCode, targetPercent, offState = null) {
+export function foldFanAnnouncement(state, modeCode, targetPercent, offState = null, inlineFeedback = false) {
   const folded = foldAnnouncement(state, fanAnnouncementKey(modeCode, targetPercent));
   // ⚠️ ONE-SHOT, and remembered on EVERY call rather than only on the ones that announce.
   // `fan_off_state` goes back to NOT_ARMED one batch after a hand-back, so MOVED is
@@ -122,7 +119,7 @@ export function foldFanAnnouncement(state, modeCode, targetPercent, offState = n
   // back by the bike and then re-entered through fun mode would say "(moving)" twice.
   const movedIsNews = offState === FAN_OFF_STATE_CODE.MOVED && state.offState !== FAN_OFF_STATE_CODE.MOVED;
   const nextState = { ...folded.state, offState };
-  if (!folded.announce) {
+  if (!folded.announce || inlineFeedback) {
     return { state: nextState, banner: null };
   }
   // ⚠️ The one-shot gates MOVED only. ARMED must always word its banner: it is a standing
@@ -162,7 +159,8 @@ function announceFanState() {
       memory,
       valueOf("fan_auto_mode"),
       valueOf("fan_target_pct"),
-      peek("fan_off_state")
+      peek("fan_off_state"),
+      peekView() === "cooling" && !destination.rawVal
     );
     memory = folded.state;
     if (folded.banner !== null) {
