@@ -124,7 +124,7 @@ const CHECKS: SelfCheck[] = [
   {
     script: "scripts/check-ble-client.ts",
     covers:
-      "the actual browser/server link: exact origins and native scheme, normalized CSPRNG keys, production HELLO replay, advisory recovery without re-entering the key, same-radio service restart and fresh read/write chains, authenticated download liveness and request inactivity cleanup without POST replay",
+      "the actual browser/server link: normalized CSPRNG keys, production HELLO replay, advisory recovery without re-entering the key, same-radio service restart and fresh read/write chains, authenticated download liveness and request inactivity cleanup without POST replay",
   },
   {
     script: "scripts/check-ble-gatt.ts",

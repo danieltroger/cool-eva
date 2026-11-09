@@ -2,7 +2,7 @@
 import van from "../vendor/van-1.6.1.js";
 import { readPhoneValue } from "../lib/phone-storage.js";
 import { settings } from "../lib/settings.js";
-import { BLE_MODE, originAllowed, rememberSecret, reconnect, chooseAndConnect, deviceChosen } from "../lib/ble-link.js";
+import { BLE_MODE, rememberSecret, reconnect, chooseAndConnect, deviceChosen } from "../lib/ble-link.js";
 import { SettingsCard } from "./settings-fields.js";
 const { button, div } = van.tags;
 
@@ -21,7 +21,7 @@ export function PendingBluetoothKey() {
       cached
         ? "This phone kept the pending key. The current session still uses the old key until restart. If the restart reply was lost, reconnect with the saved pending key, then read back the active state."
         : "This phone does not hold the pending key. Get the owner's saved copy or use Wi-Fi before restarting; a superseded key cannot reconnect.",
-      BLE_MODE && cached && originAllowed()
+      BLE_MODE && cached
         ? div(
             { class: "settings-row" },
             div("Use saved pending key"),

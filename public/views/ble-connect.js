@@ -10,9 +10,7 @@ import {
   reconnect,
   rememberSecret,
   storedSecret,
-  originAllowed,
 } from "../lib/ble-link.js";
-import { BLE_ORIGIN_MESSAGE } from "../lib/ble-origin.js";
 
 // The controls a BLE-served dashboard needs and a wifi-served one does not: a way to pick
 // the Pi (Web Bluetooth will only open its chooser from a tap) and somewhere to type the
@@ -45,7 +43,7 @@ const entryError = van.state("");
  * @param {() => void} openMenu opens the menu sheet, where the secret is typed
  */
 export function BleHeaderButton(openMenu) {
-  if (!BLE_MODE || !originAllowed()) {
+  if (!BLE_MODE) {
     return span();
   }
   return () => (bleStatus.val === "connected" ? span() : BleConnectButton(openMenu));
@@ -60,9 +58,6 @@ export function BleConnectButton(openMenu) {
 export function BleSection() {
   if (!BLE_MODE) {
     return div();
-  }
-  if (!originAllowed()) {
-    return div(h2({ class: "sheet-heading" }, "Bluetooth"), div({ class: "action-note caution" }, BLE_ORIGIN_MESSAGE));
   }
   if (!bluetoothAvailable()) {
     return div(

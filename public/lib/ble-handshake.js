@@ -12,12 +12,11 @@ import {
   helloProof,
   randomNonce,
 } from "./ble-wire.js";
-import { requireBleOrigin, storedBleSecret } from "./ble-credentials.js";
+import { storedBleSecret } from "./ble-credentials.js";
 import { setBleStatus } from "./ble-state.js";
 
 /** @param {import("./ble-state.js").BleState} state @returns {Promise<import("./ble-state.js").Session>} */
 export function ensureBleSession(state) {
-  requireBleOrigin(state);
   if (state.session !== null) return Promise.resolve(state.session);
   if (state.connecting === null) {
     const epoch = state.epoch;

@@ -13,29 +13,18 @@ import {
 import { createBleState, setBleStatus } from "./ble-state.js";
 import { ensureBleSession } from "./ble-handshake.js";
 import { SILENCE_LIMIT_MS } from "./connection.js";
-import {
-  bleOriginAllowed,
-  purgeBleSecret,
-  rememberBleSecret,
-  requireBleOrigin,
-  storedBleSecret,
-} from "./ble-credentials.js";
+import { rememberBleSecret, storedBleSecret } from "./ble-credentials.js";
 
 /** @param {Partial<import("./ble-state.js").BleEnvironment>} [environment] */
 export function createBleLink(environment = {}) {
   const state = createBleState(environment);
   state.receive = event => receiveNotification(state, event);
   state.writeHello = (rx, envelope, epoch) => writeFrames(state, rx, envelope, epoch);
-  if (state.environment.url.protocol === "https:" && !bleOriginAllowed(state)) {
-    purgeBleSecret(state);
-  }
   return {
     storedSecret: () => storedBleSecret(state),
     /** @param {string} secret */
     rememberSecret: secret => rememberBleSecret(state, secret),
-    originAllowed: () => bleOriginAllowed(state),
-    bluetoothAvailable: () =>
-      bleOriginAllowed(state) && state.environment.secure() && state.environment.bluetooth() !== undefined,
+    bluetoothAvailable: () => state.environment.secure() && state.environment.bluetooth() !== undefined,
     nativeShell: () => state.environment.shell(),
     /** @param {(status: BleStatus, detail: string) => void} listener */
     onBleStatus(listener) {
@@ -73,7 +62,6 @@ export function createBleLink(environment = {}) {
 const client = createBleLink();
 export const storedSecret = client.storedSecret;
 export const rememberSecret = client.rememberSecret;
-export const originAllowed = client.originAllowed;
 export const bluetoothAvailable = client.bluetoothAvailable;
 export const nativeShell = client.nativeShell;
 export const onBleStatus = client.onBleStatus;
@@ -84,7 +72,6 @@ export const tunnelRequest = client.tunnelRequest;
 export const openStream = client.openStream;
 export const abandonSilentSession = client.abandonSilentSession;
 // HTTPS/native pages have no Pi at their origin; transport is fixed by the page's source.
-// The exact-origin gate still applies; see docs/ble-server.md §"Where the page comes from".
 export const BLE_MODE =
   typeof location !== "undefined" &&
   (location.protocol === "https:" ||
@@ -96,7 +83,6 @@ const WRITE_FRAME_BYTES = 180;
 
 /** @param {BleState} state */
 async function chooseDevice(state) {
-  requireBleOrigin(state);
   const bluetooth = state.environment.bluetooth();
   if (!bluetooth) {
     throw new Error("This browser has no Web Bluetooth. On iPhone use the Cool Eva app or Bluefy; on Android, Chrome.");
