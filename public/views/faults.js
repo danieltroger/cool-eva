@@ -27,7 +27,9 @@ export function FaultsView() {
       const state = headlineState();
       return state.kind === "unknown" || (state.kind === "active" && active().length < state.count)
         ? span({ class: "fault-sub", "data-active-state": "unknown" }, "Fault list unavailable")
-        : span({ hidden: true });
+        : active().length === 0
+          ? span({ class: "fault-sub", "data-active-state": "clear" }, "No active faults")
+          : span({ hidden: true });
     },
     current,
     details(
