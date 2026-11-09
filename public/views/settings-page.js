@@ -16,12 +16,12 @@ import { AccessExplanation } from "./settings-access.js";
 import { SettingsRecovery } from "./settings-recovery.js";
 import { SettingsRestart } from "./settings-restart.js";
 import { DashboardBluetooth } from "./settings-bluetooth.js";
-import { MotorcycleConnection } from "./settings-hub.js";
-import { CanRestartButton, UpdateButton } from "./pi-actions.js";
+import { UpdateButton } from "./pi-actions.js";
 import { ScreenGeometry } from "./screen-geometry.js";
 
 const { a, button, div, h2 } = van.tags;
 import { SETTINGS_MAP } from "../lib/settings-map.js";
+import { settingChoice } from "../lib/settings-state.js";
 
 export function SettingsPage() {
   return div(
@@ -71,15 +71,15 @@ function SettingsContent(section) {
         BooleanSetting(
           "coolantProbesEnabled",
           "Coolant probes",
-          "Only enable if you have the MAX31865 probes installed in your coolant hoses"
+          "Only enable if you have the MAX31865 probes installed in your coolant hoses",
+          Readiness("coolant", "coolantProbesEnabled")
         ),
-        Readiness("coolant"),
         BooleanSetting(
           "radiatorFanEnabled",
           "Radiator fan installed",
-          "Only enable if you have a coolant fan on the radiator. Automatic fan control may start after restart."
+          "Only enable if you have a coolant fan on the radiator. Automatic fan control may start after restart.",
+          Readiness("fan", "radiatorFanEnabled")
         ),
-        Readiness("fan"),
         BooleanSetting(
           "customBmsConfigurationFlashed",
           "Have you flashed the custom BMS configuration?",
@@ -128,13 +128,6 @@ function SettingsContent(section) {
           )
         ),
         DashboardBluetooth(),
-        MotorcycleConnection(),
-        SettingsCard(
-          "Bike data / CAN adapter",
-          "No recognised traffic may mean the bike is asleep, an unplugged USB adapter or wrong wiring. Check those first. A bus restart closes CAN sockets; restart Cool Eva afterward if readings remain unavailable.",
-          Readiness("can"),
-          CanRestartButton()
-        ),
         AccessExplanation()
       );
     case "recording":
@@ -217,11 +210,16 @@ function SettingsContent(section) {
   }
 }
 
-/** @param {keyof import("../../src/settings/view.ts").SettingsReadiness} key */
-function Readiness(key) {
-  return () =>
-    div(
+/** @param {keyof import("../../src/settings/view.ts").SettingsReadiness} key
+ * @param {"coolantProbesEnabled" | "radiatorFanEnabled"} [settingKey] */
+function Readiness(key, settingKey) {
+  return () => {
+    const current = settings.val;
+    const readiness = current?.readiness[key] ?? "Not read";
+    if (settingKey && current && readiness === settingChoice(current.active, settingKey)) return div();
+    return div(
       { class: "settings-note", role: "status" },
-      `${settingsConfirmed.val && !settingsError.val ? "Active" : "Unconfirmed — last contact"}: ${settings.val?.readiness[key] ?? "Not read"}`
+      `${settingsConfirmed.val && !settingsError.val ? "Active" : "Unconfirmed — last contact"}: ${readiness}`
     );
+  };
 }

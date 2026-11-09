@@ -152,11 +152,6 @@ export function DownloadButton() {
         {
           class: "action",
           onclick: () => {
-            if (status.rawVal && !status.rawVal.log.enabled) {
-              sheetOpen.val = false;
-              openDestination("settings", "recording", openSheet);
-              return;
-            }
             downloadProgress.val = "";
             downloadCurrentRide((receivedBytes, totalBytes) => {
               downloadProgress.val =
@@ -172,18 +167,9 @@ export function DownloadButton() {
             );
           },
         },
-        () => {
-          const current = status.val;
-          if (!current) {
-            return "Download all ride logs";
-          }
-          if (!current.log.enabled) {
-            return "Ride recording unavailable — Settings";
-          }
-          return `Download all ride logs (${bytes(current.log.bytes)})`;
-        }
+        "Download all ride logs"
       ),
-      () => (status.val && !status.val.log.enabled ? "Settings" : "Download")
+      () => "Download"
     ),
     () => (downloadProgress.val ? div({ class: "action-note" }, downloadProgress.val) : div())
     // No caption under the button. The file count that used to sit here is still

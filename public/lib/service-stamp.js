@@ -2,15 +2,18 @@
 
 import { hexWord } from "./format.js";
 
-// The last-service stamp, as evidence rather than as a sentence.
-//
-// The Pi already phrases the outcome (`describeStamp` in src/vcu/write-runner.ts). What it
-// does not send anywhere a person can see is the four raw WORDs A8 answered with, and those
-// are the only primary evidence there is — the audit journal keeps the DECODED stamp, so on
-// 2026-09-08, the first time anything read these identifiers, the bytes behind the reading
-// were recorded nowhere. What was read and what it means: docs/service-stamp.md.
+// Raw stamp provenance and market-dependent odometer units: docs/service-stamp.md.
 
 /** @typedef {import("../../src/vcu/service-actions.ts").ServiceStamp} ServiceStamp */
+
+/** @param {ServiceStamp|null} stamp */
+export function formatServiceStampDate(stamp) {
+  if (!stamp) return "—";
+  if (stamp.implausible || !stamp.dateIso || !Number.isFinite(Date.parse(stamp.dateIso))) return "fault";
+  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(
+    new Date(stamp.dateIso)
+  );
+}
 
 /**
  * The stamp's own bytes, and what they decode to, as lines to render under the outcome.

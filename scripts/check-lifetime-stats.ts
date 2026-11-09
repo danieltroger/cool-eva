@@ -446,8 +446,8 @@ for (const [key, liveKey, group] of [
 }
 console.log("  the four cell bands match public/lib/bounds.js");
 
-// ── §7b The instruction the dashboard shows must be a command that runs ────
-console.log("\n── §7b the on-screen instruction ──────────────────────────────────");
+// ── §7b Diagnostic hints must name a real command and control ────
+console.log("\n── §7b diagnostic instructions ──────────────────────────────────");
 
 // ⚠️ PARSED, not eyeballed. The first version of this string named `--components 51,52`,
 // a flag that has never existed, and it is what a Pi that has never taken a reading
@@ -475,8 +475,8 @@ check(
   `HOW_TO_READ is what a rider does in the app, not a shell command, got ${JSON.stringify(HOW_TO_READ)}`
 );
 check(
-  HOW_TO_READ.includes("Service mode"),
-  `HOW_TO_READ should name the service sheet that carries the button, got ${JSON.stringify(HOW_TO_READ)}`
+  HOW_TO_READ.includes("More → Bike"),
+  `HOW_TO_READ should name the Bike page that carries the button, got ${JSON.stringify(HOW_TO_READ)}`
 );
 
 // ⚠️ And no SHELL-facing caller may print it. This is the regression the split actually
@@ -521,7 +521,7 @@ check(
 );
 console.log(`  headline: "${HOW_TO_READ}"`);
 
-// ⚠️ And the control it names must exist. HOW_TO_READ quotes the service sheet's button
+// ⚠️ And the control it names must exist. HOW_TO_READ quotes the Bike page's button
 // verbatim; rename that button and a never-read Pi's only instruction points at a control
 // that is not there — the --components 51,52 failure again, moved to the in-app half.
 const lifetimeReadView = await readFile(new URL("../public/views/lifetime-read.js", import.meta.url), "utf-8");
@@ -530,7 +530,7 @@ check(
   quotedLabel !== "" && lifetimeReadView.includes(quotedLabel),
   `HOW_TO_READ quotes "${quotedLabel}", which public/views/lifetime-read.js no longer renders`
 );
-console.log(`  and "${quotedLabel}" is a button the service sheet renders`);
+console.log(`  and "${quotedLabel}" is a button the Bike page renders`);
 
 if (failures.length > 0) {
   console.error("\nFAILED:");

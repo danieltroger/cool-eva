@@ -1,6 +1,7 @@
 import assert from "assert/strict";
 import { evaluateOnPage, gotoPage, waitOnPage, type HeadlessPage } from "./headless-page.ts";
 import { checkScreenGeometry } from "./screen-geometry-browser.ts";
+import { checkSettingsCleanupBrowser } from "./settings-cleanup-browser.ts";
 
 export async function checkSettingsBrowser(page: HeadlessPage, previewFile: string): Promise<void> {
   await gotoPage(page, `file://${previewFile}?scene=parked&panel=settings&section=bike&settings=unconfirmed`);
@@ -43,8 +44,8 @@ export async function checkSettingsBrowser(page: HeadlessPage, previewFile: stri
   );
   await waitOnPage(
     page,
-    "document.body.innerText.includes('Service data is unavailable. Resolve the Settings fault before reading.')",
-    "the real service-data repair message"
+    "[...document.querySelectorAll('.action-note')].some(node=>node.title.includes('Service data is unavailable. Resolve the Settings fault before reading.'))",
+    "the real service-data repair reason"
   );
   assert.equal(await evaluateOnPage(page, "document.body.innerText.includes('This dashboard is out of date')"), false);
   await gotoPage(page, `file://${previewFile}?scene=parked&panel=settings&section=bike&reload-check=1`);
@@ -93,6 +94,7 @@ export async function checkSettingsBrowser(page: HeadlessPage, previewFile: stri
     [390, 390, 44, 44]
   );
   await checkConnectionLayouts(page, previewFile);
+  await checkSettingsCleanupBrowser(page, previewFile);
   await checkScreenGeometry(page, previewFile);
   console.log(
     "  ✓ settings: unread choices, fault/CSRF distinction, persistent More access, full-width connection fields, compact actions and the actual Siri repair route"
@@ -118,28 +120,13 @@ async function checkConnectionLayouts(page: HeadlessPage, previewFile: string): 
     "Show key",
     "Save",
   ]);
-  await gotoPage(page, `file://${previewFile}?scene=parked&panel=settings&section=connections`);
-  await waitOnPage(page, "document.body.innerText.includes('A shared key is already saved.')", "connections readback");
-  await evaluateOnPage(
-    page,
-    "[...document.querySelectorAll('button')].find(button=>button.textContent==='Scan').click()"
+  assert.equal(
+    await evaluateOnPage(
+      page,
+      "document.body.innerText.includes('Motorcycle connection')||document.body.innerText.includes('Bike data / CAN adapter')"
+    ),
+    false
   );
-  await waitOnPage(
-    page,
-    "!!document.querySelector('select[aria-label=\"Choose your motorcycle\"]')",
-    "motorcycle candidates"
-  );
-  await assertConnectionLayout(page, "Motorcycle connection", "select", ["Scan", "Save"]);
-  await evaluateOnPage(
-    page,
-    "const picker=document.querySelector('select[aria-label=\"Choose your motorcycle\"]');picker.value='02:00:00:00:00:02';picker.dispatchEvent(new Event('change',{bubbles:true}))"
-  );
-  await waitOnPage(
-    page,
-    "document.body.innerText.includes('Draft motorcycle: Synthetic Energica · 02:00:00:00:00:02')",
-    "the complete selected identity"
-  );
-  await assertConnectionLayout(page, "Motorcycle connection", "select", ["Scan", "Cancel", "Save"]);
   await gotoPage(page, `file://${previewFile}?scene=parked&panel=settings`);
   await waitOnPage(page, "!!document.querySelector('button[aria-label=\"Open Advanced\"]')", "the Settings map");
   await evaluateOnPage(page, "document.querySelector('button[aria-label=\"Open Advanced\"]').click()");

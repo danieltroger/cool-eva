@@ -1164,6 +1164,11 @@ const CHECKS: SelfCheck[] = [
       "and refusal of foreign or released locks before journal/data writes",
   },
   {
+    script: "scripts/check-settings-cleanup.ts",
+    covers:
+      "the retained Settings destinations, removal of Motorcycle/CAN summary choices, and short Bike service dates that reject missing, empty and malformed stamps; real layout/help/download behavior runs in the phone browser gate",
+  },
+  {
     script: "scripts/check-settings-phone.ts",
     covers:
       "phone drafts scoped to the confirmed Pi, stale edit CAS, active/learned revision semantics and disarm on process changes",

@@ -14,7 +14,7 @@ import {
   discardSetting,
 } from "../lib/settings.js";
 
-const { button, div, h3, input, option, select, textarea, label } = van.tags;
+const { button, details, div, h3, input, option, select, summary, textarea, label } = van.tags;
 /** @typedef {import("../../src/settings/schema.ts").StartupSettings} StartupSettings */
 
 /** @param {string} title @param {string} text @param {...import("../vendor/van-1.6.1.js").ChildDom} children */
@@ -39,15 +39,17 @@ export function CompactButton(text, action) {
   );
 }
 
-/** @param {"coolantProbesEnabled" | "radiatorFanEnabled" | "customBmsConfigurationFlashed" | "automaticDcChargingEnabled"} key @param {string} title @param {string} help */
-export function BooleanSetting(key, title, help) {
+/** @param {"coolantProbesEnabled" | "radiatorFanEnabled" | "customBmsConfigurationFlashed" | "automaticDcChargingEnabled"} key @param {string} title @param {string} help
+ * @param {...import("../vendor/van-1.6.1.js").ChildDom} children */
+export function BooleanSetting(key, title, help, ...children) {
   const draft = settingDraft(key, settings.rawVal ? String(settings.rawVal.saved[key]) : "");
   return SettingsCard(
     title,
-    help,
+    "",
     div(
       { class: "settings-row" },
       div(
+        { class: "layout-row setting-control" },
         select(
           {
             "aria-label": title,
@@ -65,13 +67,19 @@ export function BooleanSetting(key, title, help) {
             key === "customBmsConfigurationFlashed" ? "Yes" : "On"
           )
         ),
-        PendingLabel(key)
+        details(
+          { class: "setting-help" },
+          summary({ "aria-label": `Help for ${title}` }, "ⓘ"),
+          div({ class: "settings-note" }, help)
+        )
       ),
       DiscardEdit(key),
       CompactButton("Save", () => {
         void saveSetting(key, { [key]: draft.rawVal === "true" });
       })
     ),
+    PendingLabel(key),
+    ...children,
     SaveResult(key)
   );
 }
