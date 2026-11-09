@@ -272,7 +272,7 @@ async function checkNoticeStates(page: HeadlessPage, file: string, theme: string
     );
     await evaluateOnPage(page, FRAME);
     assert.equal(
-      await evaluateOnPage(page, "document.querySelector('.app-title .dot').getAttribute('aria-label')"),
+      await evaluateOnPage(page, "document.querySelector('[data-header-connection] .dot').getAttribute('aria-label')"),
       link
     );
     assert.equal(

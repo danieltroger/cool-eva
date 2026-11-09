@@ -780,6 +780,10 @@ const CHECKS: SelfCheck[] = [
       "the two handlebar gestures — double-click cruise-set for the next tab, long-press indicator-cancel to save a waypoint — replayed through the recognisers the phone runs, including the deadline wakeup without which a hold could only ever fire on release. Most cases are real durations that must fire NOTHING: the 140 ms median press, the 30 ms shortest, the 920 ms longest ordinary press on any handlebar button, and the only 1794 ms cruise-set press in the corpus. Plus the threshold margins and the binding itself — registered, deadband-free, and not the cruise-arm switch, whose every recorded press armed cruise control",
   },
   {
+    script: "scripts/check-header-status.ts",
+    covers: "independent CAN and dashboard-connection state, including unknown and older signal fallback",
+  },
+  {
     script: "scripts/check-hold-gestures.ts",
     covers:
       "the two handlebar HOLD gestures the Pi now recognises for itself — a 1200 ms hold of MODE ENTER stepping " +
