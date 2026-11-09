@@ -742,6 +742,11 @@ const CHECKS: SelfCheck[] = [
       "RTC, a verified copy that is missing or the wrong size, and a sha256 that disagrees under --strict",
   },
   {
+    script: "scripts/check-freeze-frame-field-audit.ts",
+    covers:
+      "all 120 fields against an independent manufacturer dictionary snapshot; every field in 34 recorded replies, retained low and ordinary rails, signed/scaled values, existing scaling refusals, and constructed sentinels without treating all-ones status words as dead sensors",
+  },
+  {
     script: "scripts/check-freeze-frame-values.ts",
     covers:
       "the whole-bike freeze-frame read and what is shown from it: that a 0x18 list carrying padding, a component " +
