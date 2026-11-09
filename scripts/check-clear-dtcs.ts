@@ -3,7 +3,6 @@ import { handleResponse, pollPidNow } from "../src/can/obd.ts";
 import { troubleCodeSnapshot } from "../src/diagnostics/stored-codes.ts";
 import { createVcuWriteRunner, type VcuWriteRunner } from "../src/vcu/write-runner.ts";
 import type { ServiceGateCheckState, ServiceGateVerdict } from "../src/vcu/service-gate.ts";
-import { chargerIsAttached } from "../public/views/vcu-write.js";
 import { judgeErasure, type ClearDtcsCounts, type ErasureVerdict } from "../src/vcu/clear-dtcs.ts";
 import { verdictSeesACable } from "../src/vcu/charge-session.ts";
 import { WORST_CASE_TRANSFER_MS } from "../src/can/obd-dtc.ts";
@@ -703,19 +702,7 @@ const erased: ClearDtcsCounts = {
   }
 }
 
-// --- 8. When the cable warning appears -------------------------------------------
-//
-// ⚠️ `ok` on the veto row is the ONLY state that means "fresh charge manager, cable present":
-// src/vcu/service-gate.ts's inletCheck returns `inlet-empty` for an empty inlet, `stale` past
-// the 5 s budget and `missing` when the charge manager has never spoken. `stale` is the shape
-// the 2026-09-11 ride log leaves behind, and it must NOT warn — the log cannot say what the
-// gate read that day, and inventing a warning from a stale row would be inventing that answer.
-
-console.log("\n8. the cable caution");
-
-// ⚠️ BOTH copies, every case. The Pi's `verdictSeesACable` decides whether the audit journal
-// advises unplugging; the browser's `chargerIsAttached` decides whether the caution shows. They
-// cannot import each other — no build step in public/ — so this is what stops them drifting.
+// Cable evidence for the server audit, including stale and never-seen manager states.
 for (const [what, verdict, expected] of [
   ["a fresh cable in the inlet", gateVerdict("ok", null), true],
   ["a witnessed charge session", gateVerdict("missing", "fast_dc_contactor"), true],
@@ -725,16 +712,7 @@ for (const [what, verdict, expected] of [
   ["2026-09-13's gate — no charge manager at all", gateVerdict(null, null), false],
 ] as [string, ServiceGateVerdict, boolean][]) {
   check(`${what}: the Pi ${expected ? "warns" : "does not warn"}`, verdictSeesACable(verdict) === expected);
-  check(`${what}: the page agrees`, chargerIsAttached(verdict) === expected);
 }
-
-check("a fresh cable in the inlet warns", chargerIsAttached(gateVerdict("ok", null)));
-check("a witnessed charge session warns", chargerIsAttached(gateVerdict("missing", "fast_dc_contactor")));
-check("an empty inlet does not warn", !chargerIsAttached(gateVerdict("inlet-empty", null)));
-check("a STALE charge manager does not warn", !chargerIsAttached(gateVerdict("stale", null)));
-check("a charge manager never seen does not warn", !chargerIsAttached(gateVerdict("missing", null)));
-check("2026-09-13's gate — no charge manager at all — does not warn", !chargerIsAttached(gateVerdict(null, null)));
-check("no gate at all does not warn", !chargerIsAttached(undefined));
 
 // --- 9. The hold budget is arithmetic, not a sentence in a comment ---------------
 //

@@ -830,11 +830,7 @@ const CHECKS: SelfCheck[] = [
   {
     script: "scripts/check-irreversible-actions.ts",
     covers:
-      "what is behind the menu sheet's red fold — that the collapsed row's count and its three names are read off " +
-      "the list of actions rather than written a second time beside it, and, across the two files that cannot see " +
-      "each other, that the fold holds EXACTLY the actions src/http/vcu-write.ts refuses without a confirmation: a " +
-      "fourth confirm-gated action on the Pi that nobody put behind the fold would otherwise be a destructive " +
-      "control sitting in the open list with the read-only ones, and nothing else in the repo would notice",
+      "the four approved Service actions and the actual server dispatch vocabulary, complete unconfirmed request fixtures, confirmation gates split between Service and Charge, and the exact confirmation tokens the UI sends",
   },
   {
     script: "scripts/check-kwp-multiframe.ts",
@@ -1132,17 +1128,7 @@ const CHECKS: SelfCheck[] = [
   {
     script: "scripts/check-service-stamp.ts",
     covers:
-      "the last-service read, whose bug was PLACEMENT and not text: that the read-stamp control is still passed an " +
-      "outcome node to render — deleting that argument is issue #154 exactly, the answer rendering three sections up " +
-      "an overflow-y sheet while the button appeared to do nothing — that `message.val` is rendered only by the two " +
-      "components that own it and never by the service-actions block, since a third binding puts the same sentence " +
-      "on screen twice, and that the answer is dropped when the sheet reopens and when 31 FC overwrites the block it " +
-      "reports. Plus the evidence itself against the REAL 2026-09-08 payload (four zero WORDs), including that the " +
-      "fields shown are exactly the identifiers that are read, so a fifth word cannot silently drop out, and that " +
-      "the implausible note is NOT repeated under the sentence that already carries it. Finally that no tracked " +
-      "file re-asserts that these four were unread — a claim that lived in five places, one of them a " +
-      "refusal a rider reads at the bike, and that a grep found four of. \u26a0 It asserts the WIRING, not the " +
-      "rendering: the suite has no browser, so that the outcome node reaches a phone is what the screenshots cover",
+      "the retained Bike stamp evidence formatter against recorded zero words and a plausible synthetic stamp, every read identifier represented, no duplicate implausibility prose, and no retired unread claim returning; actual DOM placement and arm/read behavior run in service-browser.ts",
   },
   {
     script: "scripts/check-settings-cutover.ts",
@@ -1458,22 +1444,14 @@ const CHECKS: SelfCheck[] = [
       "zero instead of one",
   },
   {
+    script: "scripts/check-service-parameters.ts",
+    covers:
+      "approved Service parameter and CSV flows: exact identities, confirmed active table, engineering units, synchronous operation lock, shared arm/dwell, fresh compare-and-swap, own write/readback response, lost responses, differing backup rows with one write each, status ordering and metadata replacement",
+  },
+  {
     script: "scripts/check-write-status-split.ts",
     covers:
-      "the /vcu-write payload as a LIST plus ONE DETAIL (#107). summariseTarget ran for all 269 allowlist " +
-      "entries on every request and armWrite() fetches before every arm, so the arming gesture of the controls " +
-      "that change this motorcycle carried a 256 582-byte round trip — 249 878 of it targets — on garage wifi " +
-      "on a Pi Zero. Through the real runner and the real page: that a bare GET still answers the whole " +
-      "allowlist, that `detail=NAME` answers one target in full and an unknown name answers no detail rather " +
-      "than an error, that `list=0` omits the listing as NULL rather than as [] — the page keeps its own copy, " +
-      "and \u201cyou already have it\u201d must not be confusable with \u201cthis bike has nothing " +
-      "writable\u201d — and that a refresh holding the names does not empty the picker while a response naming " +
-      "a different parameter table discards them, since a sweep finishing under this very sheet re-selects it. " +
-      "\u26a0 The scary one: selectedTarget() is now ONE object the Pi hands over rather than a find over an " +
-      "array carrying its own names, and it decides `action=bit` vs `action=parameter` and the compare-and-swap " +
-      "`expected=` \u2014 so a detail whose name is not the selection's is refused, or a coherent-looking write " +
-      "lands against the wrong parameter. Plus that armWrite() still raises `busy` before its refresh, which is " +
-      "the double-tap guard itself",
+      "the real runner's compact list plus one named detail: complete listing, list=0 as null, unknown names and payload size; client identity/order checks moved to check-service-parameters.ts",
   },
   {
     script: "scripts/decode-dtc-response.ts",

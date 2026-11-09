@@ -1,39 +1,26 @@
+// Historical source-check findings: docs/service-legacy.md.
+
+import {
+  firingSites,
+  armingConsumers,
+  armedWith,
+  refusedBranch,
+  enclosingArrowBody,
+  importedFromArming,
+  type FiringSite,
+} from "./arming-source.ts";
 import { withoutLineComments } from "./seam-scan.ts";
-import { readFile, readdir } from "fs/promises";
-import { blockAt, declarationBody } from "./source-blocks.ts";
+import { readFile } from "fs/promises";
+import { declarationBody } from "./source-blocks.ts";
 import { ARM_DWELL_MS, arm, armDwellElapsed, armed, refuseKeyRepeat } from "../public/lib/arming.js";
 import { ARMED_KEY as CHARGE_CURRENT_KEY } from "../public/views/charge-current.js";
 import { ARMED_KEY as CHARGE_SOC_LIMIT_KEY } from "../public/views/charge-soc-limit.js";
 import { ARMED_KEY as CHARGE_STOP_KEY } from "../public/views/charge-stop.js";
 import { ARMED_KEY as FREEZE_FRAME_READ_KEY } from "../public/views/freeze-frame-read.js";
 import { ARMED_KEY as LIFETIME_READ_KEY } from "../public/views/lifetime-read.js";
-import { IRREVERSIBLE, refreshVcuWrite } from "../public/views/vcu-write.js";
+import { SERVICE_ACTIONS } from "../public/lib/service-actions.js";
+import { refreshServiceStatus } from "../public/lib/service-client.js";
 import { fetchChargeWriteStatus, writeStatus } from "../public/lib/charge-write.js";
-
-// public/lib/arming.js — the two-tap arm/dwell in front of every control that writes to the
-// motorcycle, checked without a browser.
-//
-//   node --experimental-strip-types scripts/check-arming.ts
-//
-// ⚠️ This module had no coverage at all until 2026-08-30, and it is the whole of what stands
-// between a double-tap and a write to a calibration EEPROM. The surfaces behind it —
-// views/vcu-write.js (a parameter write, `31 FC`, Mode 04 and the bike's own clock),
-// views/charge-current.js, views/charge-stop.js, views/service-mode.js, views/lifetime-read.js
-// and views/pi-actions.js — each spell the gate out again at their own `onclick`, so half of
-// what is asserted here is that all confirmed firing sites still spell it the same way (§7). A gate
-// one site forgot is exactly as absent as one that was deleted.
-//
-// The dwell is time-based, so `arm()` and `armDwellElapsed()` take an optional reading and this
-// check hands one in: 399 ms and 400 ms are asserted rather than slept through, and nothing here
-// can be flaked by a loaded machine. scripts/virtual-clock.ts is deliberately NOT used — this
-// module arms no timers, it only compares two readings — and §9 runs the gate with nothing
-// injected, since the two `performance.now()` defaults are the lines that actually ship. ⚠️ That
-// reading is a BYPASS as much as a seam, so §7 asserts that no call site on the dashboard hands
-// one in: a back-dated stamp arms a control whose dwell has already elapsed.
-//
-// Same shape as scripts/check-irreversible-actions.ts, and for the same reason: public/ is ES
-// modules with no build step, so a browser file imports straight into Node. What needs a DOM is
-// the confirmed `onclick` bodies, which is why §7 and §8 read them rather than running them.
 
 let failures = 0;
 
@@ -46,10 +33,8 @@ function check(what: string, condition: boolean) {
   }
 }
 
-/** A clock that has been running a while, the way a phone's has by the time a thumb arrives. */
 const STAMP = 1_000_000;
 
-/** The key names a view's ARMED_KEY export holds, for resolving a site's `armed.val !== ARMED_KEY`. */
 const EXPORTED_KEYS = new Map([
   ["public/views/charge-current.js", CHARGE_CURRENT_KEY],
   ["public/views/charge-soc-limit.js", CHARGE_SOC_LIMIT_KEY],
@@ -58,16 +43,11 @@ const EXPORTED_KEYS = new Map([
   ["public/views/freeze-frame-read.js", FREEZE_FRAME_READ_KEY],
 ]);
 
-// ⚠️ DISCOVERED, never listed. §7 reads the firing sites out of these files, and a list here
-// would be the one place a new arming surface could fail to appear: an eighth control in a NEW
-// view would simply not be looked at, and every count below would stay green without it.
 const ARMING_CONSUMERS = await armingConsumers();
 const SOURCES = new Map<string, string>();
 for (const path of ARMING_CONSUMERS) {
   SOURCES.set(path, await readFile(new URL(`../${path}`, import.meta.url), "utf8"));
 }
-
-// --- 1. before anything has ever been armed ----------------------------------
 
 console.log("\n1. a page that has armed nothing");
 
@@ -78,8 +58,6 @@ check(
   armDwellElapsed(500) === true
 );
 
-// --- 2. the first tap --------------------------------------------------------
-
 console.log("\n2. one tap arms, and does nothing else");
 
 arm("write", STAMP);
@@ -88,11 +66,6 @@ check(
   "⚠️  and that same tap cannot also fire: at the instant it armed, no dwell has passed",
   armDwellElapsed(STAMP) === false
 );
-
-// --- 3. the dwell ------------------------------------------------------------
-//
-// Pinned to LITERALS. An assertion phrased as `ARM_DWELL_MS - 1` passes for every value of
-// ARM_DWELL_MS including zero, which is one of the mutations this section exists to catch.
 
 console.log("\n3. the dwell, in milliseconds rather than in the constant's own terms");
 
@@ -121,11 +94,6 @@ check(
   armDwellElapsed(STAMP + 10_000) === false
 );
 
-// --- 4. a held Enter ---------------------------------------------------------
-//
-// The one hole the dwell does not close, and it does not close it by arithmetic: macOS repeats a
-// held key at about 500 ms, on the far side of the 400 ms dwell.
-
 console.log("\n4. the key repeat the dwell cannot see");
 
 check(
@@ -144,64 +112,24 @@ for (const key of ["ArrowDown", "PageDown", "Tab", " "]) {
   );
 }
 
-// --- 5. the key --------------------------------------------------------------
-//
-// ⚠️ `armed` is ONE key for the whole dashboard and the surfaces are NOT mutually exclusive:
-// set-current and stop are on the charge tab together for the whole of a live charge. That is
-// safe because every firing site tests its own key — which is only true while the keys differ.
-
 console.log("\n5. the key: one control armed at a time, and no tap fires another");
 
-// ⚠️ ONE ENTRY PER CONTROL, and read off the `!==` refusal alone rather than off every
-// comparison: each key is also spelled `===` in its caption, and de-duplicating the two spellings
-// would de-duplicate exactly what the count below is looking for. Two controls that came to share
-// a key have to survive as two entries here, or both sides of `new Set(ALL_KEYS).size ===
-// ALL_KEYS.length` shrink together and a real collision reports green.
-const literalKeys = [...sourceOf("public/views/vcu-write.js").matchAll(/armed\.val !== "([^"]+)"/g)].map(
-  match => match[1]
-);
-console.log(`   keys vcu-write.js names: ${literalKeys.join(", ")}`);
-check(
-  "the comparisons were found at all — a pattern matching nothing would pass the rest of this section in silence",
-  literalKeys.length >= 2
-);
-
-// One entry per CONTROL, so two controls that came to share a key collapse the count and go
-// red. The clock sync is deliberately not taken from IRREVERSIBLE even though it is in the
-// fold: it writes its own confirmation instead of going through ActionButton, so it is already
-// in `literalKeys` above, and taking it from both lists would be one control counted twice.
 const ALL_KEYS = [
   CHARGE_CURRENT_KEY,
   CHARGE_SOC_LIMIT_KEY,
   CHARGE_STOP_KEY,
-  ...literalKeys,
-  // The read-only action, spelled out because nothing exports it — it is the one ActionButton
-  // outside the fold, so IRREVERSIBLE does not name it.
-  "action:read-service-stamp",
-  ...IRREVERSIBLE.filter(entry => entry.action !== "sync-clock").map(entry => `action:${entry.action}`),
-  // ⚠️ The service sheet's two and the menu's two, which §5 could not see until they were
-  // added here — and the first pair is the one that most needs it: the lifetime read's button
-  // sits directly under the sweep's on one screen, which is exactly the co-visibility this
-  // section is about. ⚠️ Hand-maintained, unlike ARMING_CONSUMERS, and it cannot simply be
-  // derived from that list: charge-current.js and charge-stop.js export `ARMED_KEY`, which
-  // matches `\w+_KEY` too and would double-count into ALL_KEYS against its own uniqueness test.
-  // Scraped the way vcu-write.js's are a few lines above, rather than imported: this
-  // file is a check OVER the shipped modules, not a consumer of them.
-  ...["public/views/service-mode.js", "public/views/lifetime-read.js", "public/views/pi-actions.js"].flatMap(path =>
-    [...sourceOf(path).matchAll(/const \w+_KEY = "([^"]+)"/g)].map(match => match[1])
+  FREEZE_FRAME_READ_KEY,
+  LIFETIME_READ_KEY,
+  ...SERVICE_ACTIONS.map(entry => `service:${entry.action}`),
+  "service:lights-off",
+  "service:lights-restore",
+  ...["public/views/last-service-read.js", "public/views/pi-actions.js", "public/views/settings-restart.js"].flatMap(
+    path => [...sourceOf(path).matchAll(/const \w+_KEY = "([^"]+)"/g)].map(match => match[1])
   ),
 ];
-check(`no two of the ${ALL_KEYS.length} controls share a key`, new Set(ALL_KEYS).size === ALL_KEYS.length);
 check(
-  "the written-down read-service-stamp button is still there, so its key above is a control and not a leftover",
-  // ⚠️ Whitespace-tolerant, not a literal substring. Prettier broke this call across lines
-  // the day it grew a fourth argument (the outcome node, #154), and an exact match then
-  // reported the control as DELETED — a red build about a button that was still there.
-  /ActionButton\(\s*"read-service-stamp"/.test(sourceOf("public/views/vcu-write.js"))
-);
-check(
-  '⚠️  and no control\'s key is "" — that is what makes `armed.val = ""` a disarm rather than the name of something',
-  ALL_KEYS.every(key => key !== "")
+  "each persistent write control has a distinct nonempty key",
+  new Set(ALL_KEYS).size === ALL_KEYS.length && ALL_KEYS.every(Boolean)
 );
 
 arm(CHARGE_CURRENT_KEY, STAMP);
@@ -212,28 +140,14 @@ check(
   armedKeyIs(CHARGE_STOP_KEY) && !armedKeyIs(CHARGE_CURRENT_KEY)
 );
 
-// --- 6. what disarms, run for real -------------------------------------------
-//
-// The refreshes are the disarm-on-change path that can be executed without a DOM, and they are
-// the load-bearing pair: every control that HAS a status refreshes BEFORE it arms, so a status
-// landing under an already-armed button has to take the arming with it. ⚠️ views/pi-actions.js's
-// two fetch no status OF THEIR OWN — nothing about `git pull` or `ip link` is asked first — so
-// none of these refreshes is theirs. What is tied to their own lifecycle is openSheet(), asserted
-// at the end of this section. (Other modules' refreshes still disarm them: one key, one
-// dashboard.) Armed AFTER the call and before its answer, which is the ordering that matters —
-// a button armed against 75 must not fire against the 80 the refresh brought with it.
-
 console.log("\n6. a refresh landing under an armed button");
 
-// ⚠️ `tableGate` is here because fetchStatus() reads its tableType to decide whether the picker's
-// names are still the Pi's (#107). A stub missing it throws inside the very call this section is
-// timing an arm against, and the disarm assertion would pass by failing early.
 const STATUS_PAYLOAD = { status: { enabled: true, targets: [], detail: null, tableGate: { tableType: 16407 } } };
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async () =>
   new Response(JSON.stringify(STATUS_PAYLOAD), { headers: { "content-type": "application/json" } })) as typeof fetch;
 try {
-  const sheetOpening = refreshVcuWrite();
+  const sheetOpening = refreshServiceStatus();
   arm("write", STAMP);
   await sheetOpening;
   check("⚠️  a /vcu-write status that lands under an armed write button disarms it", armed.val === "");
@@ -251,55 +165,26 @@ try {
   globalThis.fetch = realFetch;
 }
 
-// ⚠️ Read rather than run: openSheet() mounts a sheet and needs a DOM. It is the only disarm
-// views/pi-actions.js's two do not get through another module's internals — refreshServiceMode()
-// disarms first thing and openSheet() calls it, which is precisely why the explicit line is worth
-// asserting: that one moves and this one does not. ⚠️ It is also why views/sheet.js imports the
-// gate at all now the buttons live elsewhere: drop it and sourceOf() throws instead of going red.
 check(
   "⚠️  re-opening the menu sheet disarms — the only disarm tied to the two Pi actions' own lifecycle",
   declarationBody(sourceOf("public/views/sheet.js"), "export function openSheet()").includes('armed.val = ""')
 );
-
-// --- 7. every firing site on the dashboard, read off its own source ----------
-//
-// ⚠️ THE GATE IS NOT IN ONE PLACE. arming.js holds the dwell; the RULE — test my key, then the
-// dwell, then clear, then act — is spelled out at each `onclick`, and those bodies need a DOM to
-// run. So they are read instead, the way check-irreversible-actions.ts reads the `switch` in
-// src/http/vcu-write.ts rather than trusting a sentence about it. An eighth firing site, or one
-// that drops a line of the rule, is what this section exists to make loud.
 
 console.log("\n7. the confirmed firing sites, and the rule each of them repeats");
 
 const SITES = ARMING_CONSUMERS.flatMap(path => firingSites(path, sourceOf(path)));
 console.log(`   found: ${SITES.map(site => shortName(site)).join(", ")}`);
 
-// Named rather than counted, so an eighth site has to be ADDED here rather than absorbed by a
-// number — and so the red line says which one arrived. ActionButton is one call site serving
-// four keyed controls, which is why this is a list of firing sites and §5's is a list of keys.
 const EXPECTED_SITES = [
   "charge-current.js → performChargeCurrent",
-  // The SOC read loads on entry; its single Set control retains confirmation.
   "charge-soc-limit.js → performSocLimit",
   "charge-stop.js → performChargeStop",
-  // Both arrived with the in-service lifetime read. `performSweep` is the OLDER control:
-  // it had two taps of its own with no dwell and no key-repeat refusal, and §3's scan
-  // used to be scoped away from this file for that reason. Importing arming.js for the
-  // lifetime read brought the sweep with it, which is the migration this check forced.
   "freeze-frame-read.js → performFreezeFrameRead",
+  "last-service-read.js → performStampRead",
   "lifetime-read.js → performLifetimeRead",
-  // The menu sheet's two Pi-maintenance actions (#130). They fired on a SINGLE tap until
-  // then — `/update` pulls new code and restarts the service, `/can-restart` drops the bus
-  // — while the read-only sweep above them already took two.
   "pi-actions.js → performCanRestart",
   "pi-actions.js → performUpdate",
-  "service-mode.js → performSweep",
   "settings-restart.js → performRestart",
-  "vcu-write.js → performAction",
-  "vcu-write.js → performAction",
-  "vcu-write.js → performAllLights",
-  "vcu-write.js → performHeadlight",
-  "vcu-write.js → performWrite",
 ];
 check(
   `the ${EXPECTED_SITES.length} firing sites are exactly the ones written down here`,
@@ -318,11 +203,7 @@ for (const site of SITES) {
     keyTest >= 0 && keyTest < dwellTest && dwellTest < disarm && disarm < site.callAt
   );
   const armingBranch = keyTest >= 0 && dwellTest > keyTest ? site.body.slice(keyTest, dwellTest) : "";
-  // ⚠️ ITS OWN key, pinned to the key rather than to the shape. `armed.val !== ` alone proves
-  // only that SOME key is tested: point charge-stop at "charge-current" and the shape still
-  // holds, while Stop fires on a SINGLE tap and its caption never says "Tap again". The two are
-  // co-visible for the whole of a live charge and one file is a copy of the other, so that
-  // mis-scoping is one wrong constant away — a likelier edit than dropping the test altogether.
+
   const refusedKey = refusedKeyOf(site);
   const armedKey = keyOf(site.file, armedWith(armingBranch, sourceOf(site.file)));
   check(
@@ -343,18 +224,6 @@ for (const site of SITES) {
   );
 }
 
-// ⚠️ NO TWO SITES MAY REFUSE ON THE SAME KEY, which is a different question from §5's "no two
-// declared keys collide": §5 reads the CONSTANTS and passes while two controls both point at one
-// of them. `armed` is a single key, so two sites sharing it means arming either one fires the
-// other on the next tap — one tap on "CAN bus restart" and one on "Update" would pull and restart.
-//
-// ⚠️ The only sites allowed NOT to resolve are ActionButton's, which is one call site built around
-// a `key` parameter serving four keyed controls — "distinct per site" is not a question about it,
-// and §5's ALL_KEYS is where those four are held apart. Asserted as that exact set rather than as
-// a count: `key => !key.startsWith("<")` exempts anything keyOf() merely FAILED on, so spelling a
-// control's key `let` instead of `const` would drop it out of the comparison below and re-open the
-// hole this section exists for — one keyword, and the count floor only catches it while the margin
-// happens to be zero.
 const refusedKeys = SITES.map(refusedKeyOf);
 const resolvedKeys = refusedKeys.filter(key => !key.startsWith("<"));
 console.log(`   keys the sites refuse on: ${refusedKeys.join(", ")}`);
@@ -366,20 +235,13 @@ check(
 );
 check(
   "the sites' keys resolved at all — everything reading back as an identifier would pass the one below in silence",
-  resolvedKeys.length >= 8
+  resolvedKeys.length === 9
 );
 check(
   `⚠️  no two of the ${resolvedKeys.length} resolved firing sites refuse on the SAME key — two that did would each ` +
     "fire on the other's first tap",
   new Set(resolvedKeys).size === resolvedKeys.length
 );
-
-// ⚠️ THE SEAM IS A BYPASS AS WELL AS A TEST HOOK, and this is the only thing standing on it.
-// `arm(key, performance.now() - 10_000)` at any call site arms a control whose dwell has already
-// elapsed, so its very next tap fires — the dwell defeated outright, by one extra argument. Until
-// the optional reading existed that was impossible by construction; now it is impossible only by
-// convention, and a convention nothing asserts is a comment. This check is the only caller
-// allowed to hand one in, and this check is not among the files scanned.
 
 const gateCalls: { where: string; name: string; args: string }[] = [];
 for (const path of ARMING_CONSUMERS) {
@@ -403,18 +265,6 @@ check(
   injecting.length === 0
 );
 
-// ⚠️ `arm()` is the ONLY way `armed` becomes a non-empty key, and that is what makes the dwell
-// unskippable: a key set by hand carries whatever stamp the last arming left behind, so its
-// control fires on the very next tap. Every assignment outside arming.js has to be the empty one.
-//
-// ⚠️ Scoped to the modules that import the SHARED gate — which is now all of them. It used to
-// exclude public/views/service-mode.js, which declared an `armed` of its own: a plain boolean
-// with no dwell and no key-repeat guard, in front of the parameter sweep. That second arming
-// surface was a recorded finding rather than this check's subject until the in-service lifetime
-// read needed a button on the same sheet; importing arming.js for it joined this file to
-// ARMING_CONSUMERS and made the sweep's own two taps this check's business.
-// docs/dashboard-decisions.md §"The other `armed`".
-
 const assignments: string[] = [];
 for (const path of ARMING_CONSUMERS) {
   for (const match of sourceOf(path).matchAll(/armed\.val\s*=(?!=)\s*([^;\n]*)/g)) {
@@ -429,77 +279,31 @@ check(
   assignments.length >= 15 && assignments.every(assignment => assignment.endsWith('= ""'))
 );
 
-// A new surface that imported `arm` alone would be a control with two taps and no dwell.
 for (const path of ARMING_CONSUMERS) {
   const named = importedFromArming(sourceOf(path));
   if (!named.includes("arm")) {
     continue;
   }
+  check(`${path} arms, so it takes the shared dwell`, named.includes("armDwellElapsed"));
+  const separatedViews = new Map([
+    ["public/lib/service-actions.js", "public/views/service-actions.js"],
+    ["public/lib/service-lights.js", "public/views/service-actions.js"],
+    ["public/lib/service-edits.js", "public/views/service-parameters.js"],
+  ]);
+  const view = separatedViews.get(path);
   check(
-    `${path} arms, so it also takes the dwell and the key-repeat guard`,
-    named.includes("armDwellElapsed") && named.includes("refuseKeyRepeat")
+    `${path} refuses repeated Enter at its rendered control`,
+    view ? sourceOf(view).includes("onkeydown: refuseKeyRepeat") : named.includes("refuseKeyRepeat")
   );
 }
 
-// --- 8. what drops the arming when the form moves under it -------------------
-//
-// Spelled out rather than derived, the way check-irreversible-actions.ts spells out the fold's
-// contents: each of these is a promise that a second tap sends what is on screen NOW.
-
 console.log("\n8. disarm-on-change, at the handlers that cannot be run without a DOM");
 
-const DISARMS: [path: string, what: string, marker: string][] = [
-  [
-    "public/views/charge-current.js",
-    "retyping the amps",
-    "amps.val = /** @type {HTMLInputElement} */ (event.target).value;",
-  ],
-  [
-    "public/views/vcu-write.js",
-    "retyping the value",
-    "wanted.val = /** @type {HTMLInputElement} */ (event.target).value;",
-  ],
-  [
-    "public/views/vcu-write.js",
-    "choosing a different bit",
-    "wanted.val = /** @type {HTMLSelectElement} */ (event.target).value;",
-  ],
-  [
-    "public/views/vcu-write.js",
-    "toggling the red fold over the irreversible three",
-    "dangerOpen.val = !dangerOpen.val;",
-  ],
-];
-
-for (const [path, what, marker] of DISARMS) {
-  const body = enclosingArrowBody(sourceOf(path), marker);
-  check(`${what} disarms`, body !== "" && body.includes('armed.val = ""'));
-}
-
-// ⚠️ Two hops since #107 split the payload: the `<select>`'s handler is `selectTarget()` and
-// nothing else — extracted so the round trip that fetches the new parameter's notes has one home —
-// and that is where forgetSelection() is called. Both hops are asserted, because a handler that
-// stopped calling selectTarget and a selectTarget that stopped forgetting are the same bug: a
-// button armed against one parameter still armed against the next.
-const selectHandler = enclosingArrowBody(
-  sourceOf("public/views/vcu-write.js"),
-  "selectTarget(/** @type {HTMLSelectElement} */ (event.target).value);"
+const body = enclosingArrowBody(
+  sourceOf("public/views/charge-current.js"),
+  "amps.val = /** @type {HTMLInputElement} */ (event.target).value;"
 );
-const selectTargetBody = declarationBody(sourceOf("public/views/vcu-write.js"), "export function selectTarget(name)");
-const forgetSelectionBody = declarationBody(sourceOf("public/views/vcu-write.js"), "function forgetSelection()");
-check(
-  "choosing a different parameter disarms, through the forgetSelection() the sheet-open reset also calls",
-  selectHandler.includes("selectTarget(") &&
-    selectTargetBody.includes("forgetSelection()") &&
-    forgetSelectionBody.includes('armed.val = ""')
-);
-
-// --- 9. the same gate with PRODUCTION's clock --------------------------------
-//
-// ⚠️ Everything above hands in a reading, which leaves the two `performance.now()` defaults as
-// the only lines in arming.js nothing runs — and they are the lines the phone runs. The refusal
-// below needs no margin at all (two readings microseconds apart, against 400 ms); the elapsed one
-// sleeps 60 ms past the dwell, and load can only push it the safe way.
+check("retyping charge amps disarms", body !== "" && body.includes('armed.val = ""'));
 
 console.log("\n9. the defaults nothing else exercises: the real performance.now()");
 
@@ -520,7 +324,6 @@ check(
     "that STEPS A CLOCK, and the Pi steps its own from GPS",
   stampDefault?.[1] === "performance.now()" &&
     readingDefault?.[1] === "performance.now()" &&
-    // The prose above them says "never Date.now()", so the ban has to be read off the CODE.
     !ARMING_SOURCE.split("\n")
       .filter(line => !/^\s*(\/\/|\*|\/\*)/.test(line))
       .join("\n")
@@ -537,17 +340,10 @@ if (failures > 0) {
   console.log("  all confirmed firing sites still spelling the same rule — on the injected clock and on the real one");
 }
 
-/**
- * What a firing site asks on a tap: is the key that is armed MINE? A function rather than the
- * comparison inline, because the compiler narrows `armed.val` to whatever it was last compared
- * with and would then call the second question unanswerable — while at a tap it is the shared
- * state that gets read, and it can hold any control's key.
- */
 function armedKeyIs(key: string): boolean {
   return armed.val === key;
 }
 
-/** One gate consumer's source, which §5 onwards read more than once. */
 function sourceOf(path: string): string {
   const source = SOURCES.get(path);
   if (source === undefined) {
@@ -558,55 +354,6 @@ function sourceOf(path: string): string {
   return source;
 }
 
-interface FiringSite {
-  file: string;
-  /** The `perform…` it calls, so a red line names the control rather than a byte offset. */
-  name: string;
-  /** The `onclick` body with its comments stripped, or "" when it could not be found. */
-  body: string;
-  /** The whole of the button's props object, comments stripped, wherever `onkeydown` sits in it. */
-  props: string;
-  /** Where the perform call sits inside `body`. */
-  callAt: number;
-}
-
-/**
- * Every control in one gate consumer that ACTS on a second tap, found from the action rather
- * than from the gate: a site that skipped the gate entirely would be invisible to a search for
- * the gate. ⚠️ Found by the `void perform…()` naming convention, so what §7 guarantees is "no
- * ungated `void perform*()` in a module that imports arming.js" — not "no ungated control".
- *
- * ⚠️ Comments come out of both bodies before anything reads them, in BOTH directions: prose
- * beside a guard must not break an assertion, and prose describing a guard must not satisfy one.
- * Deleting a whole dwell test and leaving `// enforced by armDwellElapsed()` behind used to pass.
- */
-function firingSites(file: string, source: string): FiringSite[] {
-  return [...source.matchAll(/\bvoid (perform[A-Za-z]*)\(/g)].map(match => {
-    const callIndex = match.index;
-    const handlerAt = source.lastIndexOf("onclick:", callIndex);
-    const block = handlerAt === -1 ? null : blockAt(source, handlerAt);
-    // The whole props object, not the source ahead of `onclick:` — otherwise moving `onkeydown`
-    // below the handler, which changes nothing, goes red claiming the guard was removed.
-    const buttonAt = handlerAt === -1 ? -1 : source.lastIndexOf("button(", handlerAt);
-    const props = buttonAt === -1 ? null : blockAt(source, buttonAt);
-    const found = block !== null && block.end > callIndex;
-    const body = found ? withoutLineComments(source.slice(block.start, block.end + 1)) : "";
-    return {
-      file,
-      name: match[1],
-      body,
-      props: props === null ? "" : withoutLineComments(source.slice(props.start, props.end + 1)),
-      // Re-found in the STRIPPED body: an offset taken from the raw source would sit past every
-      // index the ordering assertion compares it with, and that assertion is an ordering.
-      callAt: body.indexOf(`void ${match[1]}(`),
-    };
-  });
-}
-
-/**
- * The key one firing site refuses a tap on. Spelled once: §7 asks it per site and §7b asks it of
- * all firing sites, and a regex that lived in both places would be widened in one of them.
- */
 function refusedKeyOf(site: FiringSite): string {
   return keyOf(site.file, site.body.match(/armed\.val !== (\w+|"[^"]*")/)?.[1]);
 }
@@ -615,12 +362,6 @@ function shortName(site: FiringSite): string {
   return `${site.file.replace("public/views/", "")} → ${site.name}`;
 }
 
-/**
- * What key one `armed.val !== …` or `arm(…)` expression names, as a string that can be compared
- * with another. A quoted literal is its own contents and a module's `ARMED_KEY` is resolved
- * through its export; anything else — `key`, the parameter ActionButton is built around — stays
- * the identifier, so a site that armed one variable and refused on another still goes red.
- */
 function keyOf(file: string, expression: string | undefined): string {
   if (expression === undefined || expression === "") {
     return "";
@@ -635,76 +376,12 @@ function keyOf(file: string, expression: string | undefined): string {
     }
     return exported;
   }
-  // ⚠️ A module-local `const SOMETHING_KEY = "…"`, resolved out of the file that names it. Until
-  // this existed every such key read back as its own identifier, which made the per-site "refuses
-  // on what it arms" assertion trivially true and let TWO controls in ONE module point at the
-  // SAME constant undetected — a mutation that survived on 2026-09-14 and would have fired an
-  // Update off one tap on the CAN restart beside it. The distinctness test below is the other half.
+
   const declared = sourceOf(file).match(new RegExp(`const ${expression} = "([^"]+)"`));
   if (declared !== null) {
     return declared[1];
   }
   return `<${expression}>`;
-}
-
-/**
- * The key a site's FIRST tap arms with — its first argument only, so a call that also injected a
- * clock still reports the key it arms and the assertion above it stays about keys. The injected
- * clock is its own red line. Followed one hop through the `void armSomething()` the branch calls,
- * because only ActionButton arms inline — the other four refresh the Pi's answer first and arm at
- * the end of that, which is where the key they commit to actually is.
- */
-function armedWith(armingBranch: string, source: string): string | undefined {
-  const inline = armingBranch.match(/\barm\(([^),]*)/);
-  if (inline !== null) {
-    return inline[1].trim();
-  }
-  const helper = armingBranch.match(/\bvoid ([A-Za-z_$][\w$]*)\(/);
-  if (helper === null) {
-    return undefined;
-  }
-  return declarationBody(source, `function ${helper[1]}(`)
-    .match(/\barm\(([^),]*)/)?.[1]
-    .trim();
-}
-
-/** What a firing site does with a tap the dwell refused, trimmed so it can be compared whole. */
-function refusedBranch(body: string): string {
-  const at = body.indexOf("if (!armDwellElapsed()) {");
-  const block = at === -1 ? null : blockAt(body, at);
-  return block === null ? "" : body.slice(block.start + 1, block.end).trim();
-}
-
-/** The body of the arrow function `marker` sits in, or "" if it is not there at all. */
-function enclosingArrowBody(source: string, marker: string): string {
-  const at = source.indexOf(marker);
-  const arrow = at === -1 ? -1 : source.lastIndexOf("=> {", at);
-  const block = arrow === -1 ? null : blockAt(source, arrow);
-  return block === null || block.end < at ? "" : source.slice(block.start, block.end + 1);
-}
-
-/**
- * Every dashboard module that imports the shared gate, found by reading them rather than from a
- * list here — a list would be one more place a new arming surface could fail to appear.
- */
-async function armingConsumers(): Promise<string[]> {
-  const entries = await readdir(new URL("../public/", import.meta.url), { recursive: true });
-  const modules = entries.filter(entry => entry.endsWith(".js") && !entry.startsWith("vendor"));
-  const consumers: string[] = [];
-  for (const entry of modules) {
-    const source = await readFile(new URL(`../public/${entry}`, import.meta.url), "utf8");
-    if (importedFromArming(source).length > 0) {
-      consumers.push(`public/${entry}`);
-    }
-  }
-  // readdir order is the filesystem's, so it is sorted before anything counts or prints it.
-  return consumers.sort();
-}
-
-/** What one module takes from arming.js, by name. Empty for a module that does not import it. */
-function importedFromArming(source: string): string[] {
-  const clause = source.match(/import \{([^}]*)\} from "[^"]*\/arming\.js"/);
-  return clause === null ? [] : clause[1].split(",").map(entry => entry.trim());
 }
 
 interface RecordedKeyEvent {
@@ -714,7 +391,6 @@ interface RecordedKeyEvent {
   preventDefault(): void;
 }
 
-/** One keydown put through the guard, reporting whether its default action was cancelled. */
 function pressed(key: string, repeat: boolean): RecordedKeyEvent {
   const event: RecordedKeyEvent = {
     key,

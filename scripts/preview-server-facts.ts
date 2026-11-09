@@ -10,6 +10,7 @@ import { CHARGE_EVIDENCE } from "../src/vcu/charge-session.ts";
 import { evaluateServiceGate, type ServiceGateReadings } from "../src/vcu/service-gate.ts";
 import { decodeFrame } from "../src/can/decode.ts";
 import { parseHexBytes } from "./captured-vcu-records.ts";
+import { serviceParameterFixtures } from "./preview-service-parameters.ts";
 
 // The numbers and prose the Pi owns, handed to the design preview's fixtures rather than re-typed
 // beside them. Same argument as the DTC tables scripts/build-service-preview.ts already injects:
@@ -76,6 +77,7 @@ function chargeEvidenceMeaning(key: string, value: number): string {
 /** Everything the preview's fixtures take from the service rather than inventing. */
 export function serverFacts() {
   return {
+    serviceParameters: serviceParameterFixtures(),
     heartbeatMs: HEARTBEAT_MS,
     fanLimits: fanLimits(),
     fanReason: FAN_REASON,

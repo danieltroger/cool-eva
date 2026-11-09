@@ -96,6 +96,7 @@ function serviceWrite(query) {
         "Service point set. The bike stamped 2026-09-08T12:17:06.000Z at 14849, over " +
         "2000-01-01T00:00:00.000Z at 0.",
       succeeded: true,
+      stamp: { before: null, after: SERVER.serviceParameters.stamp },
     };
   }
   if (action === "clear-dtcs") {

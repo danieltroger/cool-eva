@@ -62,9 +62,11 @@ These blocks moved from `public/views/faults.js` while splitting the existing re
  */
 ```
 
-## All: snapshot before parked detail
+## Earlier All snapshot findings
 
 The six-reading snapshot is independent of filtering. Raw groups stay below the filter/history row; stored lifetime readings follow the raw groups and retain their own filtering, ages and qualifications. The landing is 504 px; lower parked content deliberately scrolls. Arrival resets to the top. Raw onDemand readings use the shared presence/link-liveness policy, and keep rejected-value warnings. `pack_kw (raw)` retains its sign with “− out · + in”.
+
+The approved Service build removes the snapshot and separate raw page. All signals is now a disclosure inside Service; lifetime statistics remain on Bike. The following notes record the earlier implementation.
 
 The original All view was a debugging view grouped by signal registry because the flat grid of roughly 230 signals, including 81 cell voltages, had become unusable. It remains the place to inspect a raw number when another view looks wrong; the live snapshot now precedes that grid.
 

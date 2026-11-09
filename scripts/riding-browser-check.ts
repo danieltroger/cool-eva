@@ -1,3 +1,4 @@
+import { checkServiceBrowser, assertServiceLayout } from "./service-browser.ts";
 import { assertFaultLayout } from "./riding-faults-browser.ts";
 import { assertChargeLayout } from "./charge-page-layout.ts";
 import { checkChargeReviewCases } from "./riding-charge-review-browser.ts";
@@ -32,7 +33,7 @@ const COVERAGE = {
   hypermile: "fixed",
   cells: "fixed",
   charge: "scrolling",
-  all: "fixed-landing",
+  all: "scrolling",
   faults: "scrolling",
   more: "scrolling",
 } as const;
@@ -54,11 +55,11 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
     "Every router view needs an acceptance contract."
   );
   const fixedViews = Object.entries(COVERAGE)
-    .filter(([, policy]) => policy === "fixed" || policy === "fixed-landing")
+    .filter(([, policy]) => policy === "fixed")
     .map(([name]) => name);
   assert.deepEqual(
     fixedViews,
-    ["ride", "cooling", "hypermile", "cells", "all"],
+    ["ride", "cooling", "hypermile", "cells"],
     "Fixed-view coverage must match the converted screens."
   );
   for (const geometry of [
@@ -95,7 +96,9 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
           } else {
             await assertCoolingContent(page);
           }
-          await assertFixedLayout(page, route.name === "all");
+          await assertFixedLayout(page);
+        } else if (route.name === "all") {
+          await assertAllContent(page);
         } else if (route.name === "charge") {
           await assertChargeContent(page);
         } else if (route.name === "faults") {
@@ -137,6 +140,7 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
   await checkFaultReportNavigation(page, previewFile);
   await checkChargeActions(page, previewFile);
   await checkSocEntryBrowser(page, previewFile);
+  await checkServiceBrowser(page, previewFile);
   await checkCoolingFailures(page, previewFile);
   await checkCoolingFan(page, previewFile, assertFixedLayout);
   for (const theme of ["dark", "light"]) {
@@ -278,8 +282,10 @@ async function checkNoticeStates(page: HeadlessPage, file: string, theme: string
       await assertChargeLayout(page);
     } else if (hash === "#faults") {
       await assertFaultLayout(page);
+    } else if (hash === "#all") {
+      await assertServiceLayout(page);
     } else {
-      await assertFixedLayout(page, hash === "#all");
+      await assertFixedLayout(page);
     }
   }
 }
