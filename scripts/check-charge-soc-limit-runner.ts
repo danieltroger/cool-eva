@@ -67,7 +67,10 @@ async function runSections(): Promise<void> {
   }
   for (const cached of [false, true]) {
     staleEverything();
-    if (cached) answer(80);
+    if (cached) {
+      // A same-instant reading proves liveness; this case needs an older cached reading.
+      recordArrival("charge_soc_limit_pct", 80, Date.now(), monotonicNow() - 60_000);
+    }
     const noReply = makeChannel({ readAnswers: [null], writeEcho: null });
     const result = await performChargeSocLimit({ directory }, 90, noReply.channel);
     check(`unanswered pre-read refuses with cached=${cached}`, !result.ok);
