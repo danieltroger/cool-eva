@@ -275,22 +275,31 @@ export async function checkFaultsCases(page: HeadlessPage, file: string, theme: 
     await evaluateOnPage(page, "document.querySelectorAll('[data-code=P0A07] [data-record-field]').length"),
     0
   );
-  for (const state of ["clear", "missing"]) {
-    await openPreview(page, file, "#faults", `fault-${state}-${theme}`, `&fault-state=${state}`);
-    await evaluateOnPage(page, FRAME);
-    assert.equal(
-      await evaluateOnPage(page, "document.querySelectorAll('.faults-view > .fault-list > .fault-row').length"),
-      0
-    );
-    assert.equal(
-      await evaluateOnPage(page, "!!document.querySelector('[data-active-state=unknown]')"),
-      state === "missing"
-    );
-    await assertFaultLayout(page);
-  }
+  await checkActiveFaultStates(page, file, theme);
   console.log(
     `  ✓ ${theme}: all recorded values/units/age, stable disclosures, one Expected write, refusal, symptom identity, partial/missing records and honest unavailable states`
   );
+}
+
+export async function checkActiveFaultStates(page: HeadlessPage, file: string, theme: string) {
+  for (const [state, rows, messages] of [
+    ["missing", 0, ["Fault list unavailable"]],
+    ["clear", 0, ["No active faults"]],
+    ["active", 3, []],
+  ] as const) {
+    await openPreview(page, file, "#faults", `fault-${state}-${theme}`, `&fault-state=${state}`);
+    await evaluateOnPage(page, `ridingPreview('lib/theme.js').setThemePreference(${JSON.stringify(theme)}, false)`);
+    await evaluateOnPage(page, FRAME);
+    assert.deepEqual(
+      await evaluateOnPage(
+        page,
+        "({rows:document.querySelectorAll('.faults-view > .fault-list > .fault-row').length,messages:[...document.querySelectorAll('.faults-view > [data-active-state]')].filter(node=>node.checkVisibility()).map(node=>node.textContent)})"
+      ),
+      { rows, messages },
+      `${state}: only a known empty list can say No active faults.`
+    );
+    await assertFaultLayout(page);
+  }
 }
 
 export async function checkFaultNavigation(page: HeadlessPage, file: string) {
