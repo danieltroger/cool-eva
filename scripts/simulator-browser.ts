@@ -233,7 +233,7 @@ async function checkActions(page: HeadlessPage, theme: string, shots?: string): 
     "service-probe",
     theme,
     shots,
-    "—"
+    "Read failed: disabled in simulator"
   );
   await waitOnPage(page, "!!document.querySelector('.parameter-editor')", "automatic selected parameter read");
   assert.equal(await evaluateOnPage(page, "document.querySelector('.parameter-editor button').disabled"), true);

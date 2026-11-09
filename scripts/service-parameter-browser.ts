@@ -68,6 +68,34 @@ export async function checkServiceParameterBrowser(page: HeadlessPage) {
   await editValue(page, "230.11");
   assert.equal(await evaluateOnPage(page, "document.querySelector('.parameter-editor button').disabled"), true);
   await checkBackup(page);
+
+  await evaluateOnPage(
+    page,
+    "SERVICE_PARAMETERS.probes['57'].status='refused';SERVICE_PARAMETERS.probes['57'].note='Synthetic read refusal'"
+  );
+  await selectParameter(page, "MAP3_PWR", 57);
+  assert.equal(
+    await evaluateOnPage(page, "document.querySelector('.parameter-editor [role=status]').textContent"),
+    "Read failed: bike refused read"
+  );
+  await evaluateOnPage(
+    page,
+    `(() => {
+      const parameter=ridingPreview('lib/service-client.js').serviceCatalogue.rawVal.parameters.find(parameter=>parameter.index===57);
+      const csv=ridingPreview('lib/parameter-backup.js').parameterBackupCsv([parameter],()=>520);
+      const transfer=new DataTransfer();transfer.items.add(new File([csv],'synthetic.csv',{type:'text/csv'}));
+      const picker=document.querySelector('[type=file]');picker.files=transfer.files;picker.dispatchEvent(new Event('change',{bubbles:true}));
+    })()`
+  );
+  await waitOnPage(
+    page,
+    "document.querySelector('.service-backup > [role=status]').textContent==='Import failed: bike refused read'",
+    "a refused comparison read gives the backup import a visible reason"
+  );
+  await evaluateOnPage(
+    page,
+    "SERVICE_PARAMETERS.probes['57'].status='read';delete SERVICE_PARAMETERS.probes['57'].note"
+  );
 }
 
 export async function selectParameter(page: HeadlessPage, name: string, index: number) {
