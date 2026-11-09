@@ -57,7 +57,7 @@ const PHONE = { width: 390, height: 844, deviceScaleFactor: 3, mobile: true };
  * vacuous the day the fixture changes: a Faults tab with nothing long on it fits trivially
  * and would report a clean ✓ for a page that had never been tested.
  */
-const LONGEST_ROW = "Position lights open circuit fault · freeze frame · expected";
+const LONGEST_ROW = "Position lights open circuit fault";
 
 interface Measurement {
   hash: string;
@@ -83,40 +83,21 @@ const MEASURE = `(() => {
     clientWidth,
     bodyScrollWidth: document.body.scrollWidth,
     widest: widest === null ? "nothing" : widest.name + " right=" + Math.round(widest.right),
-    rows: [...document.querySelectorAll(".code-line-text")].map(element => ({
+    rows: [...document.querySelectorAll(".fault-row > summary .fault-title")].map(element => ({
       text: element.textContent,
       clipped: element.scrollWidth > element.clientWidth + 0.5,
     })),
   };
 })()`;
 
-/**
- * A deliberately synthetic probe, run in the page and undone again.
- *
- * Once the description wraps, nothing the bike can actually store has a min-content wide
- * enough to widen anything — so no fixture can falsify the OTHER half of #253's fix,
- * `.tile { min-width: 0 }`. This puts content in the tile that cannot wrap by construction
- * and asks the one question that line answers: is the tile's BOX still the phone's width, or
- * has its content been allowed to set it? ⚠️ The box, not the page: unbreakable content still
- * paints past the tile either way, and the body reports 3878 px in both. Nothing in CSS stops
- * that without clipping, which is why the row above is the assertion that guards the phone.
- */
+// Long names must wrap without clipping. Prior grid measurements: docs/fault-report-legacy.md.
 const PROBE = `(() => {
-  const tile = [...document.querySelectorAll(".tile")].find(candidate => candidate.querySelector(".code-line-text"));
-  if (tile === undefined) {
-    throw new Error("no stored-code tile on the faults tab to probe");
-  }
-  const probe = document.createElement("span");
-  probe.style.whiteSpace = "nowrap";
-  probe.textContent = "unbreakable ".repeat(40).replaceAll(" ", "-");
-  tile.append(probe);
-  // Against the VIEWPORT, not against the group: the group is sized by the tile it holds, so
-  // the two agree all the way to 3883 px and comparing them can never fail.
-  const widths = {
-    tile: Math.round(tile.getBoundingClientRect().width),
-    viewport: document.documentElement.clientWidth,
-  };
-  probe.remove();
+  const title = document.querySelector(".fault-row .fault-title");
+  if (!title) { throw new Error("no fault disclosure to probe"); }
+  const original = title.textContent;
+  title.textContent = "UnbreakableFaultIdentifier".repeat(40);
+  const widths = {tile:document.body.scrollWidth,viewport:document.documentElement.clientWidth};
+  title.textContent = original;
   return widths;
 })()`;
 
@@ -367,12 +348,12 @@ async function measureTab(page: HeadlessPage, previewFile: string, scene: string
     measured.innerWidth === PHONE.width
   );
   if (scene === "faults" && tab === "faults") {
-    await evaluateOnPage(page, "document.querySelector('.fault-report-action button').click()");
-    await waitOnPage(page, "!!document.querySelector('.code-line-text')", "the relocated full Fault report");
+    await evaluateOnPage(page, "document.querySelector('.stored-faults').open=true");
+    await waitOnPage(page, "!!document.querySelector('.stored-faults[open] .fault-row')", "the full stored fault list");
     checkStoredCodeRows(asMeasurement(await evaluateOnPage(page, MEASURE)));
     const probed = asProbeWidths(await evaluateOnPage(page, PROBE), "tile");
     check(
-      `content that cannot wrap does not widen the stored-codes tile (${probed.measured} ≤ ${probed.viewport})`,
+      `a long unbreakable code name wraps inside its row (${probed.measured} ≤ ${probed.viewport})`,
       probed.measured <= probed.viewport
     );
   }

@@ -180,7 +180,7 @@ async function refused(
   if (shots) {
     await evaluateOnPage(
       page,
-      `(()=>{const notes=[...document.querySelectorAll('.action-note,.settings-note,.code-fields')].filter(node=>node.textContent.includes(${JSON.stringify(expected)}));notes.at(-1)?.scrollIntoView({block:'center'})})()`
+      `(()=>{const notes=[...document.querySelectorAll('.action-note,.settings-note,.fault-save-error')].filter(node=>node.textContent.includes(${JSON.stringify(expected)}));notes.at(-1)?.scrollIntoView({block:'center'})})()`
     );
     await screenshotPage(page, join(shots, `${theme}-${name}.png`));
   }
@@ -262,18 +262,21 @@ async function checkActions(page: HeadlessPage, theme: string, shots?: string): 
   await evaluateOnPage(
     page,
     `(async()=>{
-    simDestination.openRidingView('fault-report');
+    simDestination.openRidingView('faults');
     const faults=await import('/lib/expected-faults.js');
-    const host=document.createElement('section');host.id='sim-expected';host.className='settings-card';host.append('Constructed fault for simulator refusal check',faults.ExpectedToggle('44/0'));document.body.append(host);
+    const host=document.createElement('section');host.id='sim-expected';host.className='settings-card';host.append('Constructed fault for simulator refusal check',faults.ExpectedCheckbox('44/0','P0A07'));document.body.append(host);
   })()`
   );
   await refused(
     page,
     "/expected-faults",
-    () => button(page, "mark as expected", false, "document.querySelector('#sim-expected')"),
+    async () => {
+      await evaluateOnPage(page, "document.querySelector('#sim-expected input').click()");
+    },
     "expected-faults",
     theme,
-    shots
+    shots,
+    "Expected change could not be confirmed."
   );
   await evaluateOnPage(page, "document.querySelector('#sim-expected').remove()");
   await destination(page, "bike-information");

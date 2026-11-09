@@ -13,7 +13,6 @@ import { CellsView } from "./views/cells.js";
 import { ChargeView } from "./views/charge.js";
 import { AllView } from "./views/all.js";
 import { FaultsView } from "./views/faults.js";
-import { FaultReportView } from "./views/fault-report.js";
 import { installWaypointRefresh, refreshStatus } from "./views/sheet.js";
 import { Header } from "./views/header.js";
 import { CoolingView } from "./views/cooling.js";
@@ -60,7 +59,6 @@ const VIEWS = {
   charge: ChargeView,
   all: AllView,
   faults: FaultsView,
-  "fault-report": FaultReportView,
   more: SettingsPage,
 };
 

@@ -282,7 +282,7 @@ export async function refreshStoredCodes() {
   // retry every time you come back to the tab — the same reasoning as loadTable's
   // gate, and for the same failure: a fetch lost to the phone not having joined the
   // garage wifi yet must not be permanent.
-  if (stored.val && storedFetchedAt !== null && monotonicNow() - storedFetchedAt < STORED_REFRESH_MS) {
+  if (stored.rawVal && storedFetchedAt !== null && monotonicNow() - storedFetchedAt < STORED_REFRESH_MS) {
     return;
   }
   storedFetchInFlight = true;
@@ -308,7 +308,7 @@ export async function refreshStoredCodes() {
 }
 
 async function loadTable() {
-  if (table.val || fetchInFlight) {
+  if (table.rawVal || fetchInFlight) {
     return;
   }
   fetchInFlight = true;
@@ -339,7 +339,7 @@ async function loadTable() {
  * cannot attach a debugger to.
  */
 async function loadInfokeys() {
-  if (infokeys.val || infokeysInFlight) {
+  if (infokeys.rawVal || infokeysInFlight) {
     return;
   }
   infokeysInFlight = true;

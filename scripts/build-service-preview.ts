@@ -128,7 +128,7 @@ function buildFreezeFramesPreview(): FreezeFramesResponse {
  * recorded values had to render above `Shortlist`'s early returns, so it belongs in the
  * scene the dashboard gate looks at.
  */
-const PREVIEW_COMPONENTS = new Set([34, 39, 44, 51, 60]);
+const PREVIEW_COMPONENTS = new Set([34, 39, 40, 44, 51, 52, 60]);
 
 /** Resolve a module-relative specifier to a key rooted at `public/`. */
 function resolveSpecifier(fromKey: string, specifier: string): string {

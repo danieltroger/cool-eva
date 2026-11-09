@@ -6,7 +6,7 @@ The shell reserves 52 CSS pixels plus the actual top safe area. Top links have 4
 
 Navigation uses real links and the existing history routes. Ordinary taps update the app without loading another document; modified clicks retain working URLs. Leaving a destination removes both `panel` and `section` from the target URL and clears any pending write confirmation. Back and Forward restore the actual route. Repeated current-view taps do not add history entries.
 
-Ride/Cooling and Range/Cells share the header switch. More opens Settings; Bike groups the existing ride, waypoint and bike information content. Service contains a plain All signals row. During the area-by-area build, existing Settings, Charge, Cells, Faults and Service contents are retained for their own PRs. In particular, `#all` still opens the existing signals content under More/Service; the Cells map PR removes its Battery history navigation button. The old panel URLs remain readable.
+Ride/Cooling and Range/Cells share the header switch. More opens Settings; Bike groups the existing ride, waypoint and bike information content. Service contains a plain All signals row. During the area-by-area build, existing Settings and Service contents are retained for their own PRs. In particular, `#all` still opens the existing signals content under More/Service; the Cells map PR removes its Battery history navigation button. The old panel URLs remain readable.
 
 The handlebar cycle is Ride → Cooling → Range → Charge → Faults → Ride. More and its destinations are parked-bike views: neither handlebar gestures nor automatic charge/range focus interrupts them. Their arrival still consumes automatic focus edges, so returning to a riding view does not replay a queued jump.
 

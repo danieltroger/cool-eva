@@ -6,7 +6,9 @@ if (ridingFixture.get("fixture") === "all-installed") {
     delete LIVE[key];
   }
   __TABLES["/lifetime-stats"].reading = null;
-  __TABLES["/freeze-frames"].reading = null;
+  if (!ridingFixture.has("fault-records")) {
+    __TABLES["/freeze-frames"].reading = null;
+  }
   JOURNAL.length = 0;
   SETTINGS.saved.coolantProbesEnabled = true;
   SETTINGS.active.coolantProbesEnabled = true;

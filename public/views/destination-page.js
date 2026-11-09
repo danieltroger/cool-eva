@@ -42,14 +42,17 @@ export function DestinationPage() {
         LifetimeBlock(true),
         LifetimeReadButton(() => bikeReadState.val),
         LastServiceRead(),
-        button(
+        van.tags.a(
           {
-            class: "menu-link",
-            onclick: () => {
-              openRidingView("fault-report");
+            class: "layout-list-row navigation-link",
+            href: "#faults",
+            onclick: event => {
+              if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+              event.preventDefault();
+              openRidingView("faults");
             },
           },
-          "Fault details → Full report"
+          "Faults"
         )
       );
     case "battery-cooling":

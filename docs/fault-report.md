@@ -1,6 +1,22 @@
-# Fault summary and complete report
+# Faults and recorded values
 
-The handlebar landing keeps the full count and two stable named previews. The scrolling `#faults/report` retains all diagnostic lists, expected-fault editing, counters, recorded values and qualifications. Bike information opens that report directly; browser history retains its actual origin. Expected faults remain counted.
+The approved Faults page is one scrolling `#faults` screen. Active codes have expandable rows; the remaining stored codes live in the Stored faults disclosure. Each component/symptom appears once. Every row keeps its Expected checkbox and its own recorded values. The bottom bar stays present. The old `#faults/report` bookmark normalises to this page, and Bike uses a plain Faults link. Browser history retains the actual origin.
+
+The former count/previews/report split, counters and explanatory paragraphs are retired. Their implementation constraints and negative results are preserved here and in [the retired implementation notes](fault-report-legacy.md).
+
+## Recorded data audit
+
+`scripts/check-fault-records.ts` writes all 29 committed freeze-frame replies to a temporary durable store, serves the production GET `/freeze-frames` endpoint on localhost, and checks the response through the UI's record resolver. The pump's seven captured fields survive unchanged: vehicle state 22, pump current 0 mA, pump status −4, three IGBT temperatures 34.9 °C, outside air 28.5 °C, and cycle byte 255. No server change is needed for that replay. This establishes the committed path; it does not establish what is currently saved on a particular Pi.
+
+Daniel's feedback screenshot explicitly says that B1012's component record belongs to B1013. That explains the absent B1012 values in that image without evidence of a decoder failure. The UI continues to withhold another symptom's measurements and shows the matching code plus B1012's own field names. A component and symptom form the identity; an OBD string alone is insufficient because some OBD strings occur under two components.
+
+## Complete values and quality
+
+All expected code-specific field slots are retained, including missing fields in a partial reply. Present values come only from the named HTTP response shape; there are no fallback or example measurements in production UI code. The sketch's friendly pump and lighting labels retain original field names in titles. Other field names remain available verbatim. Units come from each decoded field. Implausible values use the existing infokey/bounds gate and display fault; refused scaling displays raw data without claiming its scaled unit. The cycle caption uses the actual decoded byte, with null distinct from zero. The counter's unresolved meaning stays in its title and [freeze-frame.md](freeze-frame.md).
+
+Not read, not listed, a missing/failed reply, an exact `57 00` no-record answer, a different symptom and a matching record remain separate. A garbled reply does not become “no record.” Failed HTTP refreshes cannot display an earlier cached payload as the new answer. The fetch runs when Faults opens; its GET serves saved data without touching the bike. A silent or offline active list carries an explicit unavailable state; expected codes remain in the data and never reduce reported totals.
+
+Disclosure nodes survive telemetry pulses, stored-list refreshes and Expected reordering. Removed rows leave the node cache so returning rows get live bindings. The checkbox uses the existing serialised, CSRF-protected expected-fault endpoint. It waits for the server's set; a refusal keeps the confirmed value and reports only under the affected code. Empty reactive states retain a DOM anchor so later errors and liveness changes can render.
 
 ## Preserved implementation rationale
 

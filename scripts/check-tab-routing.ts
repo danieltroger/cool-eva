@@ -197,10 +197,10 @@ check(
 );
 check(
   "Fault report is a pinned Faults subview and advances to Ride",
-  canonicalHash("#faults/report").view === "fault-report" &&
+  canonicalHash("#faults/report").view === "faults" &&
     canonicalHash("#faults/report").tab === "faults" &&
-    canonicalHash("#faults/report").rewriteTo === null &&
-    nextViewAfter("fault-report") === "ride"
+    canonicalHash("#faults/report").rewriteTo === "#faults" &&
+    nextViewAfter("faults") === "ride"
 );
 check(
   "Legacy All bookmark opens inside More",

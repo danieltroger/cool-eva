@@ -52,15 +52,19 @@ export async function checkHistoryAndGestures(page: HeadlessPage, file: string) 
       0,
       "Handlebar arrivals must reset scrolling even between long views."
     );
-    await evaluateOnPage(page, "ridingPreview('lib/router.js').showView('fault-report')");
+    await evaluateOnPage(page, "ridingPreview('lib/router.js').showView('faults')");
     await evaluateOnPage(page, FRAME);
-    await evaluateOnPage(page, "window.scrollTo(0,200)");
+    await evaluateOnPage(
+      page,
+      "document.querySelector('.stored-faults').open=true;document.querySelector('[data-code=P0A07]').open=true;window.scrollTo(0,200)"
+    );
+    await evaluateOnPage(page, FRAME);
     assert.ok(
       Number(await evaluateOnPage(page, "scrollY")) > 0,
       "The scroll-reset case must start from an actually scrolled view."
     );
     await gesture(page, kind);
-    await waitOnPage(page, "location.hash === '#ride'", "gesture Fault report to Ride");
+    await waitOnPage(page, "location.hash === '#ride'", "gesture Faults to Ride");
     assert.equal(await evaluateOnPage(page, "scrollY"), 0, "Handlebar arrivals must reset scrolling.");
     for (const panel of ["settings", "session", "bike-information", "battery-cooling", "advanced-service"]) {
       const origin = await evaluateOnPage(page, "[ridingPreview('lib/router.js').currentView(), location.hash]");

@@ -1290,64 +1290,6 @@ body {
   color: var(--good);
 }
 
-/* ---------- stored trouble codes (faults view) ---------- */
-
-/* Thirty-nine of these have to fit on a phone: the code on the left at a fixed width so
-   the codes form a readable column, the description filling the rest. Long rows wrap
-   rather than clip — `· freeze frame · expected` are the two suffixes that say why a row
-   matters at all, they sit at the END of the longest lines, and that is exactly what an
-   ellipsis eats. Most rows still take one line; today's list wraps one. */
-.code-line {
-  display: flex;
-  gap: 0.5rem;
-  align-items: baseline;
-  font-size: 0.76rem;
-  line-height: 1.6;
-}
-
-.code-line-id {
-  flex: 0 0 3.6rem;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.02em;
-}
-
-.code-line-text {
-  flex: 1 1 auto;
-  min-width: 0;
-  /* Wrapping at all is what fixes #253: `white-space: nowrap` held this span's min-content
-     at 327 px. `anywhere` rather than `break-word` — the call `.code-field` makes below,
-     for the same reason — buys the rest: break-word leaves the minimum at the longest WORD
-     (53 px in today's list, which fits), `anywhere` takes it to one character, and only
-     that survives a name longer than the column. Energica's table is full of candidates. */
-  overflow-wrap: anywhere;
-}
-
-/* The open/closed marker on a code line that has a shortlist. Pushed to the right
-   edge and given a fixed width so the caret does not shift the description text
-   when it flips, and so lines without one do not lose alignment. */
-.code-line-more {
-  flex: 0 0 0.9rem;
-  text-align: right;
-  color: var(--label);
-  font-size: 0.7rem;
-}
-
-/* Energica's field list under an opened code. Indented to the width of the code
-   column so it reads as belonging to the line above rather than as a new row. */
-.code-fields {
-  margin: 0.15rem 0 0.5rem 4.1rem;
-  font-size: 0.72rem;
-  line-height: 1.7;
-}
-
-.code-field {
-  font-variant-numeric: tabular-nums;
-  /* The names are Energica's internal identifiers — long, and full of
-     underscores. Wrapping beats clipping here: a truncated `ai_WaterPumpCurr…`
-     is exactly the name you needed to read. */
-  overflow-wrap: anywhere;
-}
-
 .code-toggle {
   align-self: flex-start;
   background: none;
@@ -2237,51 +2179,96 @@ body {
   font-size: 18px;
   font-weight: 600;
 }
-.faults-count {
-  height: 136px;
-  justify-content: space-between;
+/* Approved disclosure spacing and field rows: docs/fault-report.md. */
+.layout-accordion {
+  border: 1px solid var(--tile-edge);
+  background: var(--tile);
+  border-radius: var(--radius);
+  min-width: 0;
 }
-.faults-number {
-  font-size: 64px;
-  line-height: 1.05;
-}
-.fault-previews {
+.layout-accordion > summary {
   display: grid;
-  gap: 8px;
-}
-.fault-preview {
-  height: 128px;
-  padding: 12px;
-  border-left: 4px solid var(--bad);
-  justify-content: space-between;
-}
-.fault-preview-name {
-  font-size: 18px;
-  line-height: 1.35;
-  font-weight: 500;
-}
-.fault-report-action {
-  display: flex;
-  height: 44px;
-  justify-content: flex-end;
-}
-.fault-report-action .settings-button {
-  max-width: 100%;
-  white-space: nowrap;
-}
-.faults-footnote {
-  height: 50px;
-  padding: 8px 4px;
-}
-.fault-report-heading {
-  grid-column: 1 / -1;
-  display: flex;
+  grid-template-columns: minmax(0, 1fr) var(--space-4);
   align-items: center;
-  gap: 8px;
+  min-height: calc(var(--size-touch) + var(--space-3));
+  gap: var(--space-2);
+  padding: var(--space-3);
+  list-style: none;
+  cursor: pointer;
 }
-.all-view {
-  display: block;
-  padding: 0;
+.layout-accordion > summary::-webkit-details-marker {
+  display: none;
+}
+.layout-accordion > summary::after {
+  content: "⌄";
+  color: var(--sub);
+  justify-self: end;
+}
+.layout-accordion[open] > summary::after {
+  content: "⌃";
+}
+.layout-accordion-body {
+  padding: 0 var(--space-3) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.faults-view .label {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  line-height: 1.35;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--label);
+}
+.fault-list:empty {
+  display: none;
+}
+.fault-summary {
+  gap: var(--space-2);
+}
+.fault-title {
+  font-size: var(--text-md);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.fault-tiny {
+  font-size: var(--text-xs);
+  color: var(--sub);
+}
+.fault-sub {
+  font-size: var(--text-sm);
+  color: var(--sub);
+}
+.fault-row.expected {
+  border-color: var(--sub);
+}
+.fault-expected input {
+  width: var(--space-5);
+  height: var(--space-5);
+  accent-color: var(--good);
+}
+.fault-record-row {
+  border-bottom: 1px solid var(--tile-edge);
+  font-size: var(--text-sm);
+}
+.fault-record-row > :first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-decoration: underline dotted var(--sub);
+  text-underline-offset: var(--space-1);
+}
+.fault-field-value {
+  white-space: nowrap;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.fault-field-value.record-fault,
+.fault-save-error {
+  color: var(--bad);
+}
+.fault-field-value.record-raw {
+  color: var(--warn);
 }
 .all-landing {
   display: grid;

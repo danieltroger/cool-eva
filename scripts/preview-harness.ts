@@ -32,6 +32,7 @@ export const HARNESS_PARTS = [
   "preview-harness-pi.js",
   "preview-harness-riding.js",
   "preview-harness-charge.js",
+  "preview-harness-faults.js",
 ];
 
 /**
