@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { WebSocket as WsClient } from "ws";
 import { monotonicNow, since } from "../src/monotonic.ts";
+import { retryHeadlessLaunch } from "./headless-launch-retry.ts";
 
 // A phone-sized page in whatever browser the machine already has, driven over raw CDP.
 //
@@ -94,6 +95,10 @@ export interface HeadlessPage {
  * line naming a browser nothing opened is the kind of evidence this repo throws away.
  */
 export async function openHeadlessPage(viewport: Viewport, browserPath: string): Promise<HeadlessPage> {
+  return retryHeadlessLaunch(browserPath, () => openHeadlessPageAttempt(viewport, browserPath));
+}
+
+async function openHeadlessPageAttempt(viewport: Viewport, browserPath: string): Promise<HeadlessPage> {
   const userDataDir = await mkdtemp(join(tmpdir(), "cool-eva-headless-"));
   const browser = launchBrowser(browserPath, userDataDir);
   // ⚠️ Everything below can throw — a launch that prints no endpoint, a socket that never
