@@ -94,7 +94,7 @@ async function assertNavigation(page: HeadlessPage, section: string) {
       selected:links.filter(link=>link.getAttribute('aria-current')==='page').map(link=>link.textContent),
       section:document.querySelector('.header-switch [aria-current=page]')?.textContent,
       switches:[...document.querySelectorAll('.header-switch a')].map(link=>link.textContent),
-      parent:document.querySelector('.app-title').textContent,
+      parent:document.querySelector('[data-header-title]').textContent,
       clean:links.every(link=>!new URL(link.href).searchParams.has('panel')&&!new URL(link.href).searchParams.has('section')),
       targets:[...links,...document.querySelectorAll('.header-switch a')].every(link=>link.getBoundingClientRect().height>=44&&link.getBoundingClientRect().width>=44),
       headerHeight:header.getBoundingClientRect().height-parseFloat(getComputedStyle(header).paddingTop),

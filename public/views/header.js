@@ -1,7 +1,7 @@
 // @ts-check
 // Header and persistent navigation: docs/dashboard-navigation.md.
 import van from "../vendor/van-1.6.1.js";
-import { connection } from "../lib/store.js";
+import { connection, signalState, systemStatus } from "../lib/store.js";
 import { destination, destinationSection, moreSection, navigationTab, openDestination } from "../lib/destination.js";
 import { currentView, showView, hashForView, TABS } from "../lib/router.js";
 
@@ -12,11 +12,30 @@ export function Header() {
     { class: "header layout-between" },
     div(
       { class: "app-title layout-row" },
-      span(() => TABS.find(tab => tab.name === navigationTab())?.label ?? "Ride"),
-      span({ class: () => `dot ${connection.val}`, role: "img", "aria-label": () => connection.val })
+      span({ "data-header-title": "" }, () => TABS.find(tab => tab.name === navigationTab())?.label ?? "Ride"),
+      div(
+        { class: "header-status layout-row" },
+        span(
+          { class: "header-status layout-row", "data-header-can": "" },
+          span({ class: () => `dot ${canDotState()}`, role: "img", "aria-label": () => `CAN ${canDotState()}` }),
+          "CAN"
+        ),
+        span(
+          { class: "header-status layout-row", "data-header-connection": "" },
+          span({ class: () => `dot ${connection.val}`, role: "img", "aria-label": () => connection.val }),
+          span(() => connection.val)
+        )
+      )
     ),
     () => HeaderSwitch()
   );
+}
+
+/** @returns {"up" | "down" | "unknown"} */
+export function canDotState() {
+  if (connection.val !== "live") return "unknown";
+  if (systemStatus.val) return systemStatus.val.can.state;
+  return signalState("can_link").val?.value === 0 ? "down" : "unknown";
 }
 
 function HeaderSwitch() {
