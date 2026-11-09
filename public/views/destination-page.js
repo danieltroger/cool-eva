@@ -1,16 +1,15 @@
 // @ts-check
 import van from "../vendor/van-1.6.1.js";
-import { destination, openRidingView, destinationName, ridingUrl } from "../lib/destination.js";
-import { AccessLink } from "./settings-access.js";
+import { destination, destinationName } from "../lib/destination.js";
 import { SettingsPage } from "./settings-page.js";
 import { TripStats } from "./trip-stats.js";
 import { WaypointList, collapseWaypointList } from "./waypoints.js";
 import { status, refreshStatus, WaypointButton, DownloadButton } from "./sheet.js";
-import { LifetimeBlock } from "./all.js";
+import { LifetimeBlock } from "./lifetime-block.js";
 import { LifetimeReadButton, refreshLifetimeRead } from "./lifetime-read.js";
 import { loadLifetimeStats } from "../lib/lifetime.js";
-import { LastServiceRead, refreshVcuWrite } from "./vcu-write.js";
-import { ServiceMode, refreshServiceMode } from "./service-mode.js";
+import { LastServiceRead, refreshLastService } from "./last-service-read.js";
+import { ServiceMode } from "./service-mode.js";
 import { request } from "../lib/transport.js";
 import { openDestination } from "../lib/destination.js";
 import { BatteryCoolingPage } from "./battery-cooling.js";
@@ -29,7 +28,7 @@ export function DestinationPage() {
       void refreshStatus();
       collapseWaypointList();
       void loadLifetimeStats();
-      void refreshVcuWrite();
+      void refreshLastService();
       void refreshBikeReadState();
       return div(
         { class: "settings-page" },
@@ -39,32 +38,14 @@ export function DestinationPage() {
         WaypointList(status),
         DownloadButton(),
         button({ class: "menu-link", onclick: () => openDestination("battery-cooling") }, "Battery & cooling"),
-        LifetimeBlock(true),
+        LifetimeBlock(),
         LifetimeReadButton(() => bikeReadState.val),
         LastServiceRead()
       );
     case "battery-cooling":
       return BatteryCoolingPage();
     case "advanced-service":
-      refreshServiceMode(() => destination.val === "advanced-service");
-      return div(
-        { class: "settings-page" },
-        AccessLink(),
-        ServiceMode(false),
-        van.tags.a(
-          {
-            class: "layout-list-row navigation-link",
-            href: ridingUrl("all"),
-            onclick: (/** @type {MouseEvent} */ event) => {
-              if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-              event.preventDefault();
-              openRidingView("all");
-            },
-          },
-          van.tags.span("All signals"),
-          van.tags.span("›")
-        )
-      );
+      return ServiceMode();
     default:
       return div();
   }

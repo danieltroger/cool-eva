@@ -36,12 +36,13 @@ export async function checkPersistentNavigation(page: HeadlessPage, file: string
       await assertNavigation(page, label);
       if (section === "service") {
         assert.equal(
-          await evaluateOnPage(
-            page,
-            `(() => {const row=document.querySelector('.navigation-link');const arrow=row.lastElementChild.getBoundingClientRect();return row.firstElementChild.textContent==='All signals'&&row.lastElementChild.textContent==='›'&&Math.abs(arrow.right-row.getBoundingClientRect().right)<1;})()`
-          ),
-          true,
-          "All signals is a list row with its chevron at the trailing edge."
+          await evaluateOnPage(page, "document.querySelector('.all-signals > summary').textContent"),
+          "All signals"
+        );
+        assert.equal(
+          await evaluateOnPage(page, "document.querySelector('.all-signals').open"),
+          false,
+          "All signals is an inline browsable row inside Service."
         );
       }
       assert.equal(await evaluateOnPage(page, "ridingPreview('lib/arming.js').armed.rawVal"), "");

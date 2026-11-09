@@ -88,7 +88,7 @@ export async function checkSimulatorBrowser(page: HeadlessPage, shots?: string):
   }
   await checkDraftAcrossLoop(page);
   console.log(
-    "  ✓ simulator browser: every route, 14 refusal controls, actual 403s, both themes and stable Settings draft across restart"
+    "  ✓ simulator browser: every route, visible refusal controls, automatic parameter reads and honest Service write refusals, actual 403s, both themes and stable Settings draft across restart"
   );
 }
 
@@ -208,22 +208,41 @@ async function checkActions(page: HeadlessPage, theme: string, shots?: string): 
   );
   await refused(page, "/settings/apply", () => button(page, "Restart", true), "settings-apply", theme, shots);
   await destination(page, "advanced-service");
-  await refused(page, "/vcu-read", () => button(page, "Read VCU parameters", true), "service-read", theme, shots);
+  await waitOnPage(
+    page,
+    "document.querySelectorAll('.parameter-browser [data-select-parameter]').length===277",
+    "read-only Service catalogue in simulator"
+  );
+  await evaluateOnPage(page, "document.querySelector('.service-actions').open=true");
+  await evaluateOnPage(page, "new Promise(resolve=>requestAnimationFrame(resolve))");
+  await refused(page, "/vcu-write", () => button(page, "Restart bike", true), "service-write", theme, shots, "—");
+  assert.equal(
+    await evaluateOnPage(
+      page,
+      "document.querySelector('[data-service-action=reset-vcu]').closest('.layout-compact-stack').querySelector('[role=status]').title"
+    ),
+    SIMULATOR_MESSAGE
+  );
+  // Removed read controls retain HTTP coverage in check-simulator.ts; selection now reads automatically.
   await refused(
     page,
-    "/freeze-frame-read",
-    () => button(page, "Read the stored freeze frames", true),
-    "freeze-read",
+    "/vcu-probe",
+    () =>
+      evaluateOnPage(
+        page,
+        `(async()=>{const client=await import('/lib/service-client.js');const parameter=client.serviceCatalogue.rawVal.parameters.find(parameter=>parameter.name==='MAP3_PWR');await(await import('/lib/service-edits.js')).selectServiceParameter(parameter);})()`
+      ).then(() => {}),
+    "service-probe",
     theme,
-    shots
+    shots,
+    "—"
   );
-  await waitOnPage(page, "!!document.querySelector('select.probe-input')", "parameter selector");
-  await evaluateOnPage(
-    page,
-    `(async()=>{const writes=await import('/views/vcu-write.js');const entries=writes.parameterListing();await writes.selectTarget(entries[0].name)})()`
+  await waitOnPage(page, "!!document.querySelector('.parameter-editor')", "automatic selected parameter read");
+  assert.equal(await evaluateOnPage(page, "document.querySelector('.parameter-editor button').disabled"), true);
+  assert.equal(
+    await evaluateOnPage(page, "document.querySelector('.parameter-editor [role=status]').title"),
+    SIMULATOR_MESSAGE
   );
-  await refused(page, "/vcu-probe", () => button(page, "Read it off the bike now"), "service-probe", theme, shots);
-  await refused(page, "/vcu-write", () => button(page, "Reset the VCU", true), "service-write", theme, shots);
   await destination(page, "bike-information");
   await refused(
     page,
