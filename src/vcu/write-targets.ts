@@ -333,7 +333,7 @@ export function writeTargets(): WriteTarget[] {
  * named in a table would have been offered a 16-bit range on a 32-bit cell — a bound that
  * looks researched, is wrong, and nothing downstream could contradict.
  */
-function datatypeBounds(parameter: VcuParameter): { min: number; max: number } {
+export function datatypeBounds(parameter: VcuParameter): { min: number; max: number } {
   if (parameter.type === "BOOL") {
     return { min: 0, max: 1 };
   }

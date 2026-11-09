@@ -51,6 +51,7 @@ export const SIMULATOR_REPLY_ROUTES = {
   "/charge-auto": "charge",
   "/dtc-table": "generic",
   "/fault-infokeys": "generic",
+  "/service-catalogue": "generic",
   "/stored-dtcs": "generic",
   "/vcu-params": "generic",
   "/lifetime-stats": "generic",

@@ -31,6 +31,7 @@ import { handleBundleStop } from "./http/bundle-stop.ts";
 import { managedCodeRoot, readReleaseMetadata } from "./release/metadata.ts";
 import { handleDtcTableEndpoint } from "./http/dtc-table.ts";
 import { handleFaultInfokeysEndpoint } from "./http/fault-infokeys.ts";
+import { handleServiceCatalogue } from "./http/service-catalogue.ts";
 import { handleStoredDtcsEndpoint } from "./http/stored-dtcs.ts";
 import { handleVcuParamsEndpoint } from "./http/vcu-params.ts";
 import { handleVcuBackupEndpoint } from "./http/vcu-backup.ts";
@@ -595,6 +596,10 @@ const server = createServer(async (req, res) => {
   // Energica's per-fault telemetry shortlists — static data, no bus, no bike.
   if (url.pathname === "/fault-infokeys") {
     handleFaultInfokeysEndpoint(req, res);
+    return;
+  }
+  if (url.pathname === "/service-catalogue") {
+    handleServiceCatalogue(req, res);
     return;
   }
   // The codes the bike currently has stored, as last read by the OBD poller. Serves

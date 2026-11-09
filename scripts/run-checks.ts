@@ -1107,6 +1107,11 @@ const CHECKS: SelfCheck[] = [
       "fails on rather than a thing the query is trusted to have done",
   },
   {
+    script: "scripts/check-service-catalogue.ts",
+    covers:
+      "complete grouped parameter and signal identities before any readings; numeric policy bounds, read-only duplicate/config rows, honest engineering units and unknown stock, live table changes and a bus-free GET",
+  },
+  {
     script: "scripts/check-service-gate-charging.ts",
     covers:
       "whether a charging motorcycle may be serviced, on real bytes replayed through the decoders: the two " +

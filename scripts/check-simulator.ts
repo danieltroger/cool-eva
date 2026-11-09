@@ -235,6 +235,11 @@ async function checkNothingEscapes(): Promise<void> {
 }
 
 export async function checkHttpRefusals(base: string): Promise<void> {
+  const catalogueResponse = await fetch(base + "/service-catalogue");
+  assert.equal(catalogueResponse.status, 200);
+  const catalogue = (await catalogueResponse.json()) as import("../src/http/service-catalogue.ts").ServiceCatalogue;
+  assert.ok(catalogue.parameters.some(parameter => parameter.name === "TORQUE_LIMIT" && parameter.scale === 0.1));
+  assert.ok(catalogue.signals.some(signal => signal.key === "coolant_in" && signal.unit === "°C"));
   const restart = await fetch(base + "/can-restart", {
     method: "POST",
     headers: {
