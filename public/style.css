@@ -284,6 +284,33 @@
 .layout-accordion-body.service-action-list {
   gap: var(--space-5);
 }
+.layout-card.service-operations {
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+.service-operations > .layout-accordion {
+  border: 0;
+  border-radius: 0;
+}
+.service-operations > .layout-accordion + .layout-accordion {
+  border-top: 1px solid var(--tile-edge);
+}
+.parameter-confirm {
+  flex: none;
+}
+.parameter-write-block {
+  white-space: nowrap;
+}
+.parameter-edit:has(.parameter-write-block:not([hidden])) {
+  flex-wrap: wrap;
+}
+.parameter-edit:has(.parameter-write-block:not([hidden])) > input {
+  flex-basis: 100%;
+}
+.parameter-edit:has(.parameter-write-block:not([hidden])) .parameter-confirm {
+  width: 100%;
+}
 .signal-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

@@ -1486,7 +1486,7 @@ const CHECKS: SelfCheck[] = [
   },
   {
     script: "scripts/check-service-feedback.ts",
-    covers: "short visible reasons from refused parameter reads and backup imports",
+    covers: "short visible reasons from refused parameter reads, backup imports and blocked parameter confirmations",
   },
   {
     script: "scripts/check-service-parameters.ts",
