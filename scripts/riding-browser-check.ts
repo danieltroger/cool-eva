@@ -12,6 +12,7 @@ import { assertCellsContent, checkCellsNavigation } from "./riding-cells-browser
 import { checkBmsBrowser } from "./riding-bms-browser.ts";
 import { checkHistoryAndGestures } from "./riding-navigation-browser.ts";
 import { checkPersistentNavigation } from "./persistent-navigation-browser.ts";
+import { checkRetiredDestinationBrowser } from "./retired-destination-browser.ts";
 import { checkCoolingFan } from "./riding-fan-browser.ts";
 import { checkFaultRecovery } from "./riding-fault-browser.ts";
 import { checkPowerWords } from "./riding-power-browser.ts";
@@ -134,6 +135,7 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
   await checkInsetCounterexample(page, previewFile);
   await checkHistoryAndGestures(page, previewFile);
   await checkPersistentNavigation(page, previewFile);
+  await checkRetiredDestinationBrowser(page, previewFile);
   await checkCellsNavigation(page, previewFile);
   await checkBmsBrowser(page, previewFile);
   await checkChargeNavigation(page, previewFile);

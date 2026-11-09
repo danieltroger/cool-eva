@@ -1,4 +1,4 @@
-# Range, Cells and Battery & cooling
+# Range and Cells
 
 Range keeps its existing #hypermile URL. Its 648 px fixed layout includes a 44 px selector, 140 px weakest-cell card, 96 px estimated timer, 112 px allowance pair, 108 px rolling-consumption card, 92 px energy/spread pair and 56 px gaps/padding. Amp readings remain 34.4 px, their configured-ceiling/share captions 16 px and bars 8 px. The weakest-cell value remains 64 px.
 
@@ -6,7 +6,17 @@ Missing, stale and rejected inputs retain their cards and explicit states. Zero 
 
 The approved [option C module map](cell-module-map.md) now owns Cells at #hypermile/cells. It replaces the strip, per-LMU tables and history trace described below.
 
-**Retired Cells composition:** Cells was a scrolling URL subview outside the riding cycle. Its next gesture selects Charge. The strip and list retain all 81 physical positions in module order; missing or rejected readings cannot shift later cells or retain a plausible coloured bar. Full readings follow the strip and weakest/strongest identities. Battery & cooling is a menu page, reached from Bike information, with the same gesture/automatic exclusions as other menu pages. Browser history retains actual origin for Cells and falls back to Range on a direct entry.
+**Retired Cells composition:** Cells was a scrolling URL subview outside the riding cycle. Its next gesture selected Charge. The strip and list retained all 81 physical positions in module order; missing or rejected readings could not shift later cells or retain a plausible coloured bar. Full readings followed the strip and weakest/strongest identities. Battery & cooling was a menu page, reached from Bike information, with the same gesture/automatic exclusions as other menu pages. Browser history retained actual origin for Cells and fell back to Range on a direct entry.
+
+## Retired Battery & cooling destination
+
+Battery & cooling has been removed. Range, Cooling and Cells own its former duplicated readings; old bookmarks are replaced with the Bike destination without adding a history entry.
+
+The old temperature table used eleven LMU rows but labelled them “Module”. Those identities are not the nine physical battery modules. LMUs 6 and 8 have no fitted battery sensor; their two PCB readings still exist. The physical grouping and selected-LMU readings are documented in [the nine-module map](cell-module-map.md). The removed grid sampled held, bounded readings on the chart pulse and retained its table nodes across updates; missing, rejected and unfitted readings were distinct.
+
+The removed cross-check showed the bike's average consumption over five minutes and its reported range. Its resistance-loss trace used ten minutes of current samples with the current pack-resistance estimate, labelled the resistance and whether it was measured, modelled or assumed, and derived loss from current squared times resistance. The underlying interpretations remain below.
+
+The removed regen hints said “Full regen” at the configured ceiling. Below it, charge above 90% prompted a check of charge level; other cases prompted a pack-temperature check, and a missing charge reading prompted both. These were inspection hints, not diagnoses of the cause of a reduced allowance.
 
 ## Preserved findings from the previous Hypermile view
 
@@ -58,7 +68,7 @@ Regen headroom. It derates at high SOC and at temperature extremes, so a full ba
 
 Range and Cells name the reported weakest/strongest values as BMS indices without translating them. Cells labels individual readings with physical positions 1–81, retaining each module-local cell number separately. Pack extrema and spread use the current 0x203 summary; held per-cell values only fit the bar geometry. The shared [reading-status policy](reading-status.md#bms-multiplex-holds) bounds holds and colour eligibility. Cells has a Back control only for an explicitly recorded menu origin, preserved through reload; normal riding entries and direct links return through the adjacent Range sub-tab or browser history.
 
-Drive allowed and Regen available retain the same exact values, shares, bars and 648 px budget. The duplicate drive sentence is deliberately removed. Regen inspection hints live on Battery & cooling and are checks rather than asserted diagnoses. Cells restores the accepted cell_spread_mv ten-minute history before Module 1. A stale or rejected spread has an explicit state and no live trace.
+Drive allowed and Regen available retained the same exact values, shares, bars and 648 px budget. The duplicate drive sentence was deliberately removed. Regen inspection hints lived on Battery & cooling and were checks rather than asserted diagnoses. Cells restored the accepted cell_spread_mv ten-minute history before Module 1. A stale or rejected spread had an explicit state and no live trace.
 
 ## Sampled range estimate
 

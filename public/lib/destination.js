@@ -4,7 +4,7 @@ import { hashForView, currentViewLabel, currentTab, currentView, showView } from
 import { SETTINGS_PAGE_TITLES } from "./settings-map.js";
 import { armed } from "./arming.js";
 
-/** @typedef {"" | "settings" | "session" | "bike-information" | "battery-cooling" | "advanced-service"} Destination */
+/** @typedef {"" | "settings" | "session" | "bike-information" | "advanced-service"} Destination */
 export const destination = van.state(/** @type {Destination} */ (""));
 export const destinationSection = van.state("");
 export const backDestinationName = van.state("Ride");
@@ -63,15 +63,27 @@ function readDestination() {
   const before = destination.rawVal;
   backDestinationName.val = history.state?.backName ?? currentViewLabel();
   const url = new URL(location.href);
-  const name = url.searchParams.get("panel") ?? "";
-  destination.val = ["settings", "session", "bike-information", "battery-cooling", "advanced-service"].includes(name)
-    ? /** @type {Destination} */ (name)
-    : "";
+  const panel = url.searchParams.get("panel") ?? "";
+  const name = destinationForPanel(panel);
+  if (name && name !== panel) {
+    url.searchParams.set("panel", name);
+    url.searchParams.delete("section");
+    history.replaceState(history.state, "", url);
+  }
+  destination.val = name;
   destinationSection.val = url.searchParams.get("section") ?? "";
   armed.val = "";
   if (before && !destination.rawVal) {
     returnToOrigin?.();
   }
+}
+
+/** @param {string} panel @returns {Destination} */
+export function destinationForPanel(panel) {
+  if (panel === "battery-cooling") return "bike-information";
+  return ["settings", "session", "bike-information", "advanced-service"].includes(panel)
+    ? /** @type {Destination} */ (panel)
+    : "";
 }
 
 /** @param {import("./router.js").TabName} tab */
@@ -112,7 +124,7 @@ export function ridingUrl(view) {
 
 export function moreSection() {
   const panel = destination.val;
-  if (panel === "session" || panel === "bike-information" || panel === "battery-cooling") return "bike";
+  if (panel === "session" || panel === "bike-information") return "bike";
   if (panel === "advanced-service" || (!panel && currentView() === "all")) return "service";
   return "settings";
 }
@@ -124,7 +136,6 @@ export function destinationName(name = destination.val, section = destinationSec
     /** @type {Record<string, string>} */ ({
       session: "Session",
       "bike-information": "Bike information",
-      "battery-cooling": "Battery & cooling",
       "advanced-service": "Advanced service",
     })[name] ?? "Cool Eva"
   );

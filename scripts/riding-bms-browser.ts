@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { evaluateOnPage, waitOnPage, type HeadlessPage } from "./headless-page.ts";
+import { evaluateOnPage, type HeadlessPage } from "./headless-page.ts";
 import { openPreview, FRAME } from "./riding-preview-page.ts";
 
 export async function checkBmsBrowser(page: HeadlessPage, file: string) {
@@ -47,10 +47,14 @@ export async function checkBmsBrowser(page: HeadlessPage, file: string) {
       "color-mix(in srgb,var(--warn) 0%,var(--good))",
       "A current cell above the BMS maximum has zero relative gap."
     );
-    await evaluateOnPage(page, "ridingPreview('lib/destination.js').openDestination('battery-cooling')");
-    await waitOnPage(page, "!!document.querySelector('.battery-cooling-page')", "Battery & cooling module grid");
+    await evaluateOnPage(page, "document.querySelector('[data-map-mode=temperature]').click()");
     await evaluateOnPage(page, FRAME);
-    await assertHeldModules(page);
+    assert.ok(
+      String(await evaluateOnPage(page, "document.querySelector('[data-cell-extra]').textContent")).startsWith(
+        "PCB 60 / "
+      ),
+      "Accepted held board temperatures remain visible in Cells."
+    );
     await evaluateOnPage(
       page,
       `(() => {
@@ -61,13 +65,12 @@ export async function checkBmsBrowser(page: HeadlessPage, file: string) {
     })()`
     );
     await evaluateOnPage(page, FRAME);
-    assert.equal(
-      await evaluateOnPage(page, "document.querySelector('[data-module-signal=lmu1_pcb1_c]').textContent"),
-      "stale",
+    assert.ok(
+      String(await evaluateOnPage(page, "document.querySelector('[data-cell-extra]').textContent")).includes("stale"),
       "Live unrelated traffic cannot keep a dead multiplex's held values fresh."
     );
   }
-  console.log("  ✓ BMS held values stay visible in Cells/module views, neutral when old, with current 0x203 summaries");
+  console.log("  ✓ BMS held cell and board values stay visible in Cells, neutral when old, with current summaries");
 }
 
 export async function applyHeldBmsFixture(page: HeadlessPage) {
@@ -99,39 +102,4 @@ export async function applyHeldBmsFixture(page: HeadlessPage) {
   })()`
   );
   await evaluateOnPage(page, FRAME);
-}
-
-async function assertHeldModules(page: HeadlessPage) {
-  assert.ok(
-    String(await evaluateOnPage(page, "document.querySelector('[data-module-count]').textContent")).startsWith(
-      "31 of 31 fresh"
-    )
-  );
-  assert.equal(
-    await evaluateOnPage(page, "document.querySelector('[data-module-signal=lmu1_pcb1_c]').textContent"),
-    "60°C"
-  );
-  assert.equal(
-    await evaluateOnPage(page, "document.querySelector('[data-module-signal=lmu1_pcb1_c]').style.color"),
-    "var(--sub)"
-  );
-  assert.equal(
-    await evaluateOnPage(page, "document.querySelectorAll('.module-temperatures .heatmap rect')[1].style.fill"),
-    "var(--sub)"
-  );
-  assert.equal(
-    await evaluateOnPage(page, "document.querySelector('[data-module-signal=lmu2_pcb1_c]').style.color"),
-    "var(--watch)",
-    "A current temperature keeps its temperature colour in the module view."
-  );
-  assert.equal(
-    await evaluateOnPage(page, "document.querySelectorAll('.module-temperatures .heatmap rect')[4].style.fill"),
-    "var(--watch)",
-    "The heatmap must show current temperature colour as well as held neutral readings."
-  );
-  assert.equal(
-    await evaluateOnPage(page, "document.querySelectorAll('.module-readings td.sub').length"),
-    2,
-    "The two unfitted probes remain distinct."
-  );
 }

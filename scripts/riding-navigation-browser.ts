@@ -66,7 +66,7 @@ export async function checkHistoryAndGestures(page: HeadlessPage, file: string) 
     await gesture(page, kind);
     await waitOnPage(page, "location.hash === '#ride'", "gesture Faults to Ride");
     assert.equal(await evaluateOnPage(page, "scrollY"), 0, "Handlebar arrivals must reset scrolling.");
-    for (const panel of ["settings", "session", "bike-information", "battery-cooling", "advanced-service"]) {
+    for (const panel of ["settings", "session", "bike-information", "advanced-service"]) {
       const origin = await evaluateOnPage(page, "[ridingPreview('lib/router.js').currentView(), location.hash]");
       await evaluateOnPage(page, `ridingPreview('lib/destination.js').openDestination(${JSON.stringify(panel)})`);
       await evaluateOnPage(page, FRAME);

@@ -2210,31 +2210,6 @@ body {
 [data-cell-extra] {
   font-size: var(--text-xs);
 }
-.battery-cooling-page {
-  display: grid;
-  gap: 12px;
-}
-.battery-cooling-page h2 {
-  margin: 0;
-}
-.battery-cooling-page > .settings-button {
-  justify-self: start;
-  min-height: 44px;
-}
-.module-readings {
-  width: 100%;
-  table-layout: fixed;
-  border-collapse: collapse;
-  font-variant-numeric: tabular-nums;
-}
-.module-readings th,
-.module-readings td {
-  text-align: left;
-  padding: 8px 3px;
-  font-size: 13.6px;
-  overflow-wrap: anywhere;
-}
-
 .charge-view [hidden] {
   display: none;
 }
