@@ -110,7 +110,7 @@ State 3 reaches the view as `kind: "unrecognised"` with **no failure**: `57 00` 
 
 The trailing byte, surfaced as `cyclesSinceStored`. Null — not 0 — whenever it cannot be placed: an unknown shortlist leaves the whole body trailing, a truncated frame ends mid-field, and two or more trailing bytes mean a field is missing from the shortlist. In each of those the last byte is still readable and would still be a number, which is exactly why it is null instead.
 
-⚠️ The screen says _"a cycle is a key-off/key-on or a VCU reset"_ and not "key cycles". The read that settled this counter spanned **both** and moved by +1, not +2, so which of the two it counts is unresolved. It is also **not** an OBD aging counter: those count fault-free cycles and reset on recurrence, and `P0A07` is permanently present on this bike while its byte climbs.
+The compact caption says “Stored N cycles ago”; its title retains the uncertainty, rather than claiming “key cycles.” The former wording was _"a cycle is a key-off/key-on or a VCU reset"_. The read that settled this counter spanned **both** and moved by +1, not +2, so which of the two it counts is unresolved. It is also **not** an OBD aging counter: those count fault-free cycles and reset on recurrence, and `P0A07` is permanently present on this bike while its byte climbs.
 
 ### The bounds gate, and the two things it got wrong first
 

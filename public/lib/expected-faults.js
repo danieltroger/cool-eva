@@ -1,7 +1,6 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { MUTED, WARN } from "./colors.js";
 import { request } from "./transport.js";
 
 // Which codes this bike is expected to have, as the Pi holds them.
@@ -133,8 +132,6 @@ function apply(payload) {
   expectedFaults.val = new Set(payload.expected.entries.map(entry => faultKey(entry.component, entry.symptom)));
 }
 
-const { button, div } = van.tags;
-
 /**
  * Whether this code is on the owner's expected list.
  *
@@ -163,38 +160,33 @@ export function expectedNote(rows) {
   return count === 0 ? "" : ` · ${count} expected`;
 }
 
-/**
- * The mark-as-expected control.
- *
- * ⚠️ On a stored code line it renders INSIDE the opened code, never on the line itself:
- * `.code-line` is a `div` with `role="button"` and its own key handler, and a real
- * `<button>` nested in that is a control inside a control — two tap targets in one row on
- * a phone, and a screen reader announcing a button within a button. Expanding a code and
- * then marking it is also the order the decision is made in: you look at what it recorded,
- * then say whether you expected it.
- * @param {string} key `"component/symptom"`
- */
-export function ExpectedToggle(key) {
+/** @param {string} key @param {string} code */
+export function ExpectedCheckbox(key, code) {
   const [component, symptom] = key.split("/").map(Number);
-  return div(
-    button(
-      {
-        class: "code-toggle",
-        // Disabled while any write is in flight, not just this one: the Pi serialises them,
-        // and a second tap during the first would be read-modify-written over.
+  return van.tags.div(
+    van.tags.label(
+      { class: "layout-list-row fault-expected" },
+      van.tags.span("Expected"),
+      van.tags.input({
+        type: "checkbox",
+        "aria-label": `${code} expected`,
+        checked: () => isExpected(key),
         disabled: () => writing.val !== "",
-        onclick: () => void setExpectedFault(component, symptom, !expectedFaults.val.has(key)),
-      },
-      () => {
-        if (writing.val === key) {
-          return "⏳  saving…";
-        }
-        return expectedFaults.val.has(key) ? "◉  expected — tap to unmark" : "○  mark as expected";
-      }
+        onchange: event => {
+          const checkbox = event.target;
+          if (!(checkbox instanceof HTMLInputElement)) return;
+          const expected = checkbox.checked;
+          checkbox.checked = isExpected(key);
+          void setExpectedFault(component, symptom, expected);
+        },
+      })
     ),
     () =>
       expectedFaultsError.val.key === key
-        ? div({ class: "code-fields", style: `color:${WARN}` }, expectedFaultsError.val.message)
-        : div({ style: `color:${MUTED}` })
+        ? van.tags.span(
+            { class: "fault-sub fault-save-error", title: expectedFaultsError.val.message },
+            "Expected change could not be confirmed."
+          )
+        : van.tags.span({ hidden: true })
   );
 }

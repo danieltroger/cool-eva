@@ -362,6 +362,11 @@ const CHECKS: SelfCheck[] = [
       "dash's own measured 4.2-10.1 ms",
   },
   {
+    script: "scripts/check-fault-records.ts",
+    covers:
+      "captured freeze-frame bytes through the durable store and HTTP endpoint to complete code-specific values, units and cycle age; symptom identity, bounds, missing fields, failed fetches and one home per code",
+  },
+  {
     script: "scripts/check-cell-map.ts",
     covers:
       "nine physical modules across eleven LMUs, exact dashed boundaries, stable series selection, missing sensors, bounded faults, old-sample ages and neutral reference-less colour",

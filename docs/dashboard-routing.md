@@ -14,12 +14,11 @@ The parent and subview states are private and have exactly two writers: explicit
 | --- | --- | --- | --- |
 | Ride / Cooling | `#ride` / `#ride/cooling`, riding views | Ride → Cooling → Range | Restore the requested parent overview |
 | Range / Charge / Faults | Existing `#hypermile` / `#charge` / `#faults` riding views | Continue the five-stop cycle | Charge start → Charge; charge exit while on Charge → Ride; near-empty → Range |
-| Cells | `#hypermile/cells`, scrolling URL subview | Charge overview | Charge start → Charge; near-empty → Range overview |
+| Cells | `#hypermile/cells`, fixed module map | Charge overview | Charge start → Charge; near-empty → Range overview |
 | Bike information / Session / Battery & cooling | Existing `panel=bike-information` / `panel=session` / `panel=battery-cooling` menu pages | Excluded; return to the originating view | Excluded; edges are consumed without a queued jump on return |
-| Fault report | `#faults/report`, scrolling parked URL subview | Ride overview | Charge start → Charge; near-empty → Range |
 | More / All signals / Settings / Service | `#more` / legacy `#all` / `panel=settings` / `panel=advanced-service` parked views | Excluded | Excluded |
 
-Cells (#hypermile/cells) and the Battery & cooling menu page (panel=battery-cooling) are now implemented; Charge details and the full Fault report are implemented. Cells and Charge details are URL subviews whose next handlebar stop is the next parent overview; a charge start restores the Charge overview even from an already-selected Charge detail. Battery & cooling is a menu page with the same exclusions as Session. The Fault report is a URL subview whose next stop is Ride. Their Back actions retain their actual origins.
+Cells is the fixed module map and Charge is one scrolling page. Faults is one scrolling page with expandable recorded values; the legacy #faults/report address normalises to #faults. Battery & cooling remains a menu page with the same exclusions as Session. Browser history retains actual origins.
 
 The original canonicalisation constraints are preserved below:
 
@@ -33,4 +32,4 @@ Cells returns to its actual browser-history origin, including Battery & cooling 
 
 Charge adds #charge/pack-cooling and #charge/controls. Both advance to Faults through either gesture. A current-parent tap or actual charge-start restores the Charge overview and disarms, including from an already-selected Charge parent. Charge exit from either detail returns to Ride; link loss is not charge exit. Controls keeps the original gated handlers and dwell.
 
-Faults opens the complete report with browser history. Bike information opens the same report directly and retains “‹ Bike information” after Back, Forward and reload. A direct report link has a Faults fallback. The report retains handlebar/automatic view rules; menu pages still exclude both. All retains a fixed 504 px snapshot/filter/history landing before its scrolling raw and lifetime content.
+Faults uses one scrolling page with expandable recorded values. The legacy #faults/report address normalises to #faults. Bike information uses the persistent bottom tab, and browser history retains its origin. Faults retains handlebar/automatic view rules; menu pages still exclude both. All retains a fixed 504 px snapshot/filter/history landing before its scrolling raw and lifetime content.

@@ -1,3 +1,4 @@
+import { assertFaultLayout } from "./riding-faults-browser.ts";
 import { assertChargeLayout } from "./charge-page-layout.ts";
 import { checkChargeReviewCases } from "./riding-charge-review-browser.ts";
 import { assertFixedLayout, resetLayoutClearance, layoutClearance } from "./riding-layout-browser.ts";
@@ -32,8 +33,7 @@ const COVERAGE = {
   cells: "fixed",
   charge: "scrolling",
   all: "fixed-landing",
-  faults: "fixed",
-  "fault-report": "scrolling",
+  faults: "scrolling",
   more: "scrolling",
 } as const;
 const COOLING_SIGNALS = [
@@ -58,7 +58,7 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
     .map(([name]) => name);
   assert.deepEqual(
     fixedViews,
-    ["ride", "cooling", "hypermile", "cells", "all", "faults"],
+    ["ride", "cooling", "hypermile", "cells", "all"],
     "Fixed-view coverage must match the converted screens."
   );
   for (const geometry of [
@@ -92,14 +92,14 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
             await assertCellsContent(page);
           } else if (route.name === "all") {
             await assertAllContent(page);
-          } else if (route.name === "faults") {
-            await assertFaultsContent(page);
           } else {
             await assertCoolingContent(page);
           }
           await assertFixedLayout(page, route.name === "all");
         } else if (route.name === "charge") {
           await assertChargeContent(page);
+        } else if (route.name === "faults") {
+          await assertFaultsContent(page);
         }
       }
       assert.deepEqual(
@@ -276,6 +276,8 @@ async function checkNoticeStates(page: HeadlessPage, file: string, theme: string
     );
     if (hash === "#charge") {
       await assertChargeLayout(page);
+    } else if (hash === "#faults") {
+      await assertFaultLayout(page);
     } else {
       await assertFixedLayout(page, hash === "#all");
     }

@@ -41,16 +41,7 @@ export function DestinationPage() {
         button({ class: "menu-link", onclick: () => openDestination("battery-cooling") }, "Battery & cooling"),
         LifetimeBlock(true),
         LifetimeReadButton(() => bikeReadState.val),
-        LastServiceRead(),
-        button(
-          {
-            class: "menu-link",
-            onclick: () => {
-              openRidingView("fault-report");
-            },
-          },
-          "Fault details → Full report"
-        )
+        LastServiceRead()
       );
     case "battery-cooling":
       return BatteryCoolingPage();

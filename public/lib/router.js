@@ -36,7 +36,6 @@ export const ROUTES = /** @type {const} */ ([
   { name: "charge", tab: "charge", label: "Charge", hash: "#charge" },
   { name: "all", tab: "more", label: "All signals", hash: "#all" },
   { name: "faults", tab: "faults", label: "Faults", hash: "#faults" },
-  { name: "fault-report", tab: "faults", label: "Fault report", hash: "#faults/report" },
   { name: "more", tab: "more", label: "Settings", hash: "#more" },
 ]);
 /** @typedef {(typeof ROUTES)[number]["name"]} ViewName */
@@ -112,7 +111,7 @@ export function showView(name) {
   armed.val = "";
   try {
     history.pushState(
-      name === "cells" || name === "fault-report" ? { coolEvaSubview: true, backName: currentViewLabel() } : null,
+      name === "cells" ? { coolEvaSubview: true, backName: currentViewLabel() } : null,
       "",
       hashForView(name)
     );
@@ -216,7 +215,7 @@ function showTabFromUrl() {
  * @returns {{tab:TabName,view:ViewName,rewriteTo:string|null,named:boolean}}
  */
 export function canonicalHash(hash) {
-  const route = ROUTES.find(candidate => candidate.hash === chargeHash(hash));
+  const route = ROUTES.find(candidate => candidate.hash === normalizedViewHash(hash));
   const landing = route?.tab ?? DEFAULT_TAB;
   const landingView = route?.name ?? DEFAULT_TAB;
   const wanted = hashForView(landingView);
@@ -243,11 +242,12 @@ export function hashForTab(name) {
  * @returns {TabName | null}
  */
 export function tabFromHash(hash) {
-  return ROUTES.find(route => route.hash === chargeHash(hash))?.tab ?? null;
+  return ROUTES.find(route => route.hash === normalizedViewHash(hash))?.tab ?? null;
 }
 
 /** @param {string} hash */
-function chargeHash(hash) {
+function normalizedViewHash(hash) {
   const normalized = hash.toLowerCase();
+  if (normalized === "#faults/report") return "#faults";
   return ["#charge/controls", "#charge/pack-cooling"].includes(normalized) ? "#charge" : normalized;
 }
