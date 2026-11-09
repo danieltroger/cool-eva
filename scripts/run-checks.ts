@@ -970,6 +970,10 @@ const CHECKS: SelfCheck[] = [
       "the dashboard fixture's declaration order, complete page contract, no harness shadowing or silent duplicates, and no duplicate builder placeholders; extraction history is in docs/diagnostics-and-checks.md §11.10",
   },
   {
+    script: "scripts/check-retired-destination.ts",
+    covers: "the retired Battery & cooling bookmark resolves to Bike",
+  },
+  {
     script: "scripts/check-range-cells.ts",
     covers:
       "Range zero/fault reading guards and all 81 physical cell slots, module order, missing/stale/fault masking, true extrema and a balanced pack",

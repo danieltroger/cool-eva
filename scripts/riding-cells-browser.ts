@@ -4,7 +4,6 @@ import { evaluateOnPage, reloadPage, waitOnPage, type HeadlessPage } from "./hea
 import { assertFixedLayout, assertRendered } from "./riding-layout-browser.ts";
 import { openPreview, FRAME } from "./riding-preview-page.ts";
 import { gesture } from "./riding-navigation-browser.ts";
-import { checkRegenHints } from "./riding-battery-browser.ts";
 
 export async function assertCellsContent(page: HeadlessPage) {
   await waitOnPage(
@@ -94,28 +93,6 @@ export async function checkCellsNavigation(
     await gesture(page, kind);
     await waitOnPage(page, "location.hash==='#charge'&&scrollY===0", "both handlebar gestures move Cells to Charge");
   }
-  await openPreview(page, file, "#more", "cells-menu-origin");
-  await evaluateOnPage(page, "ridingPreview('lib/destination.js').openDestination('battery-cooling')");
-  await waitOnPage(page, "!!document.querySelector('.battery-cooling-page')", "existing Battery & cooling entry");
-  await evaluateOnPage(
-    page,
-    "[...document.querySelectorAll('.battery-cooling-page button')].find(button=>button.textContent==='Cells').click()"
-  );
-  await waitOnPage(
-    page,
-    "!!document.querySelector('.cells-view')&&!location.search.includes('panel=')",
-    "one Cells route from the existing menu"
-  );
-  await reloadPage(page);
-  await assertCellsContent(page);
-  assert.equal(
-    await evaluateOnPage(page, "document.querySelector('.cells-back')"),
-    null,
-    "Every origin uses the approved top switch and browser history."
-  );
-  await evaluateOnPage(page, "history.back()");
-  await waitOnPage(page, "!!document.querySelector('.battery-cooling-page')", "browser Back retains the menu origin");
-  await checkRegenHints(page, file, capture);
   await openPreview(page, file, "#hypermile/cells", "cells-critical");
   await assertCellsContent(page);
   await evaluateOnPage(

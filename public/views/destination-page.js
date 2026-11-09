@@ -11,10 +11,8 @@ import { loadLifetimeStats } from "../lib/lifetime.js";
 import { LastServiceRead, refreshLastService } from "./last-service-read.js";
 import { ServiceMode } from "./service-mode.js";
 import { request } from "../lib/transport.js";
-import { openDestination } from "../lib/destination.js";
-import { BatteryCoolingPage } from "./battery-cooling.js";
 
-const { button, div, h2 } = van.tags;
+const { div, h2 } = van.tags;
 const bikeReadState = van.state(/** @type {import("../../src/http/vcu-read.ts").VcuReadResponse | null} */ (null));
 
 export function DestinationPage() {
@@ -37,13 +35,10 @@ export function DestinationPage() {
         WaypointButton(),
         WaypointList(status),
         DownloadButton(),
-        button({ class: "menu-link", onclick: () => openDestination("battery-cooling") }, "Battery & cooling"),
         LifetimeBlock(),
         LifetimeReadButton(() => bikeReadState.val),
         LastServiceRead()
       );
-    case "battery-cooling":
-      return BatteryCoolingPage();
     case "advanced-service":
       return ServiceMode();
     default:
