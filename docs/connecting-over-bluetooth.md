@@ -43,6 +43,8 @@ Stay within about 10 m of the bike.
 3. Paste the key into **Paste the Pi’s generated Bluetooth key** and tap **Connect this phone**.
 4. Allow Bluetooth if Bluefy asks, then pick the Pi’s dashboard service in the list. It may appear without a name, or as **Unnamed Pi** in the app. The encrypted welcome verifies the shared key.
 
+Next time you open the page, it tries to reconnect to the same Pi by itself, without the list, if the browser remembers that you allowed it. If the browser can't do that, or you have allowed more than one device, tap **Connect** as before. This has not been tried on a phone yet, in Bluefy or Chrome.
+
 ### Chrome (Android)
 
 The same four steps, in Chrome. Android may ask for the **Nearby devices** permission (Location, on older Android versions) the first time — Chrome needs it to scan.

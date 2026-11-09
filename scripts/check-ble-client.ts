@@ -21,7 +21,56 @@ export async function checkBleClient(): Promise<void> {
   await delayedReadRecovery();
   await slowDownload();
   await requestDeadlines();
+  await relaunchRestore();
   console.log("check-ble-client: all checks passed");
+}
+
+// A relaunched page has its key but not its device. getDevices lets it reconnect without the
+// chooser; each refusal case must leave the page exactly where it was before: waiting for Connect.
+async function relaunchRestore(): Promise<void> {
+  const restored = await createRig({ permittedDevices: pi => [pi] });
+  try {
+    assert.equal(restored.client.deviceChosen(), false);
+    assert.equal(await restored.client.restoreDevice(), true, "one permitted Pi was not reused");
+    assert.equal(restored.client.deviceChosen(), true);
+    const connection = connectionFor(restored);
+    connection.policy.start();
+    await until(() => connection.messages.length > 0, "telemetry after a relaunch with no tap");
+    assert.equal(await restored.client.restoreDevice(), true, "a second restore disturbed the live link");
+    assert.equal(connection.reports.at(-1), "live");
+  } finally {
+    await restored.close();
+  }
+  const cases: { name: string; options: Parameters<typeof createRig>[0]; prepare?: (rig: Rig) => void }[] = [
+    { name: "a browser without getDevices", options: {} },
+    { name: "nothing permitted yet", options: { permittedDevices: () => [] } },
+    { name: "two permitted devices", options: { permittedDevices: pi => [pi, { ...pi, name: "Other Pi" }] } },
+    {
+      name: "no stored key",
+      options: { permittedDevices: pi => [pi] },
+      prepare: rig => {
+        rig.stored.delete("cool-eva.ble-secret");
+      },
+    },
+    {
+      name: "getDevices refusing",
+      options: {
+        permittedDevices: () => {
+          throw new Error("synthetic getDevices refusal");
+        },
+      },
+    },
+  ];
+  for (const { name, options, prepare } of cases) {
+    const rig = await createRig(options);
+    try {
+      prepare?.(rig);
+      assert.equal(await rig.client.restoreDevice(), false, `restored a device with ${name}`);
+      assert.equal(rig.client.deviceChosen(), false, `chose a device with ${name}`);
+    } finally {
+      await rig.close();
+    }
+  }
 }
 
 function connectionFor(rig: Rig) {

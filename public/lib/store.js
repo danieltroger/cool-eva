@@ -6,7 +6,7 @@ import { ringFor } from "./ring.js";
 import { monotonicNow } from "./clock.js";
 import { observeAndPublish } from "./pack-resistance-live.js";
 import { POLL_MS, createConnection } from "./connection.js";
-import { BLE_MODE, openStream, abandonSilentSession } from "./ble-link.js";
+import { BLE_MODE, openStream, abandonSilentSession, restoreDevice } from "./ble-link.js";
 
 /** @typedef {import("../../src/can/signals.ts").LiveValue} LiveValue */
 /** @typedef {import("../../src/ws.ts").DashboardMessage} DashboardMessage */
@@ -264,7 +264,15 @@ export function connect() {
   // document, so the tab bar cannot trigger it.
   window.addEventListener("pagehide", () => link.pageHidden());
   setInterval(() => link.tick(), POLL_MS);
-  link.start();
+  if (BLE_MODE) {
+    // Without this a relaunched Bluefy tab sits on "tap Connect" with a key already stored.
+    // Starting after the lookup means the first open finds the device instead of waiting a retry.
+    void restoreDevice()
+      .catch(error => console.warn("ble: could not restore the previously chosen Pi", error))
+      .finally(() => link.start());
+  } else {
+    link.start();
+  }
 
   setInterval(() => {
     chartTick.val = chartTick.val + 1;

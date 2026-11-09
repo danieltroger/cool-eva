@@ -33,6 +33,7 @@ export function createBleLink(environment = {}) {
       return () => state.statusListeners.delete(listener);
     },
     chooseAndConnect: () => chooseDevice(state),
+    restoreDevice: () => restorePermittedDevice(state),
     deviceChosen: () => state.device !== null,
     reconnect: async () => {
       await ensureBleSession(state);
@@ -66,6 +67,7 @@ export const bluetoothAvailable = client.bluetoothAvailable;
 export const nativeShell = client.nativeShell;
 export const onBleStatus = client.onBleStatus;
 export const chooseAndConnect = client.chooseAndConnect;
+export const restoreDevice = client.restoreDevice;
 export const deviceChosen = client.deviceChosen;
 export const reconnect = client.reconnect;
 export const tunnelRequest = client.tunnelRequest;
@@ -87,17 +89,53 @@ async function chooseDevice(state) {
   if (!bluetooth) {
     throw new Error("This browser has no Web Bluetooth. On iPhone use the Cool Eva app or Bluefy; on Android, Chrome.");
   }
-  const device = await bluetooth.requestDevice({ filters: [{ services: [SERVICE_UUID] }] });
-  if (state.device !== device) {
-    linkLost(state, "another Pi selected");
-    state.device = device;
-    device.addEventListener("gattserverdisconnected", () => {
-      if (state.device === device) {
-        linkLost(state, "the radio link dropped");
-      }
-    });
-  }
+  adoptDevice(state, await bluetooth.requestDevice({ filters: [{ services: [SERVICE_UUID] }] }));
   await ensureBleSession(state);
+}
+
+/**
+ * Picks the Pi back up after a reload without the chooser, which needs a tap. Only when the
+ * browser offers `getDevices`, exactly one device was already permitted, and a key is stored;
+ * otherwise it returns false and the Connect button stays the way in. A permitted device can
+ * be out of range, so the caller treats this as a hint and lets the normal retry policy connect.
+ * @param {BleState} state
+ * @returns {Promise<boolean>}
+ */
+async function restorePermittedDevice(state) {
+  if (state.device !== null) return true;
+  if (!storedBleSecret(state)) return false;
+  const bluetooth = state.environment.bluetooth();
+  if (typeof bluetooth?.getDevices !== "function") return false;
+  let permitted;
+  try {
+    permitted = await bluetooth.getDevices();
+  } catch (error) {
+    console.warn("ble: the browser would not list previously permitted devices", error);
+    return false;
+  }
+  // Several permitted devices means several Pis (or other peripherals); choosing for the
+  // rider could connect the wrong bike, so that case keeps the explicit chooser.
+  if (permitted.length !== 1 || state.device !== null) {
+    if (permitted.length > 1) {
+      console.log(`ble: ${permitted.length} previously permitted devices; waiting for Connect`);
+    }
+    return state.device !== null;
+  }
+  adoptDevice(state, permitted[0]);
+  console.log("ble: reusing the previously chosen Pi");
+  return true;
+}
+
+/** @param {BleState} state @param {import("./ble-state.js").BleDevice} device */
+function adoptDevice(state, device) {
+  if (state.device === device) return;
+  linkLost(state, "another Pi selected");
+  state.device = device;
+  device.addEventListener("gattserverdisconnected", () => {
+    if (state.device === device) {
+      linkLost(state, "the radio link dropped");
+    }
+  });
 }
 /** @param {BleState} state @param {string} path @param {TunnelRequestInit} init */
 async function requestThroughLink(state, path, init) {
