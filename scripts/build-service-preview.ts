@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, normalize, posix } from "node:path";
 import { buildPayload as buildDtcTable } from "../src/http/dtc-table.ts";
 import { buildPayload as buildFaultInfokeys } from "../src/http/fault-infokeys.ts";
+import { serviceCatalogue } from "../src/http/service-catalogue.ts";
 import { serverFacts } from "./preview-server-facts.ts";
 import type { LifetimeStatsResponse } from "../src/http/lifetime-stats.ts";
 import { HOW_TO_READ, HOW_TO_READ_WITH_SERVICE_STOPPED } from "../src/vcu/lifetime-store.ts";
@@ -276,6 +277,7 @@ if (!/__MODULES__,?/.test(template)) {
 const tables = JSON.stringify({
   "/dtc-table": buildDtcTable(),
   "/fault-infokeys": buildFaultInfokeys(),
+  "/service-catalogue": serviceCatalogue(),
   // The REAL 2026-09-08 reading, decoded from the committed fixture, so a screenshot
   // of the All tab shows this bike's own lifetime numbers rather than invented ones —
   // including the two the decoder refuses to scale, which are the whole point of
