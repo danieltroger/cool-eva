@@ -74,3 +74,9 @@ The button is outside the irreversible fold because it changes nothing, and it i
 It costs a KWP session on A8 and no SecurityAccess. It is exempt from the table-type gate, and `docs/vcu-parameters.md` §4 argues why: the gate exists for parameters addressed **by index**, and this read addresses identifiers that no parameter table describes.
 
 ⚠️ **It is not a logged signal, and should not become one** — `docs/vcu-parameters.md` §13. A poll means requests on the bus while the bike is being ridden, the value moves about once a year, and the audit journal is a better record than a signal row would be.
+
+## Stored reading on Bike
+
+Opening Bike fetches the stored history and last-service date without asking the motorcycle. `/vcu-write?list=0` includes a named `lastServiceStamp` summary derived from the full append-only journal, independently of the twelve recent events. Journal append order wins over timestamps because the Pi can step its wall clock. A failed read leaves the last actual reading visible; an empty or implausible stamp stays a fault. A service-point attempt without a confirmed readback invalidates the previous date instead of presenting it as current.
+
+Both Bike read controls use a single tap on **Read again**. The existing server enable switches, parked gate, session lease and watchdog still decide whether a read can run. Bike refreshes those permissions while visible and shows **Park to read** when the parked gate refuses. These background HTTP GETs never start a sweep or a motorcycle read. The stored value stays visible while a refresh is running or unavailable.

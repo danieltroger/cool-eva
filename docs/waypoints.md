@@ -403,3 +403,13 @@ A waypoint is stored as three ordinary signals (`waypoint_seq`, `waypoint_lat`, 
 **Historical status:** The claim that an in-range corrupt fix is only flagged later by the map predates the server-side implied-speed, step and first-fix corroboration checks. The [current gate inventory](#what-each-gate-can-see) explains those refusals.
 
 **Seeing them again:** the route map dashboard draws waypoints as stars, with a table under it listing every one in the window and whether the surrounding track backs its position up; the menu sheet's Waypoints tile shows the last one's position and time. `docs/waypoints.md` covers the gate and what it cannot see.
+
+## Former summary tile on Bike
+
+The compact **This ride** card now shows Distance and Riding time from the existing page-session counters. No ride-energy total exists in that state, so it does not invent Energy used. Saving, listing and downloading waypoints remain separate existing controls.
+
+The deleted eight-tile summary also showed average/top speed, altitude, heading, satellites and the most recent waypoint's position, count and time. Its restart constraints still matter to any future summary: the browser store merges snapshots without removing omitted keys, while waypoint signals are absent after a service restart until another save. The old tile therefore used `/status`'s count for this boot, refreshed on opening, and said **none since restart** instead of claiming that the ride had saved zero. Its list already used `/status` events directly and did not share the stale-store problem. A tile left open through a restart stayed old until reopening; an unanswered status request deliberately retained the cached position rather than hiding it.
+
+Both latitude/longitude dependencies had to be read before the zero-count guard. Measured against the vendored VanJS, a binding returning before those reads subscribed only to status and ran once while the guard held, regardless of signal changes; reading first kept it reactive. The secondary line likewise read `signalState("waypoint_seq")` before branching because `valueOf` drops the timestamp. If status counted a save before its WebSocket patch arrived, the line showed only the new count rather than contradicting it with **none since restart**. Positions used four decimal places (about 11 m); the full signal view retained six. Those constraints explain the former tile without keeping it as a second home for the waypoint list.
+
+The former tile kept its position visually stronger than the secondary time/count line. At 390 px the coordinate pair wrapped after its comma into an 86 px tile against a 72 px grid row. The compact rows remove that grid constraint; it is retained here as layout evidence rather than as unused CSS.

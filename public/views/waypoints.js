@@ -8,8 +8,7 @@ const { button, div } = van.tags;
 /** @typedef {import("../../src/http/status.ts").StatusPayload} StatusPayload */
 /** @typedef {import("../lib/waypoint-list.js").WaypointRow} WaypointRow */
 
-// The places this ride kept, under the trip stats in the menu sheet. The tile above says
-// where the LAST one was; this says what the whole boot has.
+// The places this ride kept, drawn from this boot's stored waypoint events.
 //
 // Everything here comes from /status, which views/sheet.js refreshes whenever the sheet
 // opens — see lib/waypoint-list.js for why the WebSocket cannot be the source, and for the
@@ -31,14 +30,14 @@ const expanded = van.state(false);
 /**
  * @param {import("../vendor/van-1.6.1.js").State<StatusPayload | null>} status
  *   the sheet's /status state, passed in rather than imported so this file does not reach
- *   back into the one that renders it — the same call views/trip-stats.js makes.
+ *   back into the one that renders it.
  */
 export function WaypointList(status) {
   return div({ class: "waypoint-list" }, () => {
     // ⚠️ BOTH READ FIRST, before any branch. VanJS re-collects a binding's dependencies
     // from the reads its LAST run made, so a run that returns above one of these leaves
     // the list subscribed to the other alone and it stops updating — measured, and
-    // written up in views/trip-stats.js §Waypoints.
+    // written up in docs/waypoints.md under the former summary tile.
     const payload = status.val;
     const showAll = expanded.val;
     const events = Array.isArray(payload?.waypointEvents) ? payload.waypointEvents : [];

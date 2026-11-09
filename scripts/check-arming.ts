@@ -17,7 +17,6 @@ import { ARMED_KEY as CHARGE_CURRENT_KEY } from "../public/views/charge-current.
 import { ARMED_KEY as CHARGE_SOC_LIMIT_KEY } from "../public/views/charge-soc-limit.js";
 import { ARMED_KEY as CHARGE_STOP_KEY } from "../public/views/charge-stop.js";
 import { ARMED_KEY as FREEZE_FRAME_READ_KEY } from "../public/views/freeze-frame-read.js";
-import { ARMED_KEY as LIFETIME_READ_KEY } from "../public/views/lifetime-read.js";
 import { SERVICE_ACTIONS } from "../public/lib/service-actions.js";
 import { refreshServiceStatus } from "../public/lib/service-client.js";
 import { fetchChargeWriteStatus, writeStatus } from "../public/lib/charge-write.js";
@@ -39,7 +38,6 @@ const EXPORTED_KEYS = new Map([
   ["public/views/charge-current.js", CHARGE_CURRENT_KEY],
   ["public/views/charge-soc-limit.js", CHARGE_SOC_LIMIT_KEY],
   ["public/views/charge-stop.js", CHARGE_STOP_KEY],
-  ["public/views/lifetime-read.js", LIFETIME_READ_KEY],
   ["public/views/freeze-frame-read.js", FREEZE_FRAME_READ_KEY],
 ]);
 
@@ -119,12 +117,11 @@ const ALL_KEYS = [
   CHARGE_SOC_LIMIT_KEY,
   CHARGE_STOP_KEY,
   FREEZE_FRAME_READ_KEY,
-  LIFETIME_READ_KEY,
   ...SERVICE_ACTIONS.map(entry => `service:${entry.action}`),
   "service:lights-off",
   "service:lights-restore",
-  ...["public/views/last-service-read.js", "public/views/pi-actions.js", "public/views/settings-restart.js"].flatMap(
-    path => [...sourceOf(path).matchAll(/const \w+_KEY = "([^"]+)"/g)].map(match => match[1])
+  ...["public/views/pi-actions.js", "public/views/settings-restart.js"].flatMap(path =>
+    [...sourceOf(path).matchAll(/const \w+_KEY = "([^"]+)"/g)].map(match => match[1])
   ),
 ];
 check(
@@ -180,8 +177,6 @@ const EXPECTED_SITES = [
   "charge-soc-limit.js → performSocLimit",
   "charge-stop.js → performChargeStop",
   "freeze-frame-read.js → performFreezeFrameRead",
-  "last-service-read.js → performStampRead",
-  "lifetime-read.js → performLifetimeRead",
   "pi-actions.js → performCanRestart",
   "pi-actions.js → performUpdate",
   "settings-restart.js → performRestart",
@@ -235,7 +230,7 @@ check(
 );
 check(
   "the sites' keys resolved at all — everything reading back as an identifier would pass the one below in silence",
-  resolvedKeys.length === 9
+  resolvedKeys.length === 7
 );
 check(
   `⚠️  no two of the ${resolvedKeys.length} resolved firing sites refuse on the SAME key — two that did would each ` +

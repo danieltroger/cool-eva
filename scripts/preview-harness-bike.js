@@ -205,6 +205,12 @@ const WRITE_STATUS = {
   targets: null,
   detail: null,
   recent: JOURNAL,
+  lastServiceStamp: {
+    readAt: NOW - 2 * DAY,
+    dateIso: "2000-01-01T00:00:00.000Z",
+    implausible: "reads zero — no service point has ever been set on this bike, or A8 answered with an empty cell",
+    confirmed: true,
+  },
   busHeldBy: null,
 };
 

@@ -210,8 +210,6 @@ async function checkStampPlacement(page: HeadlessPage, file: string) {
     "retained Bike stamp read"
   );
   await evaluateOnPage(page, "document.querySelector('.action-block button').click()");
-  await waitOnPage(page, "ridingPreview('lib/arming.js').armDwellElapsed()", "stamp read dwell");
-  await evaluateOnPage(page, "document.querySelector('.action-block button').click()");
   await waitOnPage(
     page,
     "document.querySelector('.action-block [role=status]')?.textContent==='fault'",

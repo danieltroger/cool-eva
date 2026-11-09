@@ -28,7 +28,7 @@ const LATEST_FILE = "lifetime.json";
 /** HTTP diagnostic hint; the dashboard keeps its local read control.
  * The comma means parked AND (drive down OR plugged in), matching the service gate.
  * Instruction history: docs/settings-cleanup.md; charging behavior: docs/vcu-parameters.md §12. */
-export const HOW_TO_READ = 'More → Bike → "Read bike history", parked, with the drive down or plugged in';
+export const HOW_TO_READ = 'More → Bike → Bike history → "Read again", parked, with the drive down or plugged in';
 
 /**
  * The same read from a shell, for a Pi whose service is stopped.

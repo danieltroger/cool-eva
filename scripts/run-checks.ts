@@ -1143,6 +1143,11 @@ const CHECKS: SelfCheck[] = [
       "the generated whole-dashboard fixture parses, has a populated module registry, replaces every placeholder and mounts app.js; historical failures are in docs/diagnostics-and-checks.md §11.6",
   },
   {
+    script: "scripts/check-stored-service-stamp.ts",
+    covers:
+      "stored Bike service dates beyond the recent journal excerpt, failed refreshes and invalid/unconfirmed stamps without bus traffic",
+  },
+  {
     script: "scripts/check-service-stamp.ts",
     covers:
       "the retained Bike stamp evidence formatter against recorded zero words and a plausible synthetic stamp, every read identifier represented, no duplicate implausibility prose, and no retired unread claim returning; actual DOM placement and arm/read behavior run in service-browser.ts",

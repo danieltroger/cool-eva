@@ -79,7 +79,7 @@ export interface ServiceStamp {
  * it in 2019. The ceiling is "not in the future", passed in by the caller rather than
  * read here, because this module owns no clock.
  */
-const EARLIEST_CREDIBLE_SERVICE_MS = Date.UTC(2019, 0, 1);
+export const EARLIEST_CREDIBLE_SERVICE_MS = Date.UTC(2019, 0, 1);
 
 /**
  * Interprets the four WORDs. Pure.
