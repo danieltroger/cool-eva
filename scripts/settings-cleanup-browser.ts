@@ -17,6 +17,7 @@ export async function checkSettingsCleanupBrowser(page: HeadlessPage, previewFil
     );
     await gotoPage(page, `file://${previewFile}?scene=parked&panel=settings&section=bike&cleanup=${theme}`);
     await waitOnPage(page, "document.querySelectorAll('.setting-help').length===3", "Bike setup help");
+    await checkBikeSetupStatus(page);
     assert.equal(await evaluateOnPage(page, "document.querySelectorAll('.setting-help').length"), 3);
     assert.equal(
       await evaluateOnPage(
@@ -113,5 +114,65 @@ export async function checkSettingsCleanupBrowser(page: HeadlessPage, previewFil
   }
   console.log(
     "  ✓ Settings cleanup: left alignment, removed controls, Bike fault/empty states and download with recording off, both themes"
+  );
+}
+
+export async function checkBikeSetupStatus(page: HeadlessPage): Promise<void> {
+  assert.deepEqual(
+    await bikeSetupStatuses(page),
+    [
+      {
+        owner: "Radiator fan installed",
+        text: "Active: Driver ready; no rotation sensor",
+        inside: true,
+        oneLine: true,
+      },
+    ],
+    "Readiness belongs inside its own card; the coolant Off choice is already shown there."
+  );
+  await evaluateOnPage(
+    page,
+    "(()=>{const client=ridingPreview('lib/settings.js');window.bikeStatusBaseline=client.settings.rawVal;const current=client.settings.rawVal;client.acceptSettings({...current,active:{...current.active,radiatorFanEnabled:false},readiness:{...current.readiness,fan:'Off'}});})()"
+  );
+  await waitOnPage(
+    page,
+    "[...document.querySelector('h2').parentElement.querySelectorAll('[role=status]')].every(node=>!node.textContent)",
+    "fan Off readback"
+  );
+  assert.deepEqual(await bikeSetupStatuses(page), [], "A fan Off status must not repeat its active choice.");
+  await evaluateOnPage(
+    page,
+    "(()=>{const client=ridingPreview('lib/settings.js');const current=window.bikeStatusBaseline;client.acceptSettings({...current,active:{...current.active,coolantProbesEnabled:true},readiness:{...current.readiness,coolant:'Unavailable',fan:'Driver ready — rotation is not measured'}});})()"
+  );
+  await waitOnPage(
+    page,
+    "document.querySelector('.settings-page')?.innerText.includes('Active: Unavailable')",
+    "distinct coolant diagnostics"
+  );
+  assert.deepEqual(
+    await bikeSetupStatuses(page),
+    [
+      { owner: "Coolant probes", text: "Active: Unavailable", inside: true, oneLine: true },
+      {
+        owner: "Radiator fan installed",
+        text: "Active: Driver ready — rotation is not measured",
+        inside: true,
+        oneLine: true,
+      },
+    ],
+    "Distinct probe and fan diagnostics stay visible inside their owning cards."
+  );
+  await evaluateOnPage(page, "ridingPreview('lib/settings.js').acceptSettings(window.bikeStatusBaseline)");
+  await waitOnPage(
+    page,
+    "document.querySelector('.settings-page')?.innerText.includes('Active: Driver ready; no rotation sensor')",
+    "restored Bike setup status"
+  );
+}
+
+async function bikeSetupStatuses(page: HeadlessPage) {
+  return evaluateOnPage(
+    page,
+    "[...document.querySelector('h2').parentElement.querySelectorAll('[role=status]')].filter(node=>node.textContent).map(node=>{const card=node.closest('.settings-card');const bounds=node.getBoundingClientRect();const parent=card?.getBoundingClientRect();return {owner:card?.querySelector('h3')?.textContent??null,text:node.textContent,inside:!!parent&&bounds.left>=parent.left&&bounds.right<=parent.right&&bounds.top>=parent.top&&bounds.bottom<=parent.bottom,oneLine:bounds.height<=parseFloat(getComputedStyle(node).lineHeight)+1};})"
   );
 }

@@ -39,8 +39,9 @@ export function CompactButton(text, action) {
   );
 }
 
-/** @param {"coolantProbesEnabled" | "radiatorFanEnabled" | "customBmsConfigurationFlashed" | "automaticDcChargingEnabled"} key @param {string} title @param {string} help */
-export function BooleanSetting(key, title, help) {
+/** @param {"coolantProbesEnabled" | "radiatorFanEnabled" | "customBmsConfigurationFlashed" | "automaticDcChargingEnabled"} key @param {string} title @param {string} help
+ * @param {...import("../vendor/van-1.6.1.js").ChildDom} children */
+export function BooleanSetting(key, title, help, ...children) {
   const draft = settingDraft(key, settings.rawVal ? String(settings.rawVal.saved[key]) : "");
   return SettingsCard(
     title,
@@ -78,6 +79,7 @@ export function BooleanSetting(key, title, help) {
       })
     ),
     PendingLabel(key),
+    ...children,
     SaveResult(key)
   );
 }
