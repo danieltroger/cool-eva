@@ -6,6 +6,8 @@ Current feedback uses the vehicle's request (`fast_dc_target_a` for DC, `charge_
 
 Stop shows Waiting for bike after a successful send: transmission is not completed stopping. Only telemetry can establish that the charge ended; existing session/navigation rules still own that edge. A failed or interrupted send stays uncertain. Saved-limit Set still includes write/readback, and only a matching fresh setting can become Bike confirmed. Zero keeps explicit remove-limit confirmation. Automatic reduction offers Switch off or Resume, including the rider-override case, with its detailed controller reason in the status tooltip. Its existing GET wake-ups, sequencing guard and endpoint-driven target remain in force.
 
+Failed opening reads show “Read failed” with a short visible reason. Known Stop and saved-limit refusals show “Not sent” with their reason; a lost write response stays uncertain. Stop and saved-limit replies carry explicit delivery metadata, so a null result after a send failure cannot become a “Not sent” claim. Full server detail remains available in the status tooltip.
+
 ## Historical composition and retained findings
 
 The following text records the earlier overview/Controls division and its protocol findings. Placement, captions and verbose inline result prose below are historical; the active UI is described above.

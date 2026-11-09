@@ -396,6 +396,10 @@ const CHECKS: SelfCheck[] = [
       "spike and falls back to the newest reading when the window is thin, which on AC it legitimately often is",
   },
   {
+    script: "scripts/check-charge-failure.ts",
+    covers: "visible Charge read/refusal reasons and uncertain delivery after a lost write response",
+  },
+  {
     script: "scripts/check-charge-page.ts",
     covers:
       "single Charge route, legacy detail aliases, live input defaults, draft preservation, no-op suppression and bounded whole-number requests",

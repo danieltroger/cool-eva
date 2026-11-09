@@ -103,6 +103,14 @@ export async function checkSocEntryBrowser(page: HeadlessPage, file: string) {
     await evaluateOnPage(page, "window.releaseChargeStatus(true)");
     await evaluateOnPage(page, FRAME);
     assert.equal(await reads(page), 0, "Leaving Charge cancels the delayed opening read.");
+
+    await openPreview(page, file, "#charge", `soc-refused-${theme}`, "&charge-scene=warm&soc-reply=refused");
+    await readCompleted(page);
+    assert.equal(
+      await evaluateOnPage(page, "document.querySelector('[data-limit-status]').textContent"),
+      "Read failed: bike busy",
+      "An opening-read refusal has a visible reason and never claims uncertain write delivery."
+    );
   }
   console.log(
     "  ✓ SOC reads once per route entry after real permission, with no reply/heartbeat/permission loop or Read button"

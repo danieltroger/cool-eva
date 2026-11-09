@@ -762,7 +762,7 @@ async function perform(context: WriteContext, request: ServiceWriteRequest): Pro
     return {
       ok: false,
       reason: err instanceof Error ? err.message : String(err),
-      ...(request.kind === "charge-current" ? { mayHaveSent: true } : {}),
+      ...(["charge-current", "charge-stop", "charge-soc-limit"].includes(request.kind) ? { mayHaveSent: true } : {}),
     };
   } finally {
     if (watchdog) {
@@ -1342,7 +1342,7 @@ async function performChargeStop(context: WriteContext, channel: RawChannel): Pr
         : outcome.reason,
   });
   if (outcome.status !== "sent") {
-    return { ok: false, reason: outcome.reason };
+    return { ok: false, reason: outcome.reason, mayHaveSent: true };
   }
   return {
     ok: true,

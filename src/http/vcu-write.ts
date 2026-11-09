@@ -51,6 +51,8 @@ export interface VcuWriteResponse {
   result: ServiceWriteResult | null;
   /** POST charge-current only: a pre-send refusal versus a potentially partial transmission. */
   chargeCurrentAttempt?: "not-sent" | "unknown";
+  /** Stop/charge-limit POST only: a pre-send refusal versus uncertain delivery. */
+  chargeWriteAttempt?: "not-sent" | "unknown";
   /** Why no action result is available; charge-current attempt metadata distinguishes uncertain delivery. */
   message: string | null;
 }
@@ -96,7 +98,9 @@ export async function handleVcuWriteEndpoint(
       url,
       null,
       parsed.reason,
-      url.searchParams.get("action") === "charge-current" ? "not-sent" : undefined
+      ["charge-current", "charge-stop", "charge-soc-limit"].includes(url.searchParams.get("action") ?? "")
+        ? "not-sent"
+        : undefined
     );
     return;
   }
@@ -110,7 +114,11 @@ export async function handleVcuWriteEndpoint(
       url,
       null,
       answer.reason,
-      parsed.request.kind === "charge-current" ? (answer.mayHaveSent ? "unknown" : "not-sent") : undefined
+      ["charge-current", "charge-stop", "charge-soc-limit"].includes(parsed.request.kind)
+        ? answer.mayHaveSent
+          ? "unknown"
+          : "not-sent"
+        : undefined
     );
     return;
   }
@@ -380,9 +388,9 @@ async function respond(
   url: URL,
   result: ServiceWriteResult | null,
   message: string | null,
-  chargeCurrentAttempt?: VcuWriteResponse["chargeCurrentAttempt"]
+  chargeAttempt?: VcuWriteResponse["chargeCurrentAttempt"]
 ): Promise<void> {
-  const payload = await vcuWriteReply(options, url, result, message, chargeCurrentAttempt);
+  const payload = await vcuWriteReply(options, url, result, message, chargeAttempt);
   const body = Buffer.from(JSON.stringify(payload), "utf-8");
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
@@ -400,12 +408,16 @@ export async function vcuWriteReply(
   url: URL,
   result: ServiceWriteResult | null,
   message: string | null,
-  chargeCurrentAttempt?: VcuWriteResponse["chargeCurrentAttempt"]
+  chargeAttempt?: VcuWriteResponse["chargeCurrentAttempt"]
 ): Promise<VcuWriteResponse> {
   return {
     status: await options.runner.status(parseStatusRequest(url.searchParams)),
     result,
     message,
-    ...(chargeCurrentAttempt ? { chargeCurrentAttempt } : {}),
+    ...(chargeAttempt
+      ? url.searchParams.get("action") === "charge-current"
+        ? { chargeCurrentAttempt: chargeAttempt }
+        : { chargeWriteAttempt: chargeAttempt }
+      : {}),
   };
 }

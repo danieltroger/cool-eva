@@ -12,6 +12,7 @@ import {
   writesEnabled,
 } from "../lib/charge-write.js";
 import { request } from "../lib/transport.js";
+import { chargeFailureText } from "../lib/charge-failure.js";
 
 /** Stop remains a confirmed CAN write; transport constraints: docs/charge-controls.md. */
 export function ChargeStopControl() {
@@ -44,9 +45,7 @@ const busy = van.state(false);
 /** True only while the command's own POST is in flight, so "Sending…" is not shown for a status refresh. */
 const sending = van.state(false);
 const message = van.state("");
-const lastRefused = van.state(false);
-/** Whether the last stop landed on the bus (an event frame — not a confirmation it completed). */
-const lastSent = van.state(/** @type {boolean | null} */ (null));
+const lastResponse = van.state(/** @type {VcuWriteResponse | null} */ (null));
 
 // Clear the outcome when the charge ends — a fresh session starts with a blank button.
 onChargeSessionEnd(forgetStop);
@@ -90,13 +89,13 @@ function Outcome() {
       "data-stop-result": "",
       role: "status",
       title: () => message.val,
-      style: () => `color:${lastRefused.val ? WARN : MUTED}`,
+      style: () => `color:${lastResponse.val?.chargeWriteAttempt === "not-sent" ? WARN : MUTED}`,
     },
     () => {
       if (sending.val || busy.val) return "Waiting for bike…";
       if (!message.val) return "";
-      if (lastSent.val === true) return "Waiting for bike…";
-      return lastRefused.val ? "Not sent" : "Delivery uncertain";
+      if (lastResponse.val?.result?.succeeded === true) return "Waiting for bike…";
+      return chargeFailureText("write", lastResponse.val, message.val);
     }
   );
 }
@@ -114,8 +113,7 @@ function commandable() {
 function forgetStop() {
   armed.val = "";
   message.val = "";
-  lastSent.val = null;
-  lastRefused.val = false;
+  lastResponse.val = null;
 }
 
 /**
@@ -166,6 +164,5 @@ async function performChargeStop() {
     busy.val = false;
   }
   armed.val = "";
-  lastSent.val = payload?.result?.succeeded ?? null;
-  lastRefused.val = payload !== null && payload.result === undefined;
+  lastResponse.val = payload;
 }

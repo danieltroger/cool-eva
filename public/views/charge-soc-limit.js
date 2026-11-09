@@ -17,6 +17,7 @@ import {
 } from "../lib/charge-write.js";
 import { request } from "../lib/transport.js";
 import { chargeEdit } from "../lib/charge-edit.js";
+import { chargeFailureText } from "../lib/charge-failure.js";
 
 /**
  * The control, or an empty node when it must not be offered.
@@ -50,6 +51,7 @@ const busy = van.state(false);
  * @type {import("../vendor/van-1.6.1.js").State<"" | "write" | "read">} */
 const sending = van.state("");
 const message = van.state("");
+const failure = van.state("");
 /** Whether the last command was accepted AND read back. Null when nothing has been tried. */
 const lastResult = van.state(/** @type {boolean | null} */ (null));
 
@@ -175,7 +177,7 @@ function Outcome() {
         if (actual === null || actual !== attemptedPercent.val) return "Waiting for bike…";
         return actual === 0 ? "Bike confirmed no limit" : `Bike confirmed ${actual} %`;
       }
-      if (message.val) return "Delivery uncertain";
+      if (message.val) return failure.val;
       if (wanted.val !== null) {
         if (edit().value === null) return `Use 0–${MAX_PCT} %`;
         if (edit().changed) return "Not sent";
@@ -259,6 +261,7 @@ async function post(query, kind) {
   }
   armed.val = "";
   lastResult.val = kind === "write" && payload?.result ? payload.result.succeeded : null;
+  failure.val = payload?.result?.succeeded ? "" : chargeFailureText(kind, payload, message.val);
 }
 
 van.derive(() => {
