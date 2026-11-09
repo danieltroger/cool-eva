@@ -10,6 +10,7 @@ if (ridingFixture.get("fixture") === "all-installed") {
     __TABLES["/freeze-frames"].reading = null;
   }
   JOURNAL.length = 0;
+  WRITE_STATUS.lastServiceStamp = null;
   SETTINGS.saved.coolantProbesEnabled = true;
   SETTINGS.active.coolantProbesEnabled = true;
   SETTINGS.saved.radiatorFanEnabled = true;

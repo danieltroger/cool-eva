@@ -6,7 +6,7 @@ import { hexWord } from "./format.js";
 
 /** @typedef {import("../../src/vcu/service-actions.ts").ServiceStamp} ServiceStamp */
 
-/** @param {ServiceStamp|null} stamp */
+/** @param {Pick<ServiceStamp, "dateIso" | "implausible">|null} stamp */
 export function formatServiceStampDate(stamp) {
   if (!stamp) return "—";
   if (stamp.implausible || !stamp.dateIso || !Number.isFinite(Date.parse(stamp.dateIso))) return "fault";

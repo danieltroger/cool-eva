@@ -4,8 +4,7 @@ import van from "../vendor/van-1.6.1.js";
 import { groupedReading } from "./format.js";
 import { request } from "./transport.js";
 
-// The bike's lifetime battery statistics, fetched once when the All tab is first
-// shown. Not a signal: nothing broadcasts these, so there is no socket to bind to and
+// The bike's stored lifetime battery statistics. Not a signal: nothing broadcasts these, so there is no socket to bind to and
 // no staleness to compute — just a file the Pi read off the bike at some point, with
 // the age of that reading shown next to it.
 //
@@ -26,9 +25,8 @@ let fetched = false;
 /**
  * Fetches once per page load, then whenever asked again.
  *
- * Once, because the file only changes when somebody reads the bike — which needs the
- * service stopped, and therefore this page gone. `force` is for the day that stops
- * being true (an in-service read) and for a manual refresh.
+ * Bike forces a fetch on entry and after an in-service read. The old value stays
+ * visible during the request, including when the Pi cannot be reached.
  *
  * @param {boolean} [force]
  */

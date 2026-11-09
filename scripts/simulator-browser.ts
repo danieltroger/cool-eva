@@ -261,11 +261,11 @@ async function checkActions(page: HeadlessPage, theme: string, shots?: string): 
   await refused(
     page,
     "/lifetime-read",
-    () => button(page, "Read bike history", true),
+    () => button(page, "Bike history"),
     "lifetime-read",
     theme,
     shots,
-    "—"
+    "Read failed"
   );
   await evaluateOnPage(page, `simDestination.openRidingView('charge')`);
   await evaluateOnPage(

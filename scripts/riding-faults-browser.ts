@@ -308,7 +308,11 @@ export async function checkFaultNavigation(page: HeadlessPage, file: string) {
   await evaluateOnPage(page, "history.forward()");
   await waitOnPage(page, "!!document.querySelector('.ride-view')", "Forward to Ride");
   await evaluateOnPage(page, "ridingPreview('lib/destination.js').openDestination('bike-information')");
-  await waitOnPage(page, "document.querySelector('h2')?.textContent==='This ride'", "Bike information");
+  await waitOnPage(
+    page,
+    "document.querySelector('[data-this-ride] h3')?.textContent==='This ride'",
+    "Bike information"
+  );
   assert.equal(
     await evaluateOnPage(page, "document.querySelector('.settings-page a[href=\"#faults\"]')"),
     null,

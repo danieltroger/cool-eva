@@ -49,6 +49,12 @@ function serviceWrite(query) {
   };
 
   if (action === "read-service-stamp") {
+    WRITE_STATUS.lastServiceStamp = {
+      readAt: Date.now(),
+      dateIso: "2000-01-01T00:00:00.000Z",
+      implausible: "reads zero — no service point has ever been set on this bike, or A8 answered with an empty cell",
+      confirmed: true,
+    };
     // ⚠️ The fixture is what the bike REALLY answered on 2026-09-08, message, journal
     // and raw words together. A plausible-looking 2024 date beside a zero stamp would
     // make the preview disagree with itself in the one screenshot this exists for.
@@ -82,6 +88,12 @@ function serviceWrite(query) {
     };
   }
   if (action === "set-service-point") {
+    WRITE_STATUS.lastServiceStamp = {
+      readAt: Date.now(),
+      dateIso: "2026-09-08T00:00:00.000Z",
+      implausible: null,
+      confirmed: true,
+    };
     // Over the zero stamp the read above reports — the same fixture, one action later.
     record({
       action: "set-service-point",

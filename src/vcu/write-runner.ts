@@ -18,6 +18,7 @@ import type { LatestSweep } from "./snapshot-store.ts";
 import type { TableTypeReport, VcuParameterSnapshot } from "./snapshot.ts";
 import { evaluateTableGate, type TableGateVerdict } from "./table-gate.ts";
 import { appendAuditRecord, recentAuditRecords, type AuditAction, type AuditRecord } from "./write-audit.ts";
+import { storedServiceStamp, type StoredServiceStamp } from "./stored-service-stamp.ts";
 import type { ChargeMode } from "../can/charge-command.ts";
 import {
   readServiceStamp,
@@ -257,6 +258,8 @@ export interface VcuWriteStatus {
   detail: WriteTargetSummary | null;
   /** The last few journal lines, newest first. */
   recent: AuditRecord[];
+  /** The last stored stamp, including readings older than the recent journal excerpt. */
+  lastServiceStamp: StoredServiceStamp | null;
   /** What has the bus, or null. */
   busHeldBy: string | null;
 }
@@ -432,6 +435,7 @@ async function status(context: WriteContext, request: WriteStatusRequest): Promi
   // its parameter table, and what it holds for each writable parameter. Two reads could
   // straddle a sweep finishing and describe two different files on the same screen.
   const sweep = await context.latestSweep();
+  const journal = await recentAuditRecords(context.directory, Infinity);
   // ⚠️ ONE summariseTarget, for the target the caller named — not 269. That is the whole of
   // #107: the page needs a name per entry to fill a dropdown and everything else for the one
   // entry it is on, and sending all of it made the arming gesture a 250 KiB round trip. It
@@ -447,7 +451,8 @@ async function status(context: WriteContext, request: WriteStatusRequest): Promi
     clock: readPiClock(),
     targets: request.includeList ? writeTargets().map(listTarget) : null,
     detail: named === null ? null : summariseTarget(named, sweep?.snapshot ?? null),
-    recent: await recentAuditRecords(context.directory, RECENT_AUDIT_LINES),
+    recent: journal.slice(0, RECENT_AUDIT_LINES),
+    lastServiceStamp: storedServiceStamp(journal, Date.now()),
     busHeldBy: busHeldBy(),
   };
 }

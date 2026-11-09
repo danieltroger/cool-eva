@@ -1,4 +1,5 @@
 import { checkServiceBrowser, assertServiceLayout } from "./service-browser.ts";
+import { checkBikeReadingsBrowser } from "./bike-readings-browser.ts";
 import { assertFaultLayout } from "./riding-faults-browser.ts";
 import { assertChargeLayout } from "./charge-page-layout.ts";
 import { checkChargeReviewCases } from "./riding-charge-review-browser.ts";
@@ -143,6 +144,7 @@ export async function checkRidingBrowser(page: HeadlessPage, previewFile: string
   await checkChargeActions(page, previewFile);
   await checkSocEntryBrowser(page, previewFile);
   await checkServiceBrowser(page, previewFile);
+  await checkBikeReadingsBrowser(page, previewFile);
   await checkCoolingFailures(page, previewFile);
   await checkCoolingFan(page, previewFile, assertFixedLayout);
   for (const theme of ["dark", "light"]) {

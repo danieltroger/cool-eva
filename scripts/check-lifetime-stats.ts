@@ -23,6 +23,7 @@ import { summariseLifetimeStatistics, type LifetimeRow } from "../src/diagnostic
 import { HOW_TO_READ, HOW_TO_READ_WITH_SERVICE_STOPPED } from "../src/vcu/lifetime-store.ts";
 import { parseFreezeFrameArguments } from "./freeze-frame-args.ts";
 import { parseHexFrame } from "./captured-dtc-transfer.ts";
+import { bikeReadCaption } from "../public/lib/bike-readings.js";
 import { bandFor } from "../src/diagnostics/lifetime-bands.ts";
 import { boundsFor } from "../public/lib/bounds.js";
 
@@ -524,11 +525,10 @@ console.log(`  headline: "${HOW_TO_READ}"`);
 // ⚠️ And the control it names must exist. HOW_TO_READ quotes the Bike page's button
 // verbatim; rename that button and a never-read Pi's only instruction points at a control
 // that is not there — the --components 51,52 failure again, moved to the in-app half.
-const lifetimeReadView = await readFile(new URL("../public/views/lifetime-read.js", import.meta.url), "utf-8");
 const quotedLabel = HOW_TO_READ.match(/"([^"]+)"/)?.[1] ?? "";
 check(
-  quotedLabel !== "" && lifetimeReadView.includes(quotedLabel),
-  `HOW_TO_READ quotes "${quotedLabel}", which public/views/lifetime-read.js no longer renders`
+  quotedLabel !== "" && quotedLabel === bikeReadCaption({ enabled: true, gate: { safe: true } }, "history"),
+  `HOW_TO_READ quotes "${quotedLabel}", which the Bike history control no longer renders`
 );
 console.log(`  and "${quotedLabel}" is a button the Bike page renders`);
 

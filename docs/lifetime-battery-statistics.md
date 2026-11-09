@@ -213,3 +213,11 @@ Named up front as the thing to suspect if it is bad: `better-sqlite3` is this re
 Two writes are **refused**: one where nothing answered, and one carrying fewer replies than the file already holds. Taking a reading needs the service stopped and `can0` up ACTIVE, so "the bike was asleep" is the likeliest run of all, and letting it overwrite the file would destroy payloads that cost a trip to the garage. ⚠️ **Every run is archived anyway**, refused or not, as `lifetime-<timestamp>.json` — refusing the overwrite without keeping the bytes is how #160 lost a set of them.
 
 A reading where only one component answered is stored and labelled `complete: false` rather than discarded — `src/vcu/snapshot-store.ts` rule 3, for the same reason.
+
+## Bike read control
+
+Bike fetches `/lifetime-stats` again on entry and after a read, retaining the previous stored reading during the request or a failure. Only a tap on **Read again** posts `/lifetime-read`; opening Bike never does. The read still uses the runner's existing parked gate, bus lease and watchdog.
+
+The former control armed like a write because the in-process read pauses the 2 Hz OBD poller: speed, rpm and temperatures are not refreshed while the two component exchanges run. That operational cost remains, but a read no longer requires a confirmation. The older stopped-service instructions describe the scratch path; the in-service endpoint stores its replies without stopping the service.
+
+The response keeps both the measured flow-control/event-loop timing and the storage outcome. Refused storage can follow a real measurement, so neither replaces the other. A lost HTTP reply can also follow a completed read and stored result; it cannot prove nothing ran. The control reports the failed refresh and reloads the stored file rather than clearing the previous reading.
