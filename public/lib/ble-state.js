@@ -89,7 +89,13 @@ const MAX_INBOUND_MESSAGE_BYTES = 256 * 1024;
  * @property {(type: "gattserverdisconnected", listener: () => void) => void} addEventListener
  */
 
-/** @typedef {{ requestDevice: (options: { filters: { services: string[] }[] }) => Promise<BleDevice> }} WebBluetooth */
+/**
+ * `getDevices` is optional: it is not in every Web Bluetooth implementation, and the iOS app's
+ * shim does not provide it.
+ * @typedef {object} WebBluetooth
+ * @property {(options: { filters: { services: string[] }[] }) => Promise<BleDevice>} requestDevice
+ * @property {(() => Promise<BleDevice[]>) | undefined} [getDevices]
+ */
 
 /**
  * @typedef {object} BleEnvironment
