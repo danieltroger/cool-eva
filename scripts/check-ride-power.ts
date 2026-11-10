@@ -25,6 +25,13 @@ const normal = ridePowerState(read, fresh, false);
 assert.equal(normal.drive.kilowatts, 71.4);
 assert.equal(normal.regen.kilowatts, 18.7);
 assert.equal(normal.value, -48.3);
+const vcuLimited = ridePowerState(
+  key => (key === "go" ? 1 : key === "current_max_out_a" ? 25 : read(key)),
+  fresh,
+  false
+);
+assert.equal(vcuLimited.drive.kilowatts, 8.5, "GO uses the applied VCU ceiling.");
+
 assert.equal(normal.status, "");
 assert.ok(Math.abs(powerPosition(0) * 372 - 80.67469879518073) < 1e-9);
 assert.equal(powerPosition(36), 0);

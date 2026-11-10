@@ -521,6 +521,8 @@ Caveat worth keeping in mind when reading it: R covers cabling and contactors as
 
 ### The under-voltage dwell — `lib/dwell.js`
 
+**Retired 2026-11.** Range uses the VCU propulsion thresholds and has no countdown; no VCU cell-voltage timer is exposed. The implementation below is preserved as history. See [Range and Cells](range-and-cells.md).
+
 The BMS does not cut discharge the moment a cell dips below the cut-off — its `DischargeModeUnderVoltageCutOffTimer` is 60 s, and the minimum cell has to stay under for that whole minute before the contactors open. That single fact is the difference between a useful display and one that panics: a hard pull drags the weakest cell under the floor routinely, and a naive alarm would fire on every overtake.
 
 So instead of a threshold light, this tracks the timer itself — filling while under, draining while above — and the view shows how much of the minute is used. "You have 40 seconds of this left" is something a rider can act on.

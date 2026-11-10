@@ -30,6 +30,10 @@ export async function openService(isOpen) {
 
 const parameterRead = van.state(/** @type {VcuReadResponse|null} */ (null));
 
+export function loadStoredParameters() {
+  return Promise.all([refreshCatalogue(), loadParameterSnapshot()]);
+}
+
 let statusRequest = 0;
 let pollTimer = /** @type {ReturnType<typeof setTimeout>|null} */ (null);
 let parameterReadRequest = 0;

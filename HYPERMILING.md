@@ -36,6 +36,8 @@ This matters more than it sounds: at 100 A with a 100 mΩ pack that's ~123 mV pe
 
 ### b) Show the dwell, not a binary alarm
 
+Current Range has no cut-off timer; [its VCU limits and current display](docs/range-and-cells.md) supersede this historical proposal.
+
 `DischargeModeUnderVoltageCutOffTimer` is **60 s**. The minimum cell must stay below the threshold for a full minute before the contactors open. A dip during a hard pull is not a cut-out. Show a dwell bar that fills while under threshold and drains when back above — that turns a scary flicker into actionable information ("you have 45 s of this left").
 
 ### c) `allowed_discharge_a` is the earlier and better warning
@@ -83,7 +85,7 @@ This also ties into the watercooling project: that 1 kW is exactly what the loop
 
 **Primary (always visible)**
 
-1. Min-cell headroom above cut-off — instantaneous and sag-compensated, with the dwell bar
+1. Min-cell headroom above cut-off — instantaneous and sag-compensated, with the dwell bar (historical; see the [current VCU-based display](docs/range-and-cells.md))
 2. Allowed discharge current vs the 400 A ceiling — the "am I limited" bar
 3. Rolling Wh/km with the averaging horizon stated
 4. Remaining energy in Wh, and range at the current rolling rate

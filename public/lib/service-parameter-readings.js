@@ -34,6 +34,12 @@ export function currentParameterReading(parameter, sampled = false) {
     : null;
 }
 
+/** @param {string} name */
+export function parameterReadingNamed(name) {
+  const parameter = serviceCatalogue.val?.parameters.find(parameter => parameter.name === name);
+  return parameter ? currentParameterReading(parameter) : null;
+}
+
 /** @param {ServiceParameter} parameter */
 export async function readServiceParameter(parameter) {
   const table = serviceCatalogue.rawVal?.tableType;

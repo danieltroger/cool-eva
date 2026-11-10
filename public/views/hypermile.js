@@ -3,9 +3,25 @@
 import van from "../vendor/van-1.6.1.js";
 import { chartTick, peek } from "../lib/store.js";
 import { readingStatus, worstStatus, statusWord, freshValue } from "../lib/reading-status.js";
-import { REGEN_CEILING_A, rangeDistanceKey, rangeEnergyKey } from "../lib/range-readings.js";
-import { headroomMv, limitFraction, remainingWh, rollingConsumption, rollingRangeKm } from "../lib/derive.js";
-import { dwellSeconds, secondsRemaining } from "../lib/dwell.js";
+import {
+  REGEN_CEILING_A,
+  HYPERMILE_HEADROOM_MV,
+  driveKey,
+  energyEmpty,
+  compensatedThresholds,
+  rangeDistanceKey,
+  rangeEnergyKey,
+} from "../lib/range-readings.js";
+import {
+  loadStoredParameters,
+  serviceOperation,
+  readServiceParameter,
+  currentParameterReading,
+  serviceCatalogue,
+} from "../lib/service-client.js";
+import { parameterReadingNamed } from "../lib/service-parameter-readings.js";
+import { limitKw } from "../lib/power-limits.js";
+import { limitFraction, remainingWh, rollingConsumption, rollingRangeKm } from "../lib/derive.js";
 import { monotonicNow } from "../lib/clock.js";
 import * as colors from "../lib/colors.js";
 import * as units from "../lib/units.js";
@@ -14,92 +30,112 @@ const { div, span } = van.tags;
 const DISCHARGE_CEILING_A = 400;
 
 export function HypermileView() {
+  void loadVcuLimits();
   return div(
     { class: "view riding-view range-view", "data-view": "hypermile" },
     MarginCard(),
-    TimerCard(),
     div(
       { class: "range-pair" },
-      AllowanceCard("Drive allowed", "allowed_discharge_a", DISCHARGE_CEILING_A),
-      AllowanceCard("Regen available", "allowed_regen_a", REGEN_CEILING_A)
+      AllowanceCard("Drive allowed", driveKey, DISCHARGE_CEILING_A),
+      AllowanceCard("Regen available", () => "allowed_regen_a", REGEN_CEILING_A)
     ),
     ConsumptionCard(),
     div({ class: "range-pair range-bottom" }, EnergyCard(), EstimatedRangeCard())
   );
 }
 
+async function loadVcuLimits() {
+  await loadStoredParameters();
+  await serviceOperation(async () => {
+    for (const name of ["LIMP_MIN_CELL", "CELL_UNDERVOLTAGE"]) {
+      const parameter = serviceCatalogue.rawVal?.parameters.find(parameter => parameter.name === name);
+      if (!parameter || currentParameterReading(parameter, true)) continue;
+      if (!(await readServiceParameter(parameter))) return;
+    }
+  });
+}
+
 function MarginCard() {
-  const keys = ["cell_min_mv", "cell_cutoff_mv"];
-  return div(
-    { class: "tile range-margin" },
-    div({ class: "label" }, "Weakest cell above cut-off"),
-    div(
-      {
-        class: "range-margin-number",
-        style: () =>
-          `color:${worstStatus(keys) === "fault" ? colors.BAD : colors.headroom(worstStatus(keys) === "fresh" ? headroomMv() : null)}`,
-      },
-      span({ "data-reading": "margin" }, () =>
-        worstStatus(keys) === "fresh" ? String(Math.round(headroomMv() ?? 0)) : statusWord(worstStatus(keys))
+  return div({ class: "tile range-margin" }, div({ class: "label" }, "Weakest cell"), () => {
+    chartTick.val;
+    const minimum = freshValue("cell_min_mv", true);
+    const limpMv = parameterReadingNamed("LIMP_MIN_CELL")?.value;
+    const stopMv = parameterReadingNamed("CELL_UNDERVOLTAGE")?.value;
+    const row = { class: "range-margin-number" };
+    if (minimum === null)
+      return div(
+        row,
+        span(
+          {
+            "data-reading": "margin",
+            style: `color:${readingStatus("cell_min_mv", true) === "fault" ? colors.BAD : colors.MUTED}`,
+          },
+          statusWord(readingStatus("cell_min_mv", true))
+        )
+      );
+    if (limpMv === undefined || stopMv === undefined)
+      return div(row, span({ "data-reading": "margin" }, "VCU limits not read"));
+    const { limp, stop } = compensatedThresholds(
+      limpMv,
+      stopMv,
+      freshValue("pack_a", true),
+      freshValue("limp_pack_res", true)
+    );
+    return div(
+      row,
+      span(minimum > limp ? "Limp in" : "Limp"),
+      minimum > limp
+        ? [
+            span(
+              { "data-reading": "limp-margin", style: `color:${colors.headroom(minimum - limp)}` },
+              String(Math.round(minimum - limp))
+            ),
+            span("mV"),
+          ]
+        : [],
+      span(minimum < stop ? "·" : "· stop in"),
+      span(
+        { "data-reading": "margin", style: `color:${colors.headroom(minimum - stop)}` },
+        String(Math.round(Math.abs(minimum - stop)))
       ),
-      span({ class: "hero-unit" }, () => (worstStatus(keys) === "fresh" ? "mV" : ""))
-    )
-  );
+      span(minimum < stop ? "mV under stop" : "mV")
+    );
+  });
 }
 
-function TimerCard() {
-  return div(
-    { class: "tile layout-card layout-between range-timer" },
-    div({ class: "label" }, "Estimated cut-off timer"),
-    div(
-      {
-        class: "value",
-        "data-reading": "dwell",
-        style: () => `color:${worstStatus(["cell_min_mv", "cell_cutoff_mv"]) === "fault" ? colors.BAD : colors.CALM}`,
-      },
-      () => {
-        chartTick.val;
-        const status = worstStatus(["cell_min_mv", "cell_cutoff_mv"]);
-        if (status !== "fresh") return statusWord(status);
-        return dwellSeconds() < 0.5 && (freshValue("cell_min_mv") ?? 0) >= (freshValue("cell_cutoff_mv") ?? 0)
-          ? "clear"
-          : `${Math.round(secondsRemaining())} s`;
-      }
-    )
-  );
-}
-
-/** @param {string} label @param {"allowed_discharge_a"|"allowed_regen_a"} key @param {number} ceiling */
-function AllowanceCard(label, key, ceiling) {
+/** @param {string} label @param {()=>"allowed_discharge_a"|"current_max_out_a"|"allowed_regen_a"} signalKey @param {number} ceiling */
+function AllowanceCard(label, signalKey, ceiling) {
+  const identifier = label === "Drive allowed" ? "drive-allowed" : "allowed_regen_a";
   return div(
     { class: "tile range-allowance" },
     div({ class: "label" }, label),
     div(
-      { class: "value", style: () => `color:${allowanceInk(key, ceiling)}` },
-      span({ "data-reading": key }, () =>
-        freshValue(key) === null ? statusWord(readingStatus(key)) : String(Math.round(freshValue(key) ?? 0))
+      { class: "value", style: () => `color:${allowanceInk(signalKey(), ceiling)}` },
+      span({ "data-reading": identifier }, () =>
+        freshValue(signalKey()) === null
+          ? statusWord(readingStatus(signalKey()))
+          : String(Math.round(freshValue(signalKey()) ?? 0))
       ),
-      span({ class: "unit" }, () => (freshValue(key) === null ? "" : "A"))
+      span({ class: "unit" }, () => (freshValue(signalKey()) === null ? "" : "A"))
     ),
-    div({ class: "range-share", "data-share": key }, () =>
-      freshValue(key) === null
-        ? `of ${ceiling} A · ${readingStatus(key) === "missing" ? "unknown" : readingStatus(key)}`
-        : `${Math.round(((freshValue(key) ?? 0) / ceiling) * 100)}% of ${ceiling} A`
-    ),
+    div({ class: "range-share", "data-share": identifier }, () => {
+      const kilowatts = limitKw(freshValue(signalKey()), freshValue("pack_v"));
+      return kilowatts === null ? "— kW" : `≈ ${kilowatts.toFixed(1)} kW`;
+    }),
     () => {
-      const status = readingStatus(key);
-      const fraction = status === "fresh" ? limitFraction(key, ceiling) : null;
-      const color = allowanceInk(key, ceiling);
+      const status = readingStatus(signalKey());
+      const fraction = status === "fresh" ? limitFraction(signalKey(), ceiling) : null;
+      const color = allowanceInk(signalKey(), ceiling);
       return div(
         {
           class: "range-availability",
-          "data-allowance": key,
+          "data-allowance": identifier,
           "data-state": status,
           role: "img",
           "aria-label":
             fraction === null
               ? `${label} ${status}; configured ${ceiling} A`
-              : `${label}: ${freshValue(key)} A of ${ceiling} A`,
+              : `${label}: ${freshValue(signalKey())} A of ${ceiling} A`,
         },
         fraction === null ? "" : div({ style: `width:${fraction * 100}%;height:100%;background:${color}` })
       );
@@ -151,14 +187,16 @@ function EnergyCard() {
     { class: "tile range-energy" },
     div({ class: "label" }, "Energy left"),
     div(
-      { class: "value" },
+      { class: "value", "data-alert": () => String(energyEmpty()) },
       span({ "data-reading": "energy" }, () =>
-        worstStatus([rangeEnergyKey()]) === "fresh" && remainingWh() !== null
-          ? ((remainingWh() ?? 0) / 1000).toFixed(1)
-          : statusWord(readingStatus(rangeEnergyKey()))
+        energyEmpty()
+          ? "Empty — charge now"
+          : worstStatus([rangeEnergyKey()]) === "fresh" && remainingWh() !== null
+            ? ((remainingWh() ?? 0) / 1000).toFixed(1)
+            : statusWord(readingStatus(rangeEnergyKey()))
       ),
       span({ class: "unit" }, () =>
-        worstStatus([rangeEnergyKey()]) === "fresh" && remainingWh() !== null ? "kWh" : ""
+        !energyEmpty() && worstStatus([rangeEnergyKey()]) === "fresh" && remainingWh() !== null ? "kWh" : ""
       )
     )
   );
@@ -171,20 +209,24 @@ function EstimatedRangeCard() {
     div(
       {
         class: "value",
+        "data-alert": () => String(!!rangeEstimate().alert),
         style: () => {
           chartTick.val;
           const estimate = rangeEstimate();
-          return `color:${estimate.status === "fault" ? colors.BAD : estimate.kilometres === null ? colors.MUTED : colors.CALM}`;
+          return `color:${estimate.alert || estimate.status === "fault" ? colors.BAD : estimate.kilometres === null ? colors.MUTED : colors.CALM}`;
         },
       },
       span({ "data-reading": "range-estimate" }, () => {
         chartTick.val;
         const estimate = rangeEstimate();
-        return estimate.status !== "fresh"
-          ? statusWord(estimate.status)
-          : estimate.kilometres === null
-            ? "—"
-            : String(Math.round(units.distance(estimate.kilometres)));
+        return (
+          estimate.alert ||
+          (estimate.status !== "fresh"
+            ? statusWord(estimate.status)
+            : estimate.kilometres === null
+              ? "—"
+              : String(Math.round(units.distance(estimate.kilometres))))
+        );
       }),
       span({ class: "unit" }, () => {
         chartTick.val;
@@ -195,11 +237,23 @@ function EstimatedRangeCard() {
 }
 
 function rangeEstimate() {
+  chartTick.val;
   const status = worstStatus(["pack_kw", rangeDistanceKey(), rangeEnergyKey(true)], true);
-  return { status, kilometres: status === "fresh" ? rollingRangeKm(monotonicNow(), peek) : null };
+  const minimum = freshValue("cell_min_mv", true);
+  const limpMv = parameterReadingNamed("LIMP_MIN_CELL")?.value;
+  const limp =
+    limpMv === undefined
+      ? undefined
+      : compensatedThresholds(limpMv, limpMv, freshValue("pack_a", true), freshValue("limp_pack_res", true)).limp;
+  const alert = energyEmpty(key => freshValue(key, true))
+    ? "Empty — charge now"
+    : minimum !== null && limp !== undefined && minimum - limp <= HYPERMILE_HEADROOM_MV
+      ? "Range uncertain — charge now"
+      : "";
+  return { status, alert, kilometres: !alert && status === "fresh" ? rollingRangeKm(monotonicNow(), peek) : null };
 }
 
-/** @param {"allowed_discharge_a"|"allowed_regen_a"} key @param {number} ceiling */
+/** @param {"allowed_discharge_a"|"current_max_out_a"|"allowed_regen_a"} key @param {number} ceiling */
 function allowanceInk(key, ceiling) {
   const status = readingStatus(key);
   if (status !== "fresh") return status === "fault" ? colors.BAD : colors.MUTED;

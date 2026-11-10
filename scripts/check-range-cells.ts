@@ -1,4 +1,4 @@
-import { remainingWh, rollingConsumption, rollingRangeKm } from "../public/lib/derive.js";
+import { remainingWh, rollingConsumption, rollingRangeKm, headroomMvSampled } from "../public/lib/derive.js";
 import { worstStatus } from "../public/lib/reading-status.js";
 import assert from "node:assert/strict";
 import { cellVoltageLayout, CELL_COUNT } from "../public/lib/cells.js";
@@ -6,6 +6,7 @@ import { cellSnapshot } from "../public/lib/cell-snapshot.js";
 import type { ReadingStatus } from "../public/lib/reading-status.js";
 import { apply, connection } from "../public/lib/store.js";
 import { freshValue } from "../public/lib/reading-status.js";
+import { energyEmpty, compensatedThresholds } from "../public/lib/range-readings.js";
 
 const slots = cellVoltageLayout();
 assert.equal(CELL_COUNT, 81);
@@ -123,3 +124,35 @@ assert.ok(
   sampledKeys.includes("odometer_can_km") && sampledKeys.includes("bms_remaining_energy_wh"),
   "Range sampling propagates the caller's reader through both operands."
 );
+
+for (const [soc, age, expected] of [
+  [18, 0, false],
+  [0, 30_000, false],
+  [0, 0, true],
+] as const) {
+  apply({
+    type: "patch",
+    ts: 1_000_002,
+    signals: {
+      bms_remaining_energy_wh: { value: 0, unit: "Wh", group: "battery", ts: 1_000_002 },
+      residual_energy_wh: { value: 0, unit: "Wh", group: "battery", ts: 1_000_002 },
+      soc: { value: soc, unit: "%", group: "battery", ts: 1_000_002 - age },
+    },
+  });
+  assert.equal(energyEmpty(), expected, "Empty requires two zero counters and fresh zero SOC.");
+}
+
+assert.deepEqual(compensatedThresholds(2900, 2750, -13.3, 119), { limp: 2880, stop: 2730 });
+const pull = compensatedThresholds(2900, 2750, -377, 132);
+assert.deepEqual([2988 - pull.limp, 2988 - pull.stop], [711, 853]);
+assert.deepEqual(compensatedThresholds(2900, 2750, null, 132), { limp: 2900, stop: 2750 });
+apply({
+  type: "patch",
+  ts: 1_000_003,
+  signals: Object.fromEntries(
+    Object.entries({ cell_min_mv: 2988, cell_cutoff_mv: 2900, pack_a: -377, limp_pack_res: 132 }).map(
+      ([key, value]) => [key, { value, unit: "", group: "battery", ts: 1_000_003 }]
+    )
+  ),
+});
+assert.equal(headroomMvSampled(), 711);

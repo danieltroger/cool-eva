@@ -3,6 +3,7 @@
 import { peek, valueOf } from "./store.js";
 import { packResistance } from "./pack-resistance-live.js";
 import { ringFor } from "./ring.js";
+import { compensatedThresholds } from "./range-readings.js";
 // Series count lives with everything else about the pack's cells, so the sag
 // divisor and the strip's "n of 81" cannot disagree.
 import { CELL_COUNT } from "./cells.js";
@@ -155,16 +156,6 @@ export function restingMinCellMv() {
 }
 
 /**
- * Millivolts the weakest cell has above the configured cut-off, right now. This is
- * what the BMS actually trips on, so it is the authority — the resting figure below
- * is the aid, never the other way round.
- * @returns {number | null}
- */
-export function headroomMv() {
-  return headroomMvWith(valueOf);
-}
-
-/**
  * The same, sampled rather than subscribed — for the view rules in app.js, which
  * are paced by the shared tick and must not add cell_min_mv to its dependencies.
  * @returns {number | null}
@@ -186,7 +177,7 @@ function headroomMvWith(read) {
   if (minimum == null || cutoff == null) {
     return null;
   }
-  return minimum - cutoff;
+  return minimum - compensatedThresholds(cutoff, cutoff, read("pack_a"), read("limp_pack_res")).limp;
 }
 
 /**
@@ -336,7 +327,7 @@ export function rollingRangeKm(now, read = valueOf) {
  * How hard the BMS is currently throttling you, 0–1, against its own ceiling.
  * Falls before the voltage floor is reached and also for cold, heat and low SOC,
  * which makes it the earlier and more actionable warning of the two.
- * @param {"allowed_discharge_a" | "allowed_regen_a"} key
+ * @param {"allowed_discharge_a" | "current_max_out_a" | "allowed_regen_a"} key
  * @param {number} ceiling
  * @returns {number | null}
  */

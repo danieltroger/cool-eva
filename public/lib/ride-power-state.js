@@ -1,6 +1,7 @@
 // @ts-check
 import { worstStatus, statusWord } from "./reading-status.js";
 import { POWER_SCALE_KW, limitKw } from "./power-limits.js";
+import { driveKey } from "./range-readings.js";
 
 /** @typedef {import("./reading-status.js").ReadingStatus} ReadingStatus */
 /** @typedef {{state:ReadingStatus,kilowatts:number|null}} PowerLimit */
@@ -10,7 +11,8 @@ import { POWER_SCALE_KW, limitKw } from "./power-limits.js";
 export function ridePowerState(read, status, charging) {
   const powerStatus = status("pack_kw");
   const value = powerStatus === "fresh" ? read("pack_kw") : null;
-  const drive = limitState("allowed_discharge_a", read, status);
+  const driveSignal = driveKey(key => (status(key) === "fresh" ? read(key) : null));
+  const drive = limitState(driveSignal, read, status);
   const regen = limitState("allowed_regen_a", read, status);
   const used = value !== null && value < 0 ? drive : regen;
   const excess = !charging && value !== null && used.kilowatts !== null && Math.abs(value) > used.kilowatts;
