@@ -50,7 +50,7 @@ async function loadVcuLimits() {
     for (const name of ["LIMP_MIN_CELL", "CELL_UNDERVOLTAGE"]) {
       const parameter = serviceCatalogue.rawVal?.parameters.find(parameter => parameter.name === name);
       if (!parameter || currentParameterReading(parameter, true)) continue;
-      if (!(await readServiceParameter(parameter))) return;
+      if (!(await readServiceParameter(parameter, false))) return;
     }
   });
 }
@@ -62,7 +62,7 @@ function MarginCard() {
     const limpMv = parameterReadingNamed("LIMP_MIN_CELL")?.value;
     const stopMv = parameterReadingNamed("CELL_UNDERVOLTAGE")?.value;
     const row = { class: "range-margin-number" };
-    if (minimum === null)
+    if (minimum === null) {
       return div(
         row,
         span(
@@ -73,8 +73,10 @@ function MarginCard() {
           statusWord(readingStatus("cell_min_mv", true))
         )
       );
-    if (limpMv === undefined || stopMv === undefined)
-      return div(row, span({ "data-reading": "margin" }, "VCU limits not read"));
+    }
+    if (limpMv === undefined || stopMv === undefined) {
+      return div({ ...row, "data-reading": "margin" }, "VCU limits not read");
+    }
     const { limp, stop } = compensatedThresholds(
       limpMv,
       stopMv,

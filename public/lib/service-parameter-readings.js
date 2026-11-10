@@ -40,8 +40,8 @@ export function parameterReadingNamed(name) {
   return parameter ? currentParameterReading(parameter) : null;
 }
 
-/** @param {ServiceParameter} parameter */
-export async function readServiceParameter(parameter) {
+/** @param {ServiceParameter} parameter @param {boolean} [reportFailure] */
+export async function readServiceParameter(parameter, reportFailure = true) {
   const table = serviceCatalogue.rawVal?.tableType;
   if (table === undefined) {
     return null;
@@ -75,8 +75,10 @@ export async function readServiceParameter(parameter) {
     readingState(identity).val = reading;
     return reading;
   } catch (error) {
-    readingState(identity).val = "unconfirmed";
-    serviceProblem.val = describeError(error);
+    if (reportFailure) {
+      readingState(identity).val = "unconfirmed";
+      serviceProblem.val = describeError(error);
+    }
     console.warn(`service: parameter ${parameter.name} read failed`, error);
     return null;
   }

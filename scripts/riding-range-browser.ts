@@ -13,7 +13,7 @@ export async function assertRangeContent(page: HeadlessPage) {
     page,
     `(() => {
     const view=document.querySelector('.range-view');const field=name=>view.querySelector('[data-reading="'+name+'"]').textContent;
-    return {labels:[...view.querySelectorAll('.label')].map(element=>element.textContent),margin:field('margin'),explanations:!!view.querySelector('[data-reading=rest-sag],[data-reading=cutoff],.range-timer .sub,.range-rule')||/BMS index|modelled R|at rest|mV sag|allowed below cut-off|drains above/.test(view.innerText),line:view.querySelector('.range-margin-number').innerText.replace(/\\s+/g,' '),drive:field('drive-allowed'),regen:field('allowed_regen_a'),energy:field('energy'),range:field('range-estimate'),horizon:field('consumption-horizon'),shares:[...view.querySelectorAll('.range-share')].map(element=>element.textContent),sizes:[...view.querySelectorAll(':scope > .range-margin,:scope > .range-timer,:scope > .range-pair,:scope > .range-consumption')].map(element=>element.getBoundingClientRect().height),height:view.getBoundingClientRect().height,fonts:[getComputedStyle(view.querySelector('.range-margin-number')).fontSize,getComputedStyle(view.querySelector('.range-allowance .value')).fontSize,getComputedStyle(view.querySelector('.range-share')).fontSize],bars:[...view.querySelectorAll('.range-availability')].map(element=>({height:element.getBoundingClientRect().height,state:element.dataset.state,width:parseFloat(element.firstElementChild.style.width)})),hidden:[...view.querySelectorAll('[data-reading]')].filter(element=>{if(element.getBoundingClientRect().width<=0||element.getBoundingClientRect().height<=0)return true;for(let parent=element;parent;parent=parent.parentElement){const style=getComputedStyle(parent);if(style.display==='none'||style.visibility!=='visible'||Number(style.opacity)===0)return true;}return false;}).map(element=>element.dataset.reading),instantPower:!!view.querySelector('[data-signal=pack_kw]')};
+    return {labels:[...view.querySelectorAll('.label')].map(element=>element.textContent),margin:field('margin'),explanations:!!view.querySelector('[data-reading=rest-sag],[data-reading=cutoff],.range-rule')||/BMS index|modelled R|at rest|mV sag|allowed below cut-off|drains above/.test(view.innerText),line:view.querySelector('.range-margin-number').innerText.replace(/\\s+/g,' '),drive:field('drive-allowed'),regen:field('allowed_regen_a'),energy:field('energy'),range:field('range-estimate'),horizon:field('consumption-horizon'),shares:[...view.querySelectorAll('.range-share')].map(element=>element.textContent),sizes:[...view.querySelectorAll(':scope > .range-margin,:scope > .range-pair,:scope > .range-consumption')].map(element=>element.getBoundingClientRect().height),height:view.getBoundingClientRect().height,fonts:[getComputedStyle(view.querySelector('.range-margin-number')).fontSize,getComputedStyle(view.querySelector('.range-allowance .value')).fontSize,getComputedStyle(view.querySelector('.range-share')).fontSize],bars:[...view.querySelectorAll('.range-availability')].map(element=>({height:element.getBoundingClientRect().height,state:element.dataset.state,width:parseFloat(element.firstElementChild.style.width)})),hidden:[...view.querySelectorAll('[data-reading]')].filter(element=>{if(element.getBoundingClientRect().width<=0||element.getBoundingClientRect().height<=0)return true;for(let parent=element;parent;parent=parent.parentElement){const style=getComputedStyle(parent);if(style.display==='none'||style.visibility!=='visible'||Number(style.opacity)===0)return true;}return false;}).map(element=>element.dataset.reading),instantPower:!!view.querySelector('[data-signal=pack_kw]')};
   })()`
   )) as {
     labels: string[];
@@ -164,6 +164,14 @@ export async function checkRangeCases(
       "prepare": "ridingPreview('lib/service-client.js').serviceCatalogue.val=null",
       "field": "margin",
       "text": "VCU limits not read",
+      "font": "14px",
+    },
+    {
+      name: "four-digit",
+      patch: "cell_min_mv:[4200,'mV','battery']",
+      field: "margin",
+      text: "1400",
+      line: "Limp in 1250 mV · stop in 1400 mV",
     },
     {
       name: "hard-pull",
@@ -190,26 +198,46 @@ export async function checkRangeCases(
       await evaluateOnPage(page, `document.querySelector('[data-reading="${state.field}"]').textContent`),
       state.text
     );
-    if (state.line)
+    if (state.line) {
       assert.equal(
         await evaluateOnPage(page, "document.querySelector('.range-margin-number').innerText.replace(/\\s+/g,' ')"),
         state.line
       );
-    if (state.range)
+    }
+    if (state.range) {
       assert.equal(
         await evaluateOnPage(page, "document.querySelector('[data-reading=range-estimate]').textContent"),
         state.range
       );
-    if (state.name === "limits-not-read" || state.name === "hard-pull")
+    }
+    if (state.name === "limits-not-read" || state.name === "hard-pull") {
       assert.match(
         String(await evaluateOnPage(page, "document.querySelector('[data-reading=range-estimate]').textContent")),
         /^\d+$/
       );
-    if (state.caption)
+    }
+    if (state.caption) {
       assert.equal(
         await evaluateOnPage(page, "document.querySelector('[data-share=drive-allowed]').textContent"),
         state.caption
       );
+    }
+    if (state.font) {
+      assert.equal(
+        await evaluateOnPage(page, "getComputedStyle(document.querySelector('[data-reading=margin]')).fontSize"),
+        state.font
+      );
+    }
+    if (state.name === "four-digit") {
+      assert.deepEqual(
+        await evaluateOnPage(
+          page,
+          `(()=>{const line=document.querySelector('.range-margin-number');return [innerWidth,line.scrollWidth<=line.clientWidth,line.getBoundingClientRect().height<=Math.max(...[...line.children].map(child=>child.getBoundingClientRect().height))+1];})()`
+        ),
+        [390, true, true],
+        "Four-digit margins fit on one line without overflow at phone width."
+      );
+    }
     if (state.state) {
       assert.equal(
         await evaluateOnPage(page, `document.querySelector('[data-allowance="${state.field}"]').dataset.state`),
@@ -258,6 +286,30 @@ export async function checkRangeCases(
   assert.equal(await evaluateOnPage(page, "document.querySelector('[data-reading=consumption]').textContent"), "Regen");
   assert.equal(await evaluateOnPage(page, "document.querySelector('.range-consumption .unit').textContent"), "");
   assert.equal(await evaluateOnPage(page, "document.querySelector('[data-reading=range-estimate]').textContent"), "—");
+  await assertLayout(page);
+  await openPreview(page, file, "#ride", `range-${theme}-stored-after-refusal`);
+  await evaluateOnPage(page, `ridingPreview('lib/theme.js').themePreference.val=${JSON.stringify(theme)}`);
+  const snapshot = await evaluateOnPage(
+    page,
+    `(()=>{const snapshot=SERVICE_PARAMETERS.params;
+    SERVICE_PARAMETERS.params={state:'never-read',directory:'synthetic',hint:'synthetic'};
+    SERVICE_PARAMETER_REQUESTS.length=0;GATE.safe=false;
+    ridingPreview('lib/router.js').showView('hypermile');return snapshot;})()`
+  );
+  await waitOnPage(
+    page,
+    "document.querySelector('[data-reading=margin]')?.textContent==='VCU limits not read'&&!ridingPreview('lib/service-client.js').serviceBusy.rawVal&&SERVICE_PARAMETER_REQUESTS.some(request=>request.method==='POST'&&request.url.startsWith('/vcu-probe'))",
+    "a refused Range limit read"
+  );
+  await evaluateOnPage(
+    page,
+    `SERVICE_PARAMETERS.params=${JSON.stringify(snapshot)};ridingPreview('lib/service-client.js').loadStoredParameters()`
+  );
+  await waitOnPage(
+    page,
+    "document.querySelector('[data-reading=margin]').textContent==='320'",
+    "stored limits after refusal"
+  );
   await assertLayout(page);
   await openPreview(page, file, "#hypermile", `range-${theme}-limits-read-on-open`);
   await waitOnPage(page, "document.querySelector('[data-reading=margin]').textContent==='320'", "stored VCU limits");

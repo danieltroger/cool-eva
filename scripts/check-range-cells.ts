@@ -145,7 +145,7 @@ for (const [soc, age, expected] of [
 assert.deepEqual(compensatedThresholds(2900, 2750, -13.3, 119), { limp: 2880, stop: 2730 });
 const pull = compensatedThresholds(2900, 2750, -377, 132);
 assert.deepEqual([2988 - pull.limp, 2988 - pull.stop], [711, 853]);
-assert.deepEqual(compensatedThresholds(2900, 2750, null, 132), { limp: 2900, stop: 2750 });
+assert.deepEqual(compensatedThresholds(2900, 2750, 13.3, 119), { limp: 2919, stop: 2750 });
 apply({
   type: "patch",
   ts: 1_000_003,

@@ -155,22 +155,12 @@ export function restingMinCellMv() {
   return minimum + sag;
 }
 
-/**
- * The same, sampled rather than subscribed — for the view rules in app.js, which
- * are paced by the shared tick and must not add cell_min_mv to its dependencies.
- * @returns {number | null}
- */
+/** @returns {number | null} */
 export function headroomMvSampled() {
   return headroomMvWith(peek);
 }
 
-/**
- * Parameterised on how it reads, so the subscribing and sampling variants above
- * cannot drift apart — the alternative is two copies of the same subtraction, and
- * the one that gets fixed is never the one that is wrong.
- * @param {(key: string) => number | null} read
- * @returns {number | null}
- */
+/** @param {(key: string) => number | null} read @returns {number | null} */
 function headroomMvWith(read) {
   const minimum = read("cell_min_mv");
   const cutoff = read("cell_cutoff_mv");

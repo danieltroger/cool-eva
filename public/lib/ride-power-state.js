@@ -14,7 +14,7 @@ export function ridePowerState(read, status, charging) {
   const driveSignal = driveKey(key => (status(key) === "fresh" ? read(key) : null));
   const drive = limitState(driveSignal, read, status);
   const regen = limitState("allowed_regen_a", read, status);
-  const used = value !== null && value < 0 ? drive : regen;
+  const used = value !== null && value < 0 ? limitState("allowed_discharge_a", read, status) : regen;
   const excess = !charging && value !== null && used.kilowatts !== null && Math.abs(value) > used.kilowatts;
   const unknown = [limitReason("Drive", drive), limitReason("Regen", regen)].filter(Boolean).join(" · ");
   return {
