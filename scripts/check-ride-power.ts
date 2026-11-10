@@ -25,6 +25,18 @@ const normal = ridePowerState(read, fresh, false);
 assert.equal(normal.drive.kilowatts, 71.4);
 assert.equal(normal.regen.kilowatts, 18.7);
 assert.equal(normal.value, -48.3);
+const vcuReadings: Record<string, number> = {
+  ...readings,
+  go: 1,
+  current_max_out_a: 25,
+  allowed_discharge_a: 50,
+  pack_kw: (-30.3 * readings.pack_v) / 1000,
+};
+const vcuLimited = ridePowerState(key => vcuReadings[key] ?? null, fresh, false);
+assert.equal(vcuLimited.drive.kilowatts, 8.5, "GO uses the applied VCU ceiling.");
+assert.equal(vcuLimited.excess, false, "Measured pack current is checked against the BMS allowance.");
+assert.equal(vcuLimited.status, "");
+
 assert.equal(normal.status, "");
 assert.ok(Math.abs(powerPosition(0) * 372 - 80.67469879518073) < 1e-9);
 assert.equal(powerPosition(36), 0);

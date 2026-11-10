@@ -5,7 +5,7 @@ import van from "./vendor/van-1.6.1.js";
 import { chartTick, connect, connection, systemStatus, isStaleSampled, peek, signalState } from "./lib/store.js";
 import { headroomMvSampled } from "./lib/derive.js";
 import { chargeMode } from "./lib/charge-mode.js";
-import { updateDwell } from "./lib/dwell.js";
+import { HYPERMILE_HEADROOM_MV } from "./lib/range-readings.js";
 import { updateTrip } from "./lib/trip.js";
 import { RideView } from "./views/ride.js";
 import { HypermileView } from "./views/hypermile.js";
@@ -70,14 +70,6 @@ startDestinationRouting();
 
 /** SOC at or below which the hypermiling screen takes over, as requested. */
 const HYPERMILE_SOC = 5;
-
-/**
- * …or this little left in the weakest cell, whichever happens first. SOC near
- * empty comes from an OCV table that was never re-characterised for these cells
- * (HYPERMILING.md §1), so it cannot be the only thing that triggers the screen
- * that exists precisely because SOC is untrustworthy down there.
- */
-const HYPERMILE_HEADROOM_MV = 150;
 
 function App() {
   // Toast last, so it paints over the header it covers. It is fixed and
@@ -194,25 +186,22 @@ function detectHighBeamGesture() {
 }
 
 // One timer drives everything that has to advance with wall-clock time: the
-// under-voltage dwell, trip accounting, and the view rules. Individual modules
+// trip accounting and the view rules. Individual modules
 // keeping their own intervals would drift apart and each pay their own wakeup cost
 // on a phone that is trying to sleep.
 //
 // For that to be true, everything reached from here has to *sample* signals rather
-// than subscribe to them — hence peek() and isStaleSampled() throughout updateDwell,
+// than subscribe to them — hence peek() and isStaleSampled() throughout
 // updateTrip and autoFocus, and peekTab() where autoFocus asks which tab is up.
 // Reading through valueOf() or isStale() instead would quietly add every signal they
 // touch to this binding's dependencies — serverTime included, which moves on every
-// message — and the tick would stop being what paces it. Nothing would break (the two
-// counters use wall-clock deltas and autoFocus is edge-triggered, so both are correct
+// message — and the tick would stop being what paces it. Nothing would break (the
+// trip uses elapsed time and autoFocus is edge-triggered, so both are correct
 // at any rate) but the comment above would be false, which is worse.
 van.derive(() => {
   chartTick.val;
-  // Both counters integrate elapsed time, so they take the monotonic clock — the
-  // dwell timer in particular decides how much of the BMS's 60 s cut-off window is
-  // used, and a wall-clock jump would credit or refund it in one step.
+  // Trip durations must survive wall-clock corrections.
   const now = monotonicNow();
-  updateDwell(now);
   updateTrip(now);
   autoFocus();
 });

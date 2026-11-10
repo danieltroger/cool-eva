@@ -14,6 +14,8 @@ export function serviceParameterFixtures(): ServiceParameterFixtures {
     TORQUE_LIMIT: 2300,
     REGEN_TORQUE_LIMIT: 600,
     MAP3_PWR: 480,
+    LIMP_MIN_CELL: 2950,
+    CELL_UNDERVOLTAGE: 2800,
     BEAM_MAX_CURR_TH: 7500,
     POSLIGHTS_MAX_CURR_TH: 300,
     RPOSLIGHTS_MAX_CURR_TH: 500,
