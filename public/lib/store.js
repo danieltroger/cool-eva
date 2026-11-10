@@ -184,7 +184,7 @@ export function isStaleSampled(key, maxAgeMs) {
 
 /**
  * Parameterised on how it read, so the subscribing and sampling variants above
- * cannot drift apart — the same reason headroomMvWith() in derive.js exists.
+ * cannot drift apart.
  *
  * ⚠️ `linkIsLive` is part of freshness, not a shortcut: `now` is the server clock from
  * the LAST MESSAGE and it stops when the messages do, so the age comparison alone

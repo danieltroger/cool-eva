@@ -2,7 +2,7 @@
 
 Range keeps its #hypermile URL and six cards. The 464 px stack has a 112 px weakest-cell card, 112 px allowance pair, 108 px consumption card, 92 px energy/range pair and 40 px gaps/padding. Margin words use 14 px and numbers 32 px; amps remain 34.4 px, approximate-kW captions 16 px and bars 8 px. The timer is removed.
 
-Opening Range loads the stored parameter catalogue and snapshot, then probes only missing `LIMP_MIN_CELL` and `CELL_UNDERVOLTAGE` readings through the existing named-read path. The server gate decides; the first refusal stops the loop. There is no sweep or retry timer. Opening Service clears a previous Range read error through its existing entry flow.
+Opening Range loads the stored parameter catalogue and snapshot, then probes only missing `LIMP_MIN_CELL` and `CELL_UNDERVOLTAGE` readings through the existing named-read path. The server gate decides; the first refusal stops the loop. There is no sweep or retry timer. Range read failures leave parameter confirmation state and Service feedback untouched.
 
 Weakest cell uses the last confirmed `LIMP_MIN_CELL` and `CELL_UNDERVOLTAGE` readings. Above limp it says “Limp in L mV · stop in S mV”; at or below limp it says “Limp · stop in S mV”. A negative stop margin becomes “Limp · N mV under stop”; zero remains “stop in 0 mV”. Missing limits say “VCU limits not read”; missing, stale or rejected cell readings retain their explicit state. The qualifying times are not modelled on the card.
 
