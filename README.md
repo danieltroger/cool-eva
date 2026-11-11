@@ -10,13 +10,13 @@ Current dashboard with synthetic sample data; coolant readings use the optional 
 
 | Ride | Charge | Faults |
 | :-: | :-: | :-: |
-| [<img src="docs/images/dashboard-ride-dark.png" width="180" alt="Ride screen showing speed, drive power, available power and coolant readings">](docs/images/dashboard-ride-dark.png) | [<img src="docs/images/dashboard-charge-dark.png" width="180" alt="Charge screen showing delivered power, estimated arrival, current request and observed temperature limits">](docs/images/dashboard-charge-dark.png) | [<img src="docs/images/dashboard-faults-dark.png" width="180" alt="Faults summary with the whole count, expected split and two named previews">](docs/images/dashboard-faults-dark.png) |
-| Speed, power and power limits. | Charging, temperature curve and current request. | Counts and named trouble codes; full report one tap away. |
+| [<img src="docs/images/dashboard-ride-dark.png" width="180" alt="Ride screen showing speed, drive power limits, battery temperatures and coolant difference">](docs/images/dashboard-ride-dark.png) | [<img src="docs/images/dashboard-charge-dark.png" width="180" alt="Charge screen showing delivered power, time to saved limit, temperature curve and bike charge limit">](docs/images/dashboard-charge-dark.png) | [<img src="docs/images/dashboard-faults-dark.png" width="180" alt="Faults screen showing active trouble codes, an expected fault and the Stored faults section">](docs/images/dashboard-faults-dark.png) |
+| Speed, power, battery temperature and coolant. | Delivered power, time to limit and temperature curve. | Active and stored faults on one page. |
 
-| Cooling | Range | Cells | All |
+| Cooling | Range | Cells | Current CAN values |
 | :-: | :-: | :-: | :-: |
-| [<img src="docs/images/dashboard-cooling-dark.png" width="180" alt="Cooling screen with coolant, battery, motor and ambient temperatures plus fan status">](docs/images/dashboard-cooling-dark.png) | [<img src="docs/images/dashboard-range-dark.png" width="180" alt="Range screen with weakest-cell margin and drive and regen current allowances">](docs/images/dashboard-range-dark.png) | [<img src="docs/images/dashboard-cells-dark.png" width="180" alt="Cells sub-tab with the complete 81-cell strip, voltage spread and cell positions">](docs/images/dashboard-cells-dark.png) | [<img src="docs/images/dashboard-all-dark.png" width="180" alt="All screen with six live readings above the filter and raw signal grid">](docs/images/dashboard-all-dark.png) |
-| Temperatures and fan status. | Weak-cell margin and current allowances. | All 81 cell voltages. | Live snapshot; raw signals below. |
+| [<img src="docs/images/dashboard-cooling-dark.png" width="180" alt="Cooling sub-tab with coolant in and out, motor and outside air temperatures plus fan control">](docs/images/dashboard-cooling-dark.png) | [<img src="docs/images/dashboard-range-dark.png" width="180" alt="Range screen with limp and stop margins, drive and regen allowances, energy left and remaining range">](docs/images/dashboard-range-dark.png) | [<img src="docs/images/dashboard-cells-dark.png" width="180" alt="Cells temperature map showing nine modules, eleven LMUs and dashed LMU boundaries">](docs/images/dashboard-cells-dark.png) | [<img src="docs/images/dashboard-all-dark.png" width="180" alt="Service's Current CAN values filtered to temperature readings">](docs/images/dashboard-all-dark.png) |
+| Coolant, motor, outside air and fan. | Cell margins, current allowances and range. | Map of nine modules with LMU boundaries. | Searchable current CAN values in Service. |
 
 ## What to buy
 
