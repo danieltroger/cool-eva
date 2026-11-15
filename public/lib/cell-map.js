@@ -2,30 +2,30 @@
 // Latest samples retain their colour within bounded holds: docs/cell-module-map.md.
 import { ageOf, signalState } from "./store.js";
 import { freshValue, readingStatus, STALE_MS } from "./reading-status.js";
-import { moduleTemperatureKey } from "./cells.js";
+import { cellVoltageLayout, moduleTemperatureKey } from "./cells.js";
 import * as colors from "./colors.js";
 
 /** @typedef {"temperature"|"balance"} CellMapMetric */
 /** @param {import("./pack-layout.js").PackCell} cell @param {CellMapMetric} metric */
 export function cellMapReading(cell, metric) {
   const key = metric === "balance" ? cell.key : moduleTemperatureKey(cell.lmu, "bat1");
-  const sample = signalState(cell.key).rawVal;
-  let reference = references.get(cell.key);
-  if (sample && reference?.timestamp !== sample.ts) {
-    reference = { timestamp: sample.ts, value: freshValue("cell_max_mv", true) };
-    references.set(cell.key, reference);
-  }
   return {
     key,
     state: key === null ? /** @type {const} */ ("absent") : readingStatus(key, true),
     value: key === null ? null : freshValue(key, true),
-    reference: reference?.value ?? null,
+    reference: rememberCellReference(cell.key),
     age: key === null ? Infinity : Math.max(0, ageOf(key)),
   };
 }
 /** @typedef {ReturnType<typeof cellMapReading>} CellMapReading */
 /** @type {Map<string,{timestamp:number,value:number|null}>} */
 const references = new Map();
+
+export function rememberCellReferences() {
+  for (const cell of cellVoltageLayout()) {
+    rememberCellReference(cell.key);
+  }
+}
 
 /** @param {CellMapReading} reading @param {CellMapMetric} metric */
 export function cellMapColour(reading, metric) {
@@ -58,4 +58,15 @@ export function cellMapAge(readings) {
         : "—";
   }
   return cellAgeText(Math.max(...available.map(reading => reading.age)));
+}
+
+/** @param {string} key */
+function rememberCellReference(key) {
+  const sample = signalState(key).rawVal;
+  let reference = references.get(key);
+  if (sample && reference?.timestamp !== sample.ts) {
+    reference = { timestamp: sample.ts, value: freshValue("cell_max_mv", true) };
+    references.set(key, reference);
+  }
+  return reference?.value ?? null;
 }

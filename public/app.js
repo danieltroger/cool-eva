@@ -6,6 +6,7 @@ import { chartTick, connect, connection, systemStatus, isStaleSampled, peek, sig
 import { headroomMvSampled } from "./lib/derive.js";
 import { chargeMode } from "./lib/charge-mode.js";
 import { HYPERMILE_HEADROOM_MV } from "./lib/range-readings.js";
+import { rememberCellReferences } from "./lib/cell-map.js";
 import { updateTrip } from "./lib/trip.js";
 import { RideView } from "./views/ride.js";
 import { HypermileView, advanceRangeCountdowns } from "./views/hypermile.js";
@@ -204,6 +205,7 @@ van.derive(() => {
   const now = monotonicNow();
   updateTrip(now);
   advanceRangeCountdowns(now);
+  rememberCellReferences();
   autoFocus();
 });
 

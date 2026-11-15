@@ -7,7 +7,7 @@ import { readingIsStale, readingStatus, STALE_MS } from "../public/lib/reading-s
 import { apply, connection, peek, signalState } from "../public/lib/store.js";
 import { cellSnapshot } from "../public/lib/cell-snapshot.js";
 import * as colors from "../public/lib/colors.js";
-import { cellMapReading, cellMapColour } from "../public/lib/cell-map.js";
+import { cellMapReading, cellMapColour, rememberCellReferences } from "../public/lib/cell-map.js";
 import { packCellLayout } from "../public/lib/pack-layout.js";
 
 const heldSignals = SIGNALS.filter(signal => signal.displayFreshness !== undefined);
@@ -148,9 +148,21 @@ assert.deepEqual([pack.low, pack.high, pack.spread, pack.weakest, pack.strongest
 assert.equal(pack.cells.find(cell => cell.key === "lmu1_cell4_mv")?.value, 3000);
 assert.equal(pack.displayLow, 3000, "Held extrema may fit bar geometry but cannot become pack summaries.");
 const heldCell = packCellLayout()[3];
+rememberCellReferences();
+apply({
+  type: "patch",
+  ts: colourTime + 1,
+  signals: { cell_max_mv: { value: 3010, unit: "mV", group: "cells", ts: colourTime + 1 } },
+});
+rememberCellReferences();
 const heldBalance = cellMapReading(heldCell, "balance");
 const balanceColour = cellMapColour(heldBalance, "balance");
-assert.equal(heldBalance.age, 46_000);
+assert.equal(heldBalance.age, 46_001);
+assert.deepEqual(
+  [heldBalance.reference, heldBalance.value],
+  [3320, 3000],
+  "Opening Cells later keeps the arrival-time reference for both colour and gap."
+);
 assert.equal(balanceColour, "color-mix(in srgb,var(--warn) 100%,var(--good))");
 assert.equal(
   cellMapColour(cellMapReading(heldCell, "temperature"), "temperature"),
@@ -158,15 +170,10 @@ assert.equal(
 );
 apply({
   type: "patch",
-  ts: colourTime + 1,
-  signals: { cell_max_mv: { value: 3010, unit: "mV", group: "cells", ts: colourTime + 1 } },
-});
-assert.equal(cellMapColour(cellMapReading(heldCell, "balance"), "balance"), balanceColour);
-apply({
-  type: "patch",
   ts: colourTime + 2,
   signals: { lmu1_cell4_mv: { ...reading("lmu1_cell4_mv", colourTime + 2), value: 3000 } },
 });
+rememberCellReferences();
 assert.equal(
   cellMapColour(cellMapReading(heldCell, "balance"), "balance"),
   "color-mix(in srgb,var(--warn) 25%,var(--good))"
