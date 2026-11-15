@@ -16,6 +16,7 @@ import { promisify } from "util";
 import { gunzip, gzip } from "zlib";
 import Database from "better-sqlite3";
 import { defineSignals, record } from "../src/can/signals.ts";
+import { SIGNALS } from "../src/can/registry.ts";
 import { monotonicNow, since } from "../src/monotonic.ts";
 import { appendReading, closeEncryptedLog, flushEncryptedLog, initEncryptedLog } from "../src/storage/encrypted-log.ts";
 import { startSealOnPark } from "../src/storage/seal-on-park.ts";
@@ -39,6 +40,7 @@ import type { ClockTrust } from "../src/gps/clock.ts";
 //   §7  it seals the new rows even when a seal is already in flight
 //   §8  the park seal's rate limit is monotonic — a SOURCE assertion, and it says so
 //   §9  the real decrypt-log.ts carries the trust into rides.db and rewrites no timestamp
+//   §10 an individual cell's 1 mV change produces its own sealed row
 //
 // ⚠️ §6 and §7 settle asynchronously — the listener runs in a microtask and the seal is
 // async — so they poll to a monotonic deadline rather than sleeping a fixed time. A
@@ -98,6 +100,7 @@ try {
   await checkParkDuringSeal();
   await checkRateLimitIsMonotonic();
   await checkTrustReachesTheDatabase();
+  await checkCellMillivoltLogging();
 } finally {
   await rm(workDir, { recursive: true, force: true });
 }
@@ -473,6 +476,22 @@ async function checkRateLimitIsMonotonic(): Promise<void> {
     .join("\n");
   check("no Date.now() anywhere in the module's code", !code.includes("Date.now"));
   check("and the clock it defaults to is the monotonic one", code.includes("monotonicNow"));
+}
+
+async function checkCellMillivoltLogging(): Promise<void> {
+  console.log("\n§10 individual cell voltages log every 1 mV change");
+  const directory = await startLog("cell-millivolt");
+  const cellKey = "lmu1_cell1_mv";
+  defineSignals(SIGNALS);
+  record(cellKey, 3300);
+  record(cellKey, 3301);
+  await flushEncryptedLog();
+  await closeEncryptedLog();
+  const rows = (await allSegmentsIn(directory)).flatMap(segment => segment.rows);
+  check(
+    "a cell that moves by 1 mV produces a sealed row",
+    rows.length === 2 && rows.every(row => row[1] === cellKey) && rows.map(row => row[2]).join() === "3300,3301"
+  );
 }
 
 // ---------------------------------------------------------------------------------------
