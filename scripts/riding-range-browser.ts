@@ -44,6 +44,7 @@ export async function assertRangeContent(page: HeadlessPage) {
   assert.equal(content.margin, "320");
   assert.equal(content.explanations, false, "Range keeps derivation and provenance in the docs.");
   assert.equal(content.line, "Limp in 170 mV · stop in 320 mV");
+  assert.equal(await evaluateOnPage(page, "document.querySelector('.range-margin-extra')"), null);
   assert.equal(content.drive, "210");
   assert.equal(content.regen, "55");
   assert.equal(content.energy, "4.8");
@@ -138,10 +139,12 @@ export async function checkRangeCases(
     },
     {
       "name": "limp-cell",
-      "patch": "cell_min_mv:[2850,'mV','battery']",
+      "patch":
+        "cell_min_mv:[2850,'mV','battery'],drive_vsm_b3:[3,'','vcu'],go:[1,'','state'],current_max_out_a:[25,'A','inverter']",
       "field": "margin",
       "text": "50",
       "line": "Limp · stop in 50 mV",
+      "extra": "Low cell — ease off",
       "range": "Range uncertain — charge now",
     },
     {
@@ -154,10 +157,13 @@ export async function checkRangeCases(
     },
     {
       "name": "under-stop",
-      "patch": "cell_min_mv:[2775,'mV','battery']",
+      "patch":
+        "cell_min_mv:[2775,'mV','battery'],drive_vsm_b3:[3,'','vcu'],go:[1,'','state'],current_max_out_a:[25,'A','inverter']",
       "field": "margin",
       "text": "25",
       "line": "Limp · 25 mV under stop",
+      "extra": "Stop in ≈ 7 s · ease off now",
+      "elapsed": 3000,
     },
     {
       "name": "limits-not-read",
@@ -180,6 +186,27 @@ export async function checkRangeCases(
       text: "661",
       line: "Limp in 661 mV · stop in 803 mV",
     },
+    ...(
+      [
+        ["qualifying", "cell_min_mv:[2900,'mV','battery']", "Limp in ≈ 3 s · ease off"],
+        ["cleared", "", "Close throttle, then open past half"],
+        [
+          "soc-limp",
+          "soc:[1,'%','battery'],bms_remaining_energy_wh:[200,'Wh','battery'],",
+          "Battery under 2% — charge now",
+        ],
+        ["temperature-limp", "batt_temp_hi_vcu:[57,'°C','battery'],", "Battery over 56 °C — let it cool"],
+        ["bms-limp", "allowed_discharge_a:[35,'A','battery'],", "Battery current limit 35 A"],
+      ] as const
+    ).map(([name, patch, extra]) => ({
+      name,
+      patch: `go:[1,'','state'],current_max_out_a:[25,'A','inverter'],drive_vsm_b3:[${name === "qualifying" ? 0 : 3},'','vcu'],${patch}`,
+      line: name === "qualifying" ? "50 mV under limp · stop in 100 mV" : "Limp · stop in 320 mV",
+      extra,
+      text: name === "qualifying" ? "100" : "320",
+      elapsed: name === "qualifying" ? 2000 : 0,
+      field: "margin",
+    })),
   ];
   for (const state of cases) {
     await openPreview(page, file, "#hypermile", `range-${theme}-${state.name}`);
@@ -192,6 +219,12 @@ export async function checkRangeCases(
     if (state.prepare) {
       await evaluateOnPage(page, state.prepare);
     }
+    if (state.elapsed) {
+      await evaluateOnPage(
+        page,
+        `(async()=>{const now=performance.now();performance.now=()=>now;ridingPreview('lib/store.js').chartTick.val++;await ${FRAME};performance.now=()=>now+${state.elapsed};})()`
+      );
+    }
     await evaluateOnPage(page, "ridingPreview('lib/store.js').chartTick.val++");
     await evaluateOnPage(page, FRAME);
     assert.equal(
@@ -202,6 +235,19 @@ export async function checkRangeCases(
       assert.equal(
         await evaluateOnPage(page, "document.querySelector('.range-margin-number').innerText.replace(/\\s+/g,' ')"),
         state.line
+      );
+    }
+    if (state.extra) {
+      assert.equal(
+        await evaluateOnPage(page, "document.querySelector('.range-margin-extra').innerText.replace(/\\s+/g,' ')"),
+        state.extra
+      );
+      assert.deepEqual(
+        await evaluateOnPage(
+          page,
+          "[document.querySelector('.range-margin').getBoundingClientRect().height,document.querySelector('.range-view').getBoundingClientRect().height]"
+        ),
+        [112, 464]
       );
     }
     if (state.range) {
@@ -317,7 +363,7 @@ export async function checkRangeCases(
     page,
     `(()=>{
     const client=ridingPreview('lib/service-client.js');
-    const indexes=['LIMP_MIN_CELL','CELL_UNDERVOLTAGE'].map(name=>client.serviceCatalogue.rawVal.parameters.find(parameter=>parameter.name===name).index);
+    const indexes=['LIMP_MIN_CELL','CELL_UNDERVOLTAGE','LIMP_SOC','LIMP_PACK_I','LIMP_B_TEMP'].map(name=>client.serviceCatalogue.rawVal.parameters.find(parameter=>parameter.name===name).index);
     ridingPreview('lib/router.js').showView('ride');
     SERVICE_PARAMETERS.params={state:'never-read',directory:'synthetic',hint:'synthetic'};
     SERVICE_PARAMETER_REQUESTS.length=0;GATE.safe=true;
@@ -328,8 +374,8 @@ export async function checkRangeCases(
   await evaluateOnPage(page, "ridingPreview('lib/router.js').showView('hypermile')");
   await waitOnPage(
     page,
-    "SERVICE_PARAMETER_REQUESTS.filter(request=>request.method==='POST'&&request.url.startsWith('/vcu-probe')).length===2&&document.querySelector('[data-reading=margin]').textContent==='320'",
-    "two named limit reads on Range entry"
+    "SERVICE_PARAMETER_REQUESTS.filter(request=>request.method==='POST'&&request.url.startsWith('/vcu-probe')).length===5&&document.querySelector('[data-reading=margin]').textContent==='320'",
+    "five named limit reads on Range entry"
   );
   assert.deepEqual(
     await evaluateOnPage(

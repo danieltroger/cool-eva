@@ -5,6 +5,44 @@ import { CELL_COUNT } from "./cells.js";
 
 export const REGEN_CEILING_A = 120;
 export const HYPERMILE_HEADROOM_MV = 150;
+const LIMP_QUALIFY_MS = 5000;
+const STOP_QUALIFY_MS = 10000;
+/** @type {number|null} */
+let underLimpSince = null;
+/** @type {number|null} */
+let underStopSince = null;
+/** @typedef {{minimum:number,limp:number,stop:number,driving:boolean,active:boolean}} CellCountdownInput */
+/** @typedef {{active:boolean,minimum:number|null,limp:number|null,soc:number|null,limpSoc:number|null,temperature:number|null,limpTemperature:number|null,allowance:number|null,limpPackTenths:number|null}} LimpInput */
+
+/** @param {number} now @param {CellCountdownInput|null} input */
+export function advanceCellCountdowns(now, input) {
+  underLimpSince = input?.driving && !input.active && input.minimum < input.limp ? (underLimpSince ?? now) : null;
+  underStopSince = input?.driving && input.minimum <= input.stop ? (underStopSince ?? now) : null;
+}
+
+/** @param {number} now */
+export function cellCountdowns(now) {
+  return {
+    limp: underLimpSince === null ? null : Math.max(0, Math.ceil((LIMP_QUALIFY_MS - (now - underLimpSince)) / 1000)),
+    stop: underStopSince === null ? null : Math.max(0, Math.ceil((STOP_QUALIFY_MS - (now - underStopSince)) / 1000)),
+  };
+}
+
+/** @param {LimpInput} input @param {ReturnType<typeof cellCountdowns>} counts */
+export function limpLine(input, counts) {
+  if (counts.stop !== null) return "stop";
+  if (counts.limp !== null) return "limp";
+  if (!input.active) return null;
+  if (input.minimum !== null && input.limp !== null && input.minimum < input.limp) return "cell";
+  if (input.soc !== null && input.limpSoc !== null && input.soc < input.limpSoc) return "soc";
+  if (input.temperature !== null && input.limpTemperature !== null && input.temperature > input.limpTemperature) {
+    return "temperature";
+  }
+  if (input.allowance !== null && input.limpPackTenths !== null && input.allowance < input.limpPackTenths / 10) {
+    return "pack";
+  }
+  return Object.values(input).some(value => value === null) ? null : "exit";
+}
 
 /** @param {number} limpMv @param {number} stopMv @param {number|null} packAmps @param {number|null} resistanceMilliohm */
 export function compensatedThresholds(limpMv, stopMv, packAmps, resistanceMilliohm) {

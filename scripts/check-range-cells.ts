@@ -6,7 +6,13 @@ import { cellSnapshot } from "../public/lib/cell-snapshot.js";
 import type { ReadingStatus } from "../public/lib/reading-status.js";
 import { apply, connection } from "../public/lib/store.js";
 import { freshValue } from "../public/lib/reading-status.js";
-import { energyEmpty, compensatedThresholds } from "../public/lib/range-readings.js";
+import {
+  energyEmpty,
+  compensatedThresholds,
+  advanceCellCountdowns,
+  cellCountdowns,
+  limpLine,
+} from "../public/lib/range-readings.js";
 
 const slots = cellVoltageLayout();
 assert.equal(CELL_COUNT, 81);
@@ -156,3 +162,43 @@ apply({
   ),
 });
 assert.equal(headroomMvSampled(), 711);
+
+const parked = { driving: false, active: false, minimum: 2733, limp: 2900, stop: 2750 };
+advanceCellCountdowns(0, parked);
+assert.deepEqual(cellCountdowns(50_000), { limp: null, stop: null });
+const riding = { ...parked, driving: true, minimum: 2850 };
+for (const [now, expected] of [
+  [0, 5],
+  [2000, 3],
+  [6000, 0],
+]) {
+  advanceCellCountdowns(now, riding);
+  assert.equal(cellCountdowns(now).limp, expected);
+}
+advanceCellCountdowns(7000, { ...riding, minimum: 2901 });
+assert.equal(cellCountdowns(7000).limp, null);
+advanceCellCountdowns(8000, { ...riding, active: true });
+assert.equal(cellCountdowns(8000).limp, null);
+const causes: Parameters<typeof limpLine>[0] = {
+  active: true,
+  minimum: 3524,
+  limp: 2900,
+  soc: 36,
+  limpSoc: 2,
+  allowance: 75.1,
+  limpPackTenths: 400,
+  temperature: 57,
+  limpTemperature: 55,
+};
+const noCounts = { limp: null, stop: null };
+for (const [patch, counts, expected] of [
+  [{}, noCounts, "temperature"],
+  [{ temperature: 55 }, noCounts, "exit"],
+  [{ temperature: 55, limpSoc: null }, noCounts, null],
+  [{ soc: 0 }, noCounts, "soc"],
+  [{ soc: 0, minimum: 2800 }, noCounts, "cell"],
+  [{ temperature: 55, allowance: 35 }, noCounts, "pack"],
+  [{}, { limp: null, stop: 7 }, "stop"],
+] as const) {
+  assert.equal(limpLine({ ...causes, ...patch }, counts), expected);
+}

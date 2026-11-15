@@ -34,10 +34,11 @@ export function currentParameterReading(parameter, sampled = false) {
     : null;
 }
 
-/** @param {string} name */
-export function parameterReadingNamed(name) {
-  const parameter = serviceCatalogue.val?.parameters.find(parameter => parameter.name === name);
-  return parameter ? currentParameterReading(parameter) : null;
+/** @param {string} name @param {boolean} [sampled] */
+export function parameterReadingNamed(name, sampled = false) {
+  const catalogue = sampled ? serviceCatalogue.rawVal : serviceCatalogue.val;
+  const parameter = catalogue?.parameters.find(parameter => parameter.name === name);
+  return parameter ? currentParameterReading(parameter, sampled) : null;
 }
 
 /** @param {ServiceParameter} parameter @param {boolean} [reportFailure] */
