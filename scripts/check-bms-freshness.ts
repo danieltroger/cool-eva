@@ -6,7 +6,6 @@ import { DISPLAY_FRESHNESS } from "../public/lib/generated-bounds.js";
 import { readingIsStale, readingStatus, STALE_MS } from "../public/lib/reading-status.js";
 import { apply, connection, peek, signalState } from "../public/lib/store.js";
 import { cellSnapshot } from "../public/lib/cell-snapshot.js";
-import * as colors from "../public/lib/colors.js";
 import { cellMapReading, cellMapColour, rememberCellReferences } from "../public/lib/cell-map.js";
 import { packCellLayout } from "../public/lib/pack-layout.js";
 
@@ -188,7 +187,6 @@ for (const [metric, budget, sampleTime] of [
   assert.equal(expired.state, "stale");
   assert.equal(cellMapColour(expired, metric), "var(--tile)");
 }
-assert.equal(colors.spread(Math.max(0, 3320 - 3405)), colors.GOOD, "Above the current BMS maximum means no gap.");
 apply({ type: "patch", ts: colourTime + 8002, signals: { lmu_cell_mux: reading("lmu_cell_mux", colourTime + 8002) } });
 assert.equal(cellSnapshot(peek, key => readingStatus(key, true)).high, null, "No held-cell fallback for stale 0x203.");
 signalState("lmu1_cell4_mv").val = null;

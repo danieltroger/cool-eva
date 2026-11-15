@@ -186,9 +186,8 @@ function detectHighBeamGesture() {
   previousHighBeam = current;
 }
 
-// One timer drives everything that has to advance with wall-clock time: the
-// trip accounting and the view rules. Individual modules
-// keeping their own intervals would drift apart and each pay their own wakeup cost
+// One timer drives trip accounting, Range countdowns, cell references and view rules.
+// Separate intervals would drift apart and each pay their own wakeup cost
 // on a phone that is trying to sleep.
 //
 // For that to be true, everything reached from here has to *sample* signals rather
