@@ -1054,10 +1054,8 @@ function dtcSignals(): SignalDef[] {
 // can't drift from the keys the decoder emits, and because ~110 near-identical lines
 // would bury everything above.
 //
-// 5 mV deadband on the cells: the whole point of them is which cell sags, and the
-// resting spread worth chasing is tens of mV. Logging every millivolt of
-// throttle-driven sag on 81 signals at ~2 Hz each would multiply the DB's row rate by
-// more than ten. The temperatures are whole °C and move slowly, so they log on change.
+// Cell voltages log every 1 mV change; the old deadband and its measured cost are
+// recorded in docs/range-and-cells.md. Temperatures still log on change in whole °C.
 function perLmuSignals(): SignalDef[] {
   const signals: SignalDef[] = [];
   for (let lmuNumber = 1; lmuNumber <= LMU_COUNT; lmuNumber++) {
@@ -1067,7 +1065,6 @@ function perLmuSignals(): SignalDef[] {
         unit: "mV",
         group: "cells",
         source: "stream",
-        deadband: 5,
         displayFreshness: cellNumber <= 3 ? "lmu-cells-1-to-3" : "lmu-cells-4-to-8",
       });
     }

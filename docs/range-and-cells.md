@@ -74,7 +74,9 @@ A cell whose reading was rejected keeps its last good bar, so the strip would ot
 
 Scale to the spread rather than to zero, or 81 near-identical cells all draw as full-height bars and the weak one is invisible.
 
-The _scale_ is relative — that is what makes a short bar visible — but the _colour_ is absolute, in millivolts below the strongest cell. Colouring by position within the pack's own spread means a well-balanced pack (a few mV end to end) paints itself orange and red, and a pack whose cells all read identically after the 5 mV deadband paints entirely red. colors.spread() already encodes what a gap worth worrying about actually is.
+The _scale_ is relative — that is what makes a short bar visible — but the _colour_ is absolute, in millivolts below the strongest cell. Colouring by position within the pack's own spread means a well-balanced pack (a few mV end to end) paints itself orange and red, and a pack whose cells all read identically after the former 5 mV logging deadband paints entirely red. colors.spread() already encodes what a gap worth worrying about actually is.
+
+Individual cell voltages now log every 1 mV change. The former 5 mV rule assumed that 81 cells at about 2 Hz would increase log growth more than tenfold. Replaying two saved captures through the current broadcast decoders and logging rules measured increases of 2.1% while riding and 64.2% while charging in CAN-derived rows; unchanged poll, sensor and BLE inputs are outside those counts.
 
 Regen headroom. It derates at high SOC and at temperature extremes, so a full battery at the top of a mountain means the brakes are doing all the work — worth knowing before the descent rather than during it.
 
