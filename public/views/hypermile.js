@@ -9,6 +9,9 @@ import {
   driveKey,
   energyEmpty,
   compensatedThresholds,
+  advanceCellCountdowns,
+  cellCountdowns,
+  limpLine,
   rangeDistanceKey,
   rangeEnergyKey,
 } from "../lib/range-readings.js";
@@ -47,7 +50,7 @@ export function HypermileView() {
 async function loadVcuLimits() {
   await loadStoredParameters();
   await serviceOperation(async () => {
-    for (const name of ["LIMP_MIN_CELL", "CELL_UNDERVOLTAGE"]) {
+    for (const name of ["LIMP_MIN_CELL", "CELL_UNDERVOLTAGE", "LIMP_SOC", "LIMP_PACK_I", "LIMP_B_TEMP"]) {
       const parameter = serviceCatalogue.rawVal?.parameters.find(parameter => parameter.name === name);
       if (!parameter || currentParameterReading(parameter, true)) continue;
       if (!(await readServiceParameter(parameter, false))) return;
@@ -55,52 +58,109 @@ async function loadVcuLimits() {
   });
 }
 
+/** @param {number} now */
+export function advanceRangeCountdowns(now) {
+  const limits = cellLimits(true);
+  const mode = freshValue("drive_vsm_b3", true);
+  advanceCellCountdowns(
+    now,
+    limits && { ...limits, driving: freshValue("go", true) === 1, active: mode === 1 || mode === 3 }
+  );
+}
+
+/** @param {boolean} [sampled] */
+function cellLimits(sampled = false) {
+  const minimum = freshValue("cell_min_mv", sampled);
+  const limpMv = parameterReadingNamed("LIMP_MIN_CELL", sampled)?.value;
+  const stopMv = parameterReadingNamed("CELL_UNDERVOLTAGE", sampled)?.value;
+  return minimum === null || limpMv === undefined || stopMv === undefined
+    ? null
+    : {
+        minimum,
+        ...compensatedThresholds(limpMv, stopMv, freshValue("pack_a", sampled), freshValue("limp_pack_res", sampled)),
+      };
+}
+
 function MarginCard() {
   return div({ class: "tile range-margin" }, div({ class: "label" }, "Weakest cell"), () => {
     chartTick.val;
-    const minimum = freshValue("cell_min_mv", true);
-    const limpMv = parameterReadingNamed("LIMP_MIN_CELL")?.value;
-    const stopMv = parameterReadingNamed("CELL_UNDERVOLTAGE")?.value;
+    const limits = cellLimits(true);
     const row = { class: "range-margin-number" };
-    if (minimum === null) {
-      return div(
-        row,
-        span(
-          {
-            "data-reading": "margin",
-            style: `color:${readingStatus("cell_min_mv", true) === "fault" ? colors.BAD : colors.MUTED}`,
-          },
-          statusWord(readingStatus("cell_min_mv", true))
-        )
-      );
-    }
-    if (limpMv === undefined || stopMv === undefined) {
-      return div({ ...row, "data-reading": "margin" }, "VCU limits not read");
-    }
-    const { limp, stop } = compensatedThresholds(
-      limpMv,
-      stopMv,
-      freshValue("pack_a", true),
-      freshValue("limp_pack_res", true)
-    );
-    return div(
-      row,
-      span(minimum > limp ? "Limp in" : "Limp"),
-      minimum > limp
-        ? [
+    if (!limits) {
+      const status = readingStatus("cell_min_mv", true);
+      return status === "fresh"
+        ? div({ ...row, "data-reading": "margin" }, "VCU limits not read")
+        : div(
+            row,
             span(
-              { "data-reading": "limp-margin", style: `color:${colors.headroom(minimum - limp)}` },
-              String(Math.round(minimum - limp))
-            ),
-            span("mV"),
-          ]
-        : [],
-      span(minimum < stop ? "·" : "· stop in"),
-      span(
-        { "data-reading": "margin", style: `color:${colors.headroom(minimum - stop)}` },
-        String(Math.round(Math.abs(minimum - stop)))
+              { "data-reading": "margin", style: `color:${status === "fault" ? colors.BAD : colors.MUTED}` },
+              statusWord(status)
+            )
+          );
+    }
+    const { minimum, limp, stop } = limits;
+    const mode = freshValue("drive_vsm_b3", true);
+    const active = mode === 1 || mode === 3;
+    const counts = cellCountdowns(monotonicNow());
+    const limpSoc = parameterReadingNamed("LIMP_SOC", true)?.value ?? null;
+    const limpTemperature = parameterReadingNamed("LIMP_B_TEMP", true)?.value ?? null;
+    const allowance = freshValue("allowed_discharge_a", true);
+    const line = limpLine(
+      {
+        ...limits,
+        active,
+        soc: freshValue("soc", true),
+        limpSoc,
+        temperature: freshValue("batt_temp_hi_vcu", true),
+        limpTemperature,
+        allowance,
+        limpPackTenths: parameterReadingNamed("LIMP_PACK_I", true)?.value ?? null,
+      },
+      counts
+    );
+    const words = {
+      cell: "Low cell — ease off",
+      soc: `Battery under ${limpSoc}% — charge now`,
+      temperature: `Battery over ${limpTemperature} °C — let it cool`,
+      pack: `Battery current limit ${Math.round(allowance ?? 0)} A`,
+      exit: "Close throttle, then open past half",
+    };
+    return div(
+      { class: "layout-compact-stack" },
+      div(
+        row,
+        active
+          ? span("Limp")
+          : [
+              minimum > limp ? span("Limp in") : [],
+              span(
+                { "data-reading": "limp-margin", style: `color:${colors.headroom(minimum - limp)}` },
+                String(Math.round(Math.abs(minimum - limp)))
+              ),
+              span(minimum > limp ? "mV" : "mV under limp"),
+            ],
+        span(minimum < stop ? "·" : "· stop in"),
+        span(
+          { "data-reading": "margin", style: `color:${colors.headroom(minimum - stop)}` },
+          String(Math.round(Math.abs(minimum - stop)))
+        ),
+        span(minimum < stop ? "mV under stop" : "mV")
       ),
-      span(minimum < stop ? "mV under stop" : "mV")
+      line
+        ? div(
+            {
+              class: "range-margin-extra",
+              style: `color:${line === "stop" ? colors.BAD : line === "exit" ? colors.GOOD : colors.WATCH}`,
+            },
+            line === "stop" || line === "limp"
+              ? [
+                  span(`${line === "stop" ? "Stop" : "Limp"} in ≈`),
+                  span({ class: "range-seconds" }, String(counts[line])),
+                  span(line === "stop" ? "s · ease off now" : "s · ease off"),
+                ]
+              : words[line]
+          )
+        : []
     );
   });
 }
@@ -241,15 +301,10 @@ function EstimatedRangeCard() {
 function rangeEstimate() {
   chartTick.val;
   const status = worstStatus(["pack_kw", rangeDistanceKey(), rangeEnergyKey(true)], true);
-  const minimum = freshValue("cell_min_mv", true);
-  const limpMv = parameterReadingNamed("LIMP_MIN_CELL")?.value;
-  const limp =
-    limpMv === undefined
-      ? undefined
-      : compensatedThresholds(limpMv, limpMv, freshValue("pack_a", true), freshValue("limp_pack_res", true)).limp;
+  const limits = cellLimits(true);
   const alert = energyEmpty(key => freshValue(key, true))
     ? "Empty — charge now"
-    : minimum !== null && limp !== undefined && minimum - limp <= HYPERMILE_HEADROOM_MV
+    : limits && limits.minimum - limits.limp <= HYPERMILE_HEADROOM_MV
       ? "Range uncertain — charge now"
       : "";
   return { status, alert, kilometres: !alert && status === "fresh" ? rollingRangeKm(monotonicNow(), peek) : null };

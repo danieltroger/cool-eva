@@ -8,7 +8,7 @@ import { chargeMode } from "./lib/charge-mode.js";
 import { HYPERMILE_HEADROOM_MV } from "./lib/range-readings.js";
 import { updateTrip } from "./lib/trip.js";
 import { RideView } from "./views/ride.js";
-import { HypermileView } from "./views/hypermile.js";
+import { HypermileView, advanceRangeCountdowns } from "./views/hypermile.js";
 import { CellsView } from "./views/cells.js";
 import { ChargeView } from "./views/charge.js";
 import { AllView } from "./views/all.js";
@@ -203,6 +203,7 @@ van.derive(() => {
   // Trip durations must survive wall-clock corrections.
   const now = monotonicNow();
   updateTrip(now);
+  advanceRangeCountdowns(now);
   autoFocus();
 });
 

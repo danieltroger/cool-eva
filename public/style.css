@@ -2045,6 +2045,19 @@ body {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+.range-margin-extra {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.range-margin-extra .range-seconds {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
 .range-bottom .value[data-alert="true"] {
   color: var(--bad);
   font-size: var(--text-md);
