@@ -21,12 +21,15 @@ export async function checkBmsBrowser(page: HeadlessPage, file: string) {
         page,
         "document.querySelector('[data-position=\"4\"]').style.getPropertyValue('--cell-color')"
       ),
-      "var(--sub)",
-      "Old held readings keep neutral map ink."
+      "color-mix(in srgb,var(--warn) 100%,var(--good))",
+      "Held readings keep their sample colour within the rotation budget."
     );
     assert.equal(
-      await evaluateOnPage(page, "document.querySelector('[data-cell-extra]').textContent.includes('below best')"),
-      false
+      await evaluateOnPage(
+        page,
+        "document.querySelector('[data-cell-extra]').textContent.includes('320 mV below best')"
+      ),
+      true
     );
     assert.equal(
       await evaluateOnPage(page, "document.querySelector('[data-spread-now]').textContent"),
@@ -70,7 +73,9 @@ export async function checkBmsBrowser(page: HeadlessPage, file: string) {
       "Live unrelated traffic cannot keep a dead multiplex's held values fresh."
     );
   }
-  console.log("  ✓ BMS held cell and board values stay visible in Cells, neutral when old, with current summaries");
+  console.log(
+    "  ✓ BMS held cell and board values stay visible in Cells, coloured within budget, with current summaries"
+  );
 }
 
 export async function applyHeldBmsFixture(page: HeadlessPage) {

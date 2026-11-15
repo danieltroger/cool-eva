@@ -121,7 +121,7 @@ function ModuleBlock(moduleNumber, cells, selection) {
             : lowestModuleCell(moduleNumber, key => {
                 const cell = cells.find(candidate => candidate.key === key);
                 const reading = cell ? cellMapReading(cell, "balance") : null;
-                return reading?.current ? reading.value : null;
+                return reading?.value ?? null;
               });
       },
     },
@@ -160,7 +160,7 @@ function CellSquare(cell, boundaries, selection) {
       },
       style: () => {
         chartTick.val;
-        return `--cell-color:${cellMapColour(cellMapReading(cell, selection.metric.val), selection.metric.val, freshValue("cell_max_mv", true))}`;
+        return `--cell-color:${cellMapColour(cellMapReading(cell, selection.metric.val), selection.metric.val)}`;
       },
       title: () => {
         chartTick.val;
@@ -230,8 +230,7 @@ function SelectionDetail(cells, selection) {
               if (reading.state === "fault") return "Invalid voltage · slot retained";
               if (reading.state === "missing") return "No reading · slot retained";
               if (reading.state === "stale") return "stale · slot retained";
-              const reference = freshValue("cell_max_mv", true);
-              return `Position ${cell.position}${reading.current && reference !== null && reading.value !== null ? ` · ${Math.max(0, reference - reading.value)} mV below best` : ""} · ${ageDescription(reading.age)}`;
+              return `Position ${cell.position}${reading.reference !== null && reading.value !== null ? ` · ${Math.max(0, reading.reference - reading.value)} mV below best` : ""} · ${ageDescription(reading.age)}`;
             })
           )
     )

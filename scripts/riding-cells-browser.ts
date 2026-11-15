@@ -258,11 +258,11 @@ async function checkMapQuality(
           page,
           "document.querySelector('[data-position=\"4\"]').style.getPropertyValue('--cell-color')"
         ),
-        "var(--sub)"
+        "color-mix(in srgb,var(--warn) 100%,var(--good))"
       );
       assert.equal(
         await evaluateOnPage(page, "document.querySelector('[data-cell-extra]').textContent.includes('below best')"),
-        false
+        true
       );
       assert.equal(
         await evaluateOnPage(page, "document.querySelector('[data-map-age]').textContent"),
