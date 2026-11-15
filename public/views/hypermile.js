@@ -132,12 +132,12 @@ function MarginCard() {
         active
           ? span("Limp")
           : [
-              minimum > limp ? span("Limp in") : [],
+              minimum >= limp ? span("Limp in") : [],
               span(
                 { "data-reading": "limp-margin", style: `color:${colors.headroom(minimum - limp)}` },
                 String(Math.round(Math.abs(minimum - limp)))
               ),
-              span(minimum > limp ? "mV" : "mV under limp"),
+              span(minimum >= limp ? "mV" : "mV under limp"),
             ],
         span(minimum < stop ? "·" : "· stop in"),
         span(

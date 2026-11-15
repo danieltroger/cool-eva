@@ -16,8 +16,8 @@ let underStopSince = null;
 
 /** @param {number} now @param {CellCountdownInput|null} input */
 export function advanceCellCountdowns(now, input) {
-  underLimpSince = input?.driving && !input.active && input.minimum <= input.limp ? (underLimpSince ?? now) : null;
-  underStopSince = input?.driving && input.minimum < input.stop ? (underStopSince ?? now) : null;
+  underLimpSince = input?.driving && !input.active && input.minimum < input.limp ? (underLimpSince ?? now) : null;
+  underStopSince = input?.driving && input.minimum <= input.stop ? (underStopSince ?? now) : null;
 }
 
 /** @param {number} now */
@@ -33,7 +33,7 @@ export function limpLine(input, counts) {
   if (counts.stop !== null) return "stop";
   if (counts.limp !== null) return "limp";
   if (!input.active) return null;
-  if (input.minimum !== null && input.limp !== null && input.minimum <= input.limp) return "cell";
+  if (input.minimum !== null && input.limp !== null && input.minimum < input.limp) return "cell";
   if (input.soc !== null && input.limpSoc !== null && input.soc < input.limpSoc) return "soc";
   if (input.temperature !== null && input.limpTemperature !== null && input.temperature > input.limpTemperature) {
     return "temperature";
