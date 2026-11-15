@@ -149,37 +149,37 @@ const snapshot: DashboardMessage = {
 apply(snapshot);
 const first = cellMapReading(cells[0], "balance");
 assert.equal(first.value, 3300);
-assert.equal(first.current, true);
+assert.equal(first.reference, 3320);
 assert.equal(first.state, "fresh");
-assert.equal(cellMapColour(first, "balance", 3320), "color-mix(in srgb,var(--warn) 50%,var(--good))");
+assert.equal(cellMapColour(first, "balance"), "color-mix(in srgb,var(--warn) 50%,var(--good))");
 assert.equal(
-  cellMapColour(first, "balance", null),
+  cellMapColour({ ...first, reference: null }, "balance"),
   "var(--sub)",
   "An unavailable reference cannot become an invented zero gap."
 );
 const aboveReference = cellMapReading(cells[47], "balance");
 assert.equal(aboveReference.value, 3405);
 assert.equal(
-  cellMapColour(aboveReference, "balance", 3320),
+  cellMapColour(aboveReference, "balance"),
   "color-mix(in srgb,var(--warn) 0%,var(--good))",
   "A current sample above the BMS maximum keeps its actual voltage and zero relative gap."
 );
 const temperature = cellMapReading(cells[47], "temperature");
 assert.equal(temperature.key, "lmu7_bat1_c");
 assert.equal(temperature.value, 44);
-assert.equal(cellMapColour(temperature, "temperature", null), "color-mix(in srgb,var(--warn) 50%,var(--cold))");
+assert.equal(cellMapColour(temperature, "temperature"), "color-mix(in srgb,var(--warn) 50%,var(--cold))");
 for (const position of [40, 46, 54, 60]) {
   const absent = cellMapReading(cells[position - 1], "temperature");
   assert.equal(absent.state, "absent");
   assert.equal(absent.key, null);
   assert.equal(absent.value, null);
-  assert.equal(cellMapColour(absent, "temperature", 3320), "var(--tile)");
+  assert.equal(cellMapColour(absent, "temperature"), "var(--tile)");
 }
 const held = cellMapReading(cells[3], "balance");
 assert.equal(held.value, 3000);
 assert.equal(held.state, "fresh");
-assert.equal(held.current, false);
-assert.equal(cellMapColour(held, "balance", 3320), "var(--sub)");
+assert.equal(held.reference, 3320);
+assert.equal(cellMapColour(held, "balance"), "color-mix(in srgb,var(--warn) 100%,var(--good))");
 assert.equal(cellMapAge([held]), "1m");
 assert.equal(cellMapAge([cellMapReading(cells[0], "temperature")]), "3m");
 assert.equal(cellMapAge([first, held]), "1m", "Mixed-age latest readings cannot be labelled now.");
@@ -196,7 +196,7 @@ apply(rejection);
 const fault = cellMapReading(cells[0], "balance");
 assert.equal(fault.state, "fault");
 assert.equal(fault.value, null);
-assert.equal(cellMapColour(fault, "balance", 3320), "var(--bad)");
+assert.equal(cellMapColour(fault, "balance"), "var(--bad)");
 assert.equal(cellMapAge([fault]), "fault");
 connection.val = "offline";
 const stale = cellMapReading(cells[47], "balance");
@@ -204,5 +204,5 @@ assert.equal(stale.state, "stale");
 assert.equal(stale.value, null);
 assert.equal(cellMapAge([stale]), "stale");
 console.log(
-  "✓ nine physical modules, eleven LMUs, all 81 stable slots, exact boundaries, bounded selection, missing sensors, faults, held ages and neutral old/reference-less colour"
+  "✓ nine physical modules, eleven LMUs, all 81 stable slots, exact boundaries, bounded selection, missing sensors, faults, held ages and held/reference-less colour"
 );

@@ -85,9 +85,3 @@ export function readingIsStale(key, sampled = false) {
   }
   return stale(key, STALE_MS);
 }
-
-/** Provisional colour policy: held values stay visible, but only current samples carry colour.
- * @param {string} key @param {boolean} [sampled] */
-export function readingCanColour(key, sampled = false) {
-  return readingStatus(key, sampled) === "fresh" && !(sampled ? isStaleSampled : isStale)(key, STALE_MS);
-}

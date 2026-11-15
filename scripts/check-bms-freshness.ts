@@ -3,10 +3,11 @@ import { decodeFrame } from "../src/can/decode.ts";
 import { SIGNALS } from "../src/can/registry.ts";
 import { defineSignals, onChange, recordArrival, snapshot, type LiveValue } from "../src/can/signals.ts";
 import { DISPLAY_FRESHNESS } from "../public/lib/generated-bounds.js";
-import { readingCanColour, readingIsStale, readingStatus, STALE_MS } from "../public/lib/reading-status.js";
+import { readingIsStale, readingStatus, STALE_MS } from "../public/lib/reading-status.js";
 import { apply, connection, peek, signalState } from "../public/lib/store.js";
 import { cellSnapshot } from "../public/lib/cell-snapshot.js";
-import * as colors from "../public/lib/colors.js";
+import { cellMapReading, cellMapColour, rememberCellReferences } from "../public/lib/cell-map.js";
+import { packCellLayout } from "../public/lib/pack-layout.js";
 
 const heldSignals = SIGNALS.filter(signal => signal.displayFreshness !== undefined);
 assert.deepEqual(
@@ -126,8 +127,9 @@ apply({
   ts: colourTime,
   signals: {
     lmu_cell_mux: reading("lmu_cell_mux", colourTime),
-    lmu1_cell4_mv: { ...reading("lmu1_cell4_mv", colourTime - 8001), value: 3000 },
+    lmu1_cell4_mv: { ...reading("lmu1_cell4_mv", colourTime - 46_000), value: 3000 },
     lmu1_pcb1_c: { ...reading("lmu1_pcb1_c", colourTime - 8001), value: 60 },
+    lmu1_bat1_c: { ...reading("lmu1_bat1_c", colourTime - 46_000), value: 44 },
     cell_min_mv: { value: 3280, unit: "mV", group: "cells", ts: colourTime },
     cell_max_mv: { value: 3320, unit: "mV", group: "cells", ts: colourTime },
     cell_spread_mv: { value: 40, unit: "mV", group: "cells", ts: colourTime },
@@ -138,23 +140,54 @@ apply({
 for (const key of ["lmu1_cell4_mv", "lmu1_pcb1_c"]) {
   for (const sampled of [false, true]) {
     assert.equal(readingStatus(key, sampled), "fresh", "Old held readings stay visible.");
-    assert.equal(readingCanColour(key, sampled), false, "Old held readings must not carry current colour.");
   }
 }
 const pack = cellSnapshot(peek, key => readingStatus(key, true));
 assert.deepEqual([pack.low, pack.high, pack.spread, pack.weakest, pack.strongest], [3280, 3320, 40, 7, 19]);
 assert.equal(pack.cells.find(cell => cell.key === "lmu1_cell4_mv")?.value, 3000);
 assert.equal(pack.displayLow, 3000, "Held extrema may fit bar geometry but cannot become pack summaries.");
-for (const age of [8000, 8001]) {
-  apply({
-    type: "patch",
-    ts: colourTime,
-    signals: { lmu1_cell4_mv: { ...reading("lmu1_cell4_mv", colourTime - age), value: 3405 } },
-  });
-  assert.equal(readingCanColour("lmu1_cell4_mv", true), age <= 8000);
+const heldCell = packCellLayout()[3];
+rememberCellReferences();
+apply({
+  type: "patch",
+  ts: colourTime + 1,
+  signals: { cell_max_mv: { value: 3010, unit: "mV", group: "cells", ts: colourTime + 1 } },
+});
+rememberCellReferences();
+const heldBalance = cellMapReading(heldCell, "balance");
+const balanceColour = cellMapColour(heldBalance, "balance");
+assert.equal(heldBalance.age, 46_001);
+assert.deepEqual(
+  [heldBalance.reference, heldBalance.value],
+  [3320, 3000],
+  "Opening Cells later keeps the arrival-time reference for both colour and gap."
+);
+assert.equal(balanceColour, "color-mix(in srgb,var(--warn) 100%,var(--good))");
+assert.equal(
+  cellMapColour(cellMapReading(heldCell, "temperature"), "temperature"),
+  "color-mix(in srgb,var(--warn) 50%,var(--cold))"
+);
+apply({
+  type: "patch",
+  ts: colourTime + 2,
+  signals: { lmu1_cell4_mv: { ...reading("lmu1_cell4_mv", colourTime + 2), value: 3000 } },
+});
+rememberCellReferences();
+assert.equal(
+  cellMapColour(cellMapReading(heldCell, "balance"), "balance"),
+  "color-mix(in srgb,var(--warn) 25%,var(--good))"
+);
+for (const [metric, budget, sampleTime] of [
+  ["balance", 715_000, colourTime + 2],
+  ["temperature", 1_570_000, colourTime - 46_000],
+] as const) {
+  const timestamp = sampleTime + budget + 1;
+  apply({ type: "patch", ts: timestamp, signals: { lmu_cell_mux: reading("lmu_cell_mux", timestamp) } });
+  const expired = cellMapReading(heldCell, metric);
+  assert.equal(expired.state, "stale");
+  assert.equal(cellMapColour(expired, metric), "var(--tile)");
 }
-assert.equal(colors.spread(Math.max(0, 3320 - 3405)), colors.GOOD, "Above the current BMS maximum means no gap.");
-apply({ type: "patch", ts: colourTime + 8001, signals: { lmu_cell_mux: reading("lmu_cell_mux", colourTime + 8001) } });
+apply({ type: "patch", ts: colourTime + 8002, signals: { lmu_cell_mux: reading("lmu_cell_mux", colourTime + 8002) } });
 assert.equal(cellSnapshot(peek, key => readingStatus(key, true)).high, null, "No held-cell fallback for stale 0x203.");
 signalState("lmu1_cell4_mv").val = null;
 assert.equal(readingStatus("lmu1_cell4_mv"), "missing");
@@ -165,7 +198,7 @@ apply({
 });
 assert.equal(readingStatus("lmu1_cell4_mv"), "fault", "Holding cannot bypass physical bounds.");
 console.log(
-  "✓ 112 registry classes, decoded heartbeat arrivals, bounded holds, live carrier/recovery, 0x203 summaries and current-only colours"
+  "✓ 112 registry classes, decoded heartbeat arrivals, bounded holds, live carrier/recovery, 0x203 summaries and held sample colours"
 );
 
 function reading(key: string, timestamp: number): LiveValue {

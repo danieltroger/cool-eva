@@ -87,6 +87,7 @@ export async function checkCellsNavigation(
     await checkMapSelection(page, file, theme, capture);
     await checkMapQuality(page, file, theme, capture);
   }
+  await checkMapArrivalReference(page, file);
   for (const kind of ["high_beam", "btn_cruise_set"]) {
     await openPreview(page, file, "#hypermile/cells", `cells-${kind}`);
     await assertCellsContent(page);
@@ -112,6 +113,48 @@ export async function checkCellsNavigation(
   assert.equal(await evaluateOnPage(page, "ridingPreview('lib/arming.js').armed.rawVal"), "");
   console.log(
     "  ✓ Cells: nine physical modules, eleven LMUs, stable selection, both modes/themes, current summaries, quality states and real navigation"
+  );
+}
+
+async function checkMapArrivalReference(page: HeadlessPage, file: string) {
+  await openPreview(page, file, "#ride", "cells-arrival-reference");
+  await waitOnPage(page, "!!document.querySelector('.ride-view')", "Ride before the cell arrival");
+  await evaluateOnPage(
+    page,
+    `window.arrivalTick=ridingPreview('lib/store.js').chartTick.rawVal;
+    pushPatch({lmu1_cell4_mv:[3700,'mV','cells',Date.now()],cell_max_mv:[3710,'mV','cells']})`
+  );
+  await waitOnPage(
+    page,
+    "ridingPreview('lib/store.js').chartTick.rawVal>window.arrivalTick",
+    "the app tick after the cell arrival"
+  );
+  await evaluateOnPage(page, FRAME);
+  await evaluateOnPage(page, "pushPatch({cell_max_mv:[3900,'mV','cells']})");
+  assert.equal(await evaluateOnPage(page, "ridingPreview('lib/store.js').peek('cell_max_mv')"), 3900);
+  assert.equal(await evaluateOnPage(page, "!!document.querySelector('.cells-view')"), false);
+  await evaluateOnPage(page, "document.querySelector('.tabs a[href$=\"#hypermile\"]').click()");
+  await waitOnPage(page, "!!document.querySelector('.range-view')", "Range before opening Cells");
+  await evaluateOnPage(page, "document.querySelector('[data-view=cells]').click()");
+  await waitOnPage(page, "!!document.querySelector('.cells-view')", "Cells after the strongest cell moves");
+  await evaluateOnPage(
+    page,
+    "document.querySelector('[data-map-mode=balance]').click();document.querySelector('[data-position=\"4\"]').click()"
+  );
+  await evaluateOnPage(page, FRAME);
+  assert.ok(
+    String(await evaluateOnPage(page, "document.querySelector('[data-cell-extra]').textContent")).includes(
+      "10 mV below best"
+    ),
+    "A sample received on Ride keeps its arrival-time gap when Cells opens."
+  );
+  assert.equal(
+    await evaluateOnPage(
+      page,
+      "document.querySelector('[data-position=\"4\"]').style.getPropertyValue('--cell-color')"
+    ),
+    "color-mix(in srgb,var(--warn) 25%,var(--good))",
+    "A later strongest cell cannot recolour a sample received on Ride."
   );
 }
 
@@ -258,11 +301,11 @@ async function checkMapQuality(
           page,
           "document.querySelector('[data-position=\"4\"]').style.getPropertyValue('--cell-color')"
         ),
-        "var(--sub)"
+        "color-mix(in srgb,var(--warn) 100%,var(--good))"
       );
       assert.equal(
         await evaluateOnPage(page, "document.querySelector('[data-cell-extra]').textContent.includes('below best')"),
-        false
+        true
       );
       assert.equal(
         await evaluateOnPage(page, "document.querySelector('[data-map-age]').textContent"),

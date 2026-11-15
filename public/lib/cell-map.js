@@ -1,8 +1,8 @@
 // @ts-check
-// Latest samples keep the existing bounded holds and neutral aged ink: docs/cell-module-map.md.
-import { ageOf } from "./store.js";
-import { freshValue, readingStatus, readingCanColour, STALE_MS } from "./reading-status.js";
-import { moduleTemperatureKey } from "./cells.js";
+// Latest samples retain their colour within bounded holds: docs/cell-module-map.md.
+import { ageOf, signalState } from "./store.js";
+import { freshValue, readingStatus, STALE_MS } from "./reading-status.js";
+import { cellVoltageLayout, moduleTemperatureKey } from "./cells.js";
 import * as colors from "./colors.js";
 
 /** @typedef {"temperature"|"balance"} CellMapMetric */
@@ -13,19 +13,27 @@ export function cellMapReading(cell, metric) {
     key,
     state: key === null ? /** @type {const} */ ("absent") : readingStatus(key, true),
     value: key === null ? null : freshValue(key, true),
-    current: key !== null && readingCanColour(key, true),
+    reference: rememberCellReference(cell.key),
     age: key === null ? Infinity : Math.max(0, ageOf(key)),
   };
 }
 /** @typedef {ReturnType<typeof cellMapReading>} CellMapReading */
+/** @type {Map<string,{timestamp:number,value:number|null}>} */
+const references = new Map();
 
-/** @param {CellMapReading} reading @param {CellMapMetric} metric @param {number|null} reference */
-export function cellMapColour(reading, metric, reference) {
+export function rememberCellReferences() {
+  for (const cell of cellVoltageLayout()) {
+    rememberCellReference(cell.key);
+  }
+}
+
+/** @param {CellMapReading} reading @param {CellMapMetric} metric */
+export function cellMapColour(reading, metric) {
   if (reading.state === "fault") return colors.BAD;
   if (reading.value === null) return "var(--tile)";
-  if (!reading.current || (metric === "balance" && reference === null)) return colors.MUTED;
+  if (metric === "balance" && reading.reference === null) return colors.MUTED;
   const amount =
-    metric === "temperature" ? (reading.value - 38) / 12 : Math.max(0, (reference ?? 0) - reading.value) / 40;
+    metric === "temperature" ? (reading.value - 38) / 12 : Math.max(0, (reading.reference ?? 0) - reading.value) / 40;
   const percentage = Math.min(100, Math.max(0, amount * 100));
   return `color-mix(in srgb,var(--warn) ${percentage}%,${metric === "temperature" ? colors.COLD : colors.GOOD})`;
 }
@@ -50,4 +58,15 @@ export function cellMapAge(readings) {
         : "—";
   }
   return cellAgeText(Math.max(...available.map(reading => reading.age)));
+}
+
+/** @param {string} key */
+function rememberCellReference(key) {
+  const sample = signalState(key).rawVal;
+  let reference = references.get(key);
+  if (sample && reference?.timestamp !== sample.ts) {
+    reference = { timestamp: sample.ts, value: freshValue("cell_max_mv", true) };
+    references.set(key, reference);
+  }
+  return reference?.value ?? null;
 }
