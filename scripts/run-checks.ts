@@ -1038,7 +1038,8 @@ const CHECKS: SelfCheck[] = [
       "segment beside it still decodes and reports no trust rather than a good one; that a seal failing on its " +
       "SECOND run re-queues both runs ahead of what was buffered while it ran, writing every reading exactly once " +
       "and in the order recorded; and that the park seal fires on an observed entry into state 60 but not on the " +
-      "first sample nor an unrelated change, and still seals the new readings when a seal is already in flight",
+      "first sample nor an unrelated change, and still seals the new readings when a seal is already in flight; " +
+      "and that an individual cell's 1 mV change produces its own sealed row, verified by decrypting it",
   },
   {
     script: "scripts/check-ride-log-status.ts",

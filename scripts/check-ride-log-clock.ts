@@ -40,6 +40,7 @@ import type { ClockTrust } from "../src/gps/clock.ts";
 //   §7  it seals the new rows even when a seal is already in flight
 //   §8  the park seal's rate limit is monotonic — a SOURCE assertion, and it says so
 //   §9  the real decrypt-log.ts carries the trust into rides.db and rewrites no timestamp
+//   §10 an individual cell's 1 mV change produces its own sealed row
 //
 // ⚠️ §6 and §7 settle asynchronously — the listener runs in a microtask and the seal is
 // async — so they poll to a monotonic deadline rather than sleeping a fixed time. A
@@ -478,6 +479,7 @@ async function checkRateLimitIsMonotonic(): Promise<void> {
 }
 
 async function checkCellMillivoltLogging(): Promise<void> {
+  console.log("\n§10 individual cell voltages log every 1 mV change");
   const directory = await startLog("cell-millivolt");
   const cellKey = "lmu1_cell1_mv";
   defineSignals(SIGNALS);
